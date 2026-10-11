@@ -1,0 +1,8 @@
+aiogram>=3.31,<4
+SQLAlchemy[asyncio]>=2.0.36,<3
+asyncpg>=0.30
+aiosqlite>=0.20
+anthropic>=1.13,<2
+pydantic-settings>=2.6
+rapidfuzz>=3.10
+tzdata>=2024.1

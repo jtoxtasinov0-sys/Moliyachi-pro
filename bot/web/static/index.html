@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Moliyachi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/style.css?v=2">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 19V9l4 4 4-6 4 6 4-4v10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">MOLIYACHI</div>
+          <div class="hello" id="hello">Yuklanmoqda…</div>
+        </div>
+      </div>
+      <button class="icon-btn" id="settingsBtn" hidden aria-label="Sozlamalar">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
+    </header>
+
+    <main>
+      <!-- Asosiy -->
+      <section class="view" id="view-home">
+        <div class="seg" id="periodSeg">
+          <button data-period="day">Bugun</button>
+          <button data-period="week">Hafta</button>
+          <button data-period="month" class="on">Oy</button>
+          <button data-period="year">Yil</button>
+        </div>
+
+        <div class="hero">
+          <div class="hero-circle c1"></div>
+          <div class="hero-circle c2"></div>
+          <div class="hero-label" id="heroLabel">Ish haqi fondi</div>
+          <div class="hero-amount" id="heroAmount">—</div>
+          <div class="hero-extra" id="heroExtra"></div>
+          <div class="hero-row">
+            <div class="hero-stat"><span id="heroQty">0</span><small>dona</small></div>
+            <div class="hero-stat"><span id="heroDays">0</span><small>ish kuni</small></div>
+            <div class="hero-stat"><span id="heroAvg">0</span><small>o'rtacha / kun</small></div>
+          </div>
+          <div class="delta" id="heroDelta"></div>
+          <div class="hero-range" id="heroRange"></div>
+        </div>
+
+        <button class="pending-card" id="pendingCard" hidden>
+          <div class="pending-icon">⏳</div>
+          <div class="pending-text"><b id="pendingCount">0</b> ta yozuv tasdiq kutmoqda<small>Ko'rish va tasdiqlash</small></div>
+          <div class="arrow-btn light">→</div>
+        </button>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 id="chartTitle">Dinamika</h3>
+            <div class="mini-seg" id="metricSeg">
+              <button data-metric="qty" class="on">Dona</button>
+              <button data-metric="pay">Summa</button>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="trendChart"></canvas></div>
+          <div class="empty-note" id="trendEmpty" hidden>Bu davrda tasdiqlangan ish yo'q</div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Modellar bo'yicha</h3><span class="muted" id="modelCount"></span></div>
+          <div class="donut-wrap">
+            <div class="donut-box">
+              <canvas id="modelChart"></canvas>
+              <div class="donut-center"><b id="donutTotal">0</b><small>dona</small></div>
+            </div>
+            <ul class="legend" id="modelLegend"></ul>
+          </div>
+        </div>
+
+        <div class="card" id="workersCard" hidden>
+          <div class="card-head"><h3>Ishchilar reytingi</h3><span class="muted" id="workerCount"></span></div>
+          <ol class="rank" id="workerRank"></ol>
+        </div>
+      </section>
+
+      <!-- Yozuvlar -->
+      <section class="view" id="view-entries" hidden>
+        <h2 class="page-title">Yozuvlar</h2>
+        <div class="chips" id="statusChips">
+          <button data-status="" class="on">Hammasi</button>
+          <button data-status="pending">⏳ Kutilmoqda</button>
+          <button data-status="approved">✅ Tasdiqlangan</button>
+          <button data-status="rejected">🚫 Rad etilgan</button>
+        </div>
+        <select class="select" id="workerFilter" hidden></select>
+        <div id="entryList"></div>
+        <button class="ghost-btn" id="moreBtn" hidden>Yana yuklash</button>
+      </section>
+
+      <!-- Ishchilar -->
+      <section class="view" id="view-workers" hidden>
+        <div class="page-head">
+          <h2 class="page-title">Ishchilar</h2>
+          <button class="pill-btn" id="addWorkerBtn">+ Qo'shish</button>
+        </div>
+        <div id="workerList"></div>
+      </section>
+
+      <!-- Modellar -->
+      <section class="view" id="view-models" hidden>
+        <div class="page-head">
+          <h2 class="page-title" id="modelsTitle">Modellar</h2>
+          <button class="pill-btn" id="addModelBtn" hidden>+ Qo'shish</button>
+        </div>
+        <p class="muted small" id="modelsHint">Narx — bir dona uchun ish haqi</p>
+        <div id="modelList"></div>
+      </section>
+
+      <!-- Yordam (ishchi uchun) -->
+      <section class="view" id="view-help" hidden>
+        <h2 class="page-title">Yordam</h2>
+        <div class="card help">
+          <h3>🎙 Ish topshirish</h3>
+          <p>Pastdagi o'rtadagi tugmani bosing — chatga qaytasiz. U yerda ovozli yoki matnli xabar yuboring:</p>
+          <p class="quote">«A-12 modeldan 50 ta topshirdim»</p>
+          <p class="quote">«Kecha B-5 dan 30 ta»</p>
+          <p>Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.</p>
+        </div>
+        <div class="card help">
+          <h3>📊 Hisobot</h3>
+          <p>«Asosiy» bo'limida tanlangan davr uchun ish haqingiz, topshirgan donalaringiz va grafiklar ko'rinadi.</p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" id="nav">
+      <button data-view="home" class="on">
+        <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1v-8.5Z"/></svg>
+        <span>Asosiy</span>
+      </button>
+      <button data-view="entries">
+        <svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        <span>Yozuvlar</span>
+      </button>
+      <div class="nav-center">
+        <button class="fab" id="fab" aria-label="Ovozli xabar yuborish">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
+      </div>
+      <button data-view="workers" id="navWorkers">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8M16 5.2a3 3 0 0 1 0 5.6M18 14.6c1.4.7 2.3 2.2 2.6 4.4"/></svg>
+        <span>Ishchilar</span>
+      </button>
+      <button data-view="models">
+        <svg viewBox="0 0 24 24"><path d="M12 3 3 7.5l9 4.5 9-4.5L12 3ZM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+        <span id="navModelsLabel">Modellar</span>
+      </button>
+      <button data-view="help" id="navHelp" hidden>
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/></svg>
+        <span>Yordam</span>
+      </button>
+    </nav>
+
+    <!-- Pastdan chiquvchi oyna -->
+    <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+    <div class="sheet" id="sheet" hidden>
+      <div class="sheet-grip"></div>
+      <div id="sheetBody"></div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+    <div class="fatal" id="fatal" hidden></div>
+  </div>
+  <script src="static/app.js?v=2"></script>
+</body>
+</html>

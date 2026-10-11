@@ -1,0 +1,27 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: moliyachi
+    runtime: python
+    plan: free
+    region: ohio  # Neon bazasi us-east-2 (Ohio) da — yaqin bo'lsa tezroq
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: TIMEZONE
+        value: Asia/Tashkent
+      # Quyidagilar Render saytida qo'lda kiritiladi (GitHub ga tushmaydi)
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_TG_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
