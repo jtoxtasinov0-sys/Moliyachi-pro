@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
-from bot.db.models import EntryStatus, ItemModel, Role, User, WorkEntry
+from bot.db.models import DebtEntry, EntryStatus, ItemModel, PersonalEntry, PersonalKind, User, WorkEntry
 from bot.services.utils import today
 from bot.web.auth import validate_init_data
 
@@ -207,11 +207,12 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
     t = today()
     b = _period_bounds(period, t)
     worker_id = None if user.is_owner else user.id
+    acc = user.account_id
 
     chart_start, chart_end, bucket = b["chart"]
     lo = min(b["start"], b["prev"][0], chart_start)
     hi = max(b["end"], chart_end)
-    all_rows = await repo.work_stat_rows(session, lo, hi, worker_id)
+    all_rows = await repo.work_stat_rows(session, acc, lo, hi, worker_id)
 
     cur = [r for r in all_rows if b["start"] <= r.work_date <= b["end"]]
     prev = [r for r in all_rows if b["prev"][0] <= r.work_date <= b["prev"][1]]
@@ -230,7 +231,7 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
             "points": _series([r for r in all_rows if chart_start <= r.work_date <= chart_end], chart_start, chart_end, bucket),
         },
         "by_model": _group(cur, "model_name"),
-        "pending": await repo.count_pending(session, worker_id),
+        "pending": await repo.count_pending(session, acc, worker_id),
     }
     if user.is_owner:
         data["by_worker"] = _group(cur, "worker_id")
@@ -251,8 +252,8 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "role": user.role,
             "is_owner": user.is_owner,
             "bot_username": bot_me.username,
-            "currencies": await repo.enabled_currencies(session),
-            "require_approval": await repo.require_approval(session),
+            "currencies": await repo.enabled_currencies(session, user.account_id),
+            "require_approval": await repo.require_approval(session, user.account_id),
         }
     )
 
@@ -262,16 +263,20 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
 async def update_settings(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     data = await _json(request)
     if "require_approval" in data:
-        await repo.set_setting(session, "require_approval", "1" if data["require_approval"] else "0")
+        await repo.set_setting(session, user.id, "require_approval", "1" if data["require_approval"] else "0")
     if "currencies" in data:
         cur = [c for c in repo.ALL_CURRENCIES if c in (data["currencies"] or [])]
         if not cur:
             raise ApiError(400, "Kamida bitta valyuta yoqilgan bo'lishi kerak")
-        await repo.set_setting(session, "currencies", ",".join(cur))
+        await repo.set_currencies(session, user.id, cur)
+    if "main_currency" in data:
+        if data["main_currency"] not in repo.ALL_CURRENCIES:
+            raise ApiError(400, "Valyuta noto'g'ri")
+        await repo.set_main_currency(session, user.id, data["main_currency"])
     return web.json_response(
         {
-            "currencies": await repo.enabled_currencies(session),
-            "require_approval": await repo.require_approval(session),
+            "currencies": await repo.enabled_currencies(session, user.id),
+            "require_approval": await repo.require_approval(session, user.id),
         }
     )
 
@@ -295,7 +300,7 @@ def _entry_json(e: WorkEntry) -> dict:
 
 
 async def _entry_for(request: web.Request, session: AsyncSession, user: User) -> WorkEntry:
-    entry = await repo.get_work_entry(session, int(request.match_info["id"]))
+    entry = await repo.get_work_entry(session, user.account_id, int(request.match_info["id"]))
     if entry is None or not (user.is_owner or entry.worker_id == user.id):
         raise ApiError(404, "Yozuv topilmadi")
     return entry
@@ -311,7 +316,9 @@ async def entries(request: web.Request, session: AsyncSession, user: User) -> we
     worker_id = user.id if not user.is_owner else (int(q["worker_id"]) if q.get("worker_id") else None)
     limit = min(int(q.get("limit", 30)), 100)
     offset = max(int(q.get("offset", 0)), 0)
-    rows = await repo.list_work_entries(session, status=status, worker_id=worker_id, limit=limit + 1, offset=offset)
+    rows = await repo.list_work_entries(
+        session, user.account_id, status=status, worker_id=worker_id, limit=limit + 1, offset=offset
+    )
     return web.json_response({"items": [_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
 
 
@@ -336,9 +343,10 @@ async def delete_entry(request: web.Request, session: AsyncSession, user: User) 
 
     entry = await _entry_for(request, session, user)
     text = entry_text(entry)
-    await repo.soft_delete_work_entry(session, entry)
+    await repo.soft_delete(session, entry)
     if not user.is_owner and entry.status == EntryStatus.APPROVED:
-        for owner in await repo.get_owners(session):
+        owner = await session.get(User, user.owner_id)
+        if owner and owner.tg_id:
             _notify(request, owner.tg_id, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}")
     return web.json_response({"ok": True})
 
@@ -362,17 +370,18 @@ async def _worker_json(request: web.Request, w: User, stats: dict[int, dict]) ->
     }
 
 
-async def _month_stats(session: AsyncSession) -> dict[int, dict]:
+async def _month_stats(session: AsyncSession, owner_id: int) -> dict[int, dict]:
     t = today()
-    rows = await repo.work_stat_rows(session, t.replace(day=1), t)
+    rows = await repo.work_stat_rows(session, owner_id, t.replace(day=1), t)
     return {g["id"]: g for g in _group(rows, "worker_id")}
 
 
 @routes.get("/api/workers")
 @endpoint(owner_only=True)
 async def workers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    stats = await _month_stats(session)
-    items = [await _worker_json(request, w, stats) for w in await repo.list_workers(session, active_only=False)]
+    stats = await _month_stats(session, user.id)
+    workers_ = await repo.list_workers(session, user.id, active_only=False)
+    items = [await _worker_json(request, w, stats) for w in workers_]
     items.sort(key=lambda w: (not w["is_active"], -w["month_qty"], w["name"].lower()))
     return web.json_response({"items": items})
 
@@ -383,13 +392,13 @@ async def add_worker(request: web.Request, session: AsyncSession, user: User) ->
     name = str((await _json(request)).get("name") or "").strip()[:100]
     if not name:
         raise ApiError(400, "Ism bo'sh bo'lmasin")
-    worker = await repo.create_worker(session, name)
+    worker = await repo.create_worker(session, user.id, name)
     return web.json_response(await _worker_json(request, worker, {}))
 
 
-async def _get_worker(request: web.Request, session: AsyncSession) -> User:
-    worker = await session.get(User, int(request.match_info["id"]))
-    if worker is None or worker.role != Role.WORKER:
+async def _get_worker(request: web.Request, session: AsyncSession, user: User) -> User:
+    worker = await repo.get_worker(session, user.id, int(request.match_info["id"]))
+    if worker is None:
         raise ApiError(404, "Ishchi topilmadi")
     return worker
 
@@ -397,21 +406,21 @@ async def _get_worker(request: web.Request, session: AsyncSession) -> User:
 @routes.post(r"/api/workers/{id:\d+}/toggle")
 @endpoint(owner_only=True)
 async def toggle_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    worker = await _get_worker(request, session)
+    worker = await _get_worker(request, session, user)
     worker.is_active = not worker.is_active
     await session.flush()
-    return web.json_response(await _worker_json(request, worker, await _month_stats(session)))
+    return web.json_response(await _worker_json(request, worker, await _month_stats(session, user.id)))
 
 
 @routes.post(r"/api/workers/{id:\d+}/invite")
 @endpoint(owner_only=True)
 async def reinvite_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    worker = await _get_worker(request, session)
+    worker = await _get_worker(request, session, user)
     if not worker.is_active:
         raise ApiError(400, "Avval ishchini faollashtiring")
     await repo.new_invite_token(session, worker)
     # Yangi havola: avvalgi Telegram bog'lanishi saqlanadi, faqat tg_id bo'lmasa ko'rinadi
-    data = await _worker_json(request, worker, await _month_stats(session))
+    data = await _worker_json(request, worker, await _month_stats(session, user.id))
     if data["invite_link"] is None:
         bot_me = await request.app["bot"].me()
         data["invite_link"] = f"https://t.me/{bot_me.username}?start=inv_{worker.invite_token}"
@@ -441,7 +450,7 @@ async def _apply_model(session: AsyncSession, model: ItemModel, data: dict) -> N
         name = str(data["name"] or "").strip()[:100]
         if not name:
             raise ApiError(400, "Nom bo'sh bo'lmasin")
-        existing = await repo.get_model_by_name(session, name)
+        existing = await repo.get_model_by_name(session, model.owner_id, name)
         if existing and existing.id != model.id:
             raise ApiError(400, "Bunday model allaqachon bor")
         model.name = name
@@ -458,7 +467,7 @@ async def _apply_model(session: AsyncSession, model: ItemModel, data: dict) -> N
 @routes.get("/api/models")
 @endpoint()
 async def models(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    items = await repo.list_models(session, active_only=not user.is_owner)
+    items = await repo.list_models(session, user.account_id, active_only=not user.is_owner)
     return web.json_response({"items": [_model_json(m) for m in items]})
 
 
@@ -466,8 +475,8 @@ async def models(request: web.Request, session: AsyncSession, user: User) -> web
 @endpoint(owner_only=True)
 async def add_model(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     data = await _json(request)
-    currencies = await repo.enabled_currencies(session)
-    model = ItemModel(name="", currency=currencies[0])
+    currencies = await repo.enabled_currencies(session, user.id)
+    model = ItemModel(owner_id=user.id, name="", currency=currencies[0])
     data.setdefault("name", "")
     await _apply_model(session, model, data)
     session.add(model)
@@ -478,9 +487,181 @@ async def add_model(request: web.Request, session: AsyncSession, user: User) -> 
 @routes.patch(r"/api/models/{id:\d+}")
 @endpoint(owner_only=True)
 async def update_model(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    model = await session.get(ItemModel, int(request.match_info["id"]))
+    model = await repo.get_model(session, user.id, int(request.match_info["id"]))
     if model is None:
         raise ApiError(404, "Model topilmadi")
     await _apply_model(session, model, await _json(request))
     await session.flush()
     return web.json_response(_model_json(model))
+
+
+# --- Shaxsiy hamyon: xarajat / daromad --------------------------------------
+
+def _personal_totals(rows: list[repo.PersonalStatRow]) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, Decimal]] = {
+        PersonalKind.EXPENSE: defaultdict(Decimal),
+        PersonalKind.INCOME: defaultdict(Decimal),
+    }
+    for r in rows:
+        out.setdefault(r.kind, defaultdict(Decimal))[r.currency] += r.amount
+    return {kind: _money(v) for kind, v in out.items()}
+
+
+def _personal_series(rows: list[repo.PersonalStatRow], start: date, end: date, bucket: str) -> list[dict]:
+    def key(d: date) -> str:
+        return d.strftime("%Y-%m") if bucket == "month" else d.isoformat()
+
+    points: dict[str, dict] = {}
+    d = start
+    while d <= end:
+        k = key(d)
+        points.setdefault(k, {"key": k, "expense": defaultdict(float), "income": defaultdict(float)})
+        d = _shift_month(d, 1) if bucket == "month" else d + timedelta(days=1)
+    for r in rows:
+        p = points.get(key(r.entry_date))
+        if p is not None and r.kind in (PersonalKind.EXPENSE, PersonalKind.INCOME):
+            p[r.kind][r.currency] += float(r.amount)
+    return [{"key": p["key"], "expense": dict(p["expense"]), "income": dict(p["income"])} for p in points.values()]
+
+
+def _by_category(rows: list[repo.PersonalStatRow], kind: str) -> list[dict]:
+    groups: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for r in rows:
+        if r.kind == kind:
+            groups[r.category][r.currency] += r.amount
+    items = [{"name": name, "amounts": _money(v)} for name, v in groups.items()]
+    items.sort(key=lambda x: max(x["amounts"].values(), default=0), reverse=True)
+    return items
+
+
+@routes.get("/api/personal")
+@endpoint(owner_only=True)
+async def personal_summary(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    period = request.query.get("period", "month")
+    if period not in PERIODS:
+        raise ApiError(400, "Noto'g'ri davr")
+    t = today()
+    b = _period_bounds(period, t)
+    chart_start, chart_end, bucket = b["chart"]
+    lo = min(b["start"], b["prev"][0], chart_start)
+    hi = max(b["end"], chart_end)
+    rows = await repo.personal_stat_rows(session, user.id, lo, hi)
+    cur = [r for r in rows if b["start"] <= r.entry_date <= b["end"]]
+    prev = [r for r in rows if b["prev"][0] <= r.entry_date <= b["prev"][1]]
+    return web.json_response(
+        {
+            "period": period,
+            "start": b["start"].isoformat(),
+            "end": b["end"].isoformat(),
+            "today": t.isoformat(),
+            "totals": _personal_totals(cur),
+            "prev": _personal_totals(prev),
+            "series": {
+                "bucket": bucket,
+                "points": _personal_series(
+                    [r for r in rows if chart_start <= r.entry_date <= chart_end], chart_start, chart_end, bucket
+                ),
+            },
+            "by_category": _by_category(cur, PersonalKind.EXPENSE),
+            "income_by_category": _by_category(cur, PersonalKind.INCOME),
+        }
+    )
+
+
+def _personal_json(e: PersonalEntry) -> dict:
+    return {
+        "id": e.id,
+        "date": e.entry_date.isoformat(),
+        "kind": e.kind,
+        "category": e.category,
+        "amount": float(e.amount),
+        "currency": e.currency,
+        "note": e.note,
+        "raw_text": e.raw_text,
+    }
+
+
+def _paging(request: web.Request) -> tuple[int, int]:
+    try:
+        limit = min(max(int(request.query.get("limit", 30)), 1), 100)
+        offset = max(int(request.query.get("offset", 0)), 0)
+    except ValueError:
+        raise ApiError(400, "Noto'g'ri so'rov")
+    return limit, offset
+
+
+@routes.get("/api/personal/entries")
+@endpoint(owner_only=True)
+async def personal_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    limit, offset = _paging(request)
+    rows = await repo.list_personal_entries(session, user.id, limit=limit + 1, offset=offset)
+    return web.json_response({"items": [_personal_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
+
+
+@routes.delete(r"/api/personal/{id:\d+}")
+@endpoint(owner_only=True)
+async def delete_personal(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    entry = await repo.get_personal_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    await repo.soft_delete(session, entry)
+    return web.json_response({"ok": True})
+
+
+# --- Qarzlar ----------------------------------------------------------------
+
+def _debt_json(e: DebtEntry) -> dict:
+    return {
+        "id": e.id,
+        "date": e.entry_date.isoformat(),
+        "person": e.person,
+        "key": e.person_key,
+        "direction": e.direction,
+        "amount": float(e.amount),
+        "currency": e.currency,
+        "note": e.note,
+        "raw_text": e.raw_text,
+    }
+
+
+@routes.get("/api/debts")
+@endpoint(owner_only=True)
+async def debts(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    balances = await repo.debt_balances(session, user.id)
+    owed_to_me, i_owe = repo.debt_totals(balances)
+    return web.json_response(
+        {
+            "people": [
+                {
+                    "key": b.key,
+                    "name": b.person,
+                    "balance": _money({c: v for c, v in b.balance.items() if v}),
+                    "last_date": b.last_date.isoformat() if b.last_date else None,
+                    "count": b.count,
+                    "settled": b.settled,
+                }
+                for b in balances
+            ],
+            "owed_to_me": _money(owed_to_me),
+            "i_owe": _money(i_owe),
+        }
+    )
+
+
+@routes.get("/api/debts/entries")
+@endpoint(owner_only=True)
+async def debt_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    limit, offset = _paging(request)
+    key = request.query.get("key") or None
+    rows = await repo.list_debt_entries(session, user.id, key=key, limit=limit + 1, offset=offset)
+    return web.json_response({"items": [_debt_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
+
+
+@routes.delete(r"/api/debts/{id:\d+}")
+@endpoint(owner_only=True)
+async def delete_debt(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    entry = await repo.get_debt_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    await repo.soft_delete(session, entry)
+    return web.json_response({"ok": True})

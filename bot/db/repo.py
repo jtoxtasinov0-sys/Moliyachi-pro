@@ -1,13 +1,29 @@
-"""Bazaga so'rovlar. Handlerlar to'g'ridan-to'g'ri SQL yozmaydi, shu yerdan foydalanadi."""
+"""Bazaga so'rovlar. Handlerlar to'g'ridan-to'g'ri SQL yozmaydi, shu yerdan foydalanadi.
+
+Deyarli har bir funksiya owner_id (kabinet) oladi va faqat o'sha kabinet ma'lumotini qaytaradi.
+"""
 import secrets
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Alias, EntryStatus, ItemModel, Role, Setting, User, WorkEntry
+from bot.db.models import (
+    Alias,
+    DebtDirection,
+    DebtEntry,
+    EntryStatus,
+    ItemModel,
+    PersonalEntry,
+    Role,
+    Setting,
+    User,
+    WorkEntry,
+)
+from bot.services.matcher import normalize
 
 # --- Sozlamalar -------------------------------------------------------------
 
@@ -16,30 +32,50 @@ ALL_CURRENCIES = ("UZS", "USD", "KRW")
 DEFAULT_SETTINGS = {
     "require_approval": "1",
     "currencies": ",".join(ALL_CURRENCIES),
+    # Summa valyutasiz aytilsa shu valyuta olinadi
+    "main_currency": ALL_CURRENCIES[0],
 }
 
 
-async def get_setting(session: AsyncSession, key: str) -> str:
-    row = await session.get(Setting, key)
+async def get_setting(session: AsyncSession, owner_id: int, key: str) -> str:
+    row = await session.get(Setting, (owner_id, key))
     return row.value if row else DEFAULT_SETTINGS[key]
 
 
-async def set_setting(session: AsyncSession, key: str, value: str) -> None:
-    row = await session.get(Setting, key)
+async def set_setting(session: AsyncSession, owner_id: int, key: str, value: str) -> None:
+    row = await session.get(Setting, (owner_id, key))
     if row:
         row.value = value
     else:
-        session.add(Setting(key=key, value=value))
+        session.add(Setting(owner_id=owner_id, key=key, value=value))
     await session.flush()
 
 
-async def require_approval(session: AsyncSession) -> bool:
-    return await get_setting(session, "require_approval") == "1"
+async def require_approval(session: AsyncSession, owner_id: int) -> bool:
+    return await get_setting(session, owner_id, "require_approval") == "1"
 
 
-async def enabled_currencies(session: AsyncSession) -> list[str]:
-    raw = await get_setting(session, "currencies")
-    return [c for c in raw.split(",") if c in ALL_CURRENCIES]
+async def enabled_currencies(session: AsyncSession, owner_id: int) -> list[str]:
+    """Yoqilgan valyutalar, asosiysi birinchi."""
+    raw = await get_setting(session, owner_id, "currencies")
+    enabled = [c for c in raw.split(",") if c in ALL_CURRENCIES]
+    main = await get_setting(session, owner_id, "main_currency")
+    if main in enabled:
+        enabled.remove(main)
+        enabled.insert(0, main)
+    return enabled
+
+
+async def set_currencies(session: AsyncSession, owner_id: int, codes: list[str]) -> None:
+    await set_setting(session, owner_id, "currencies", ",".join(c for c in ALL_CURRENCIES if c in codes))
+
+
+async def set_main_currency(session: AsyncSession, owner_id: int, code: str) -> None:
+    """Asosiy valyuta o'chirilgan bo'lsa — uni yoqib ham qo'yadi."""
+    enabled = await enabled_currencies(session, owner_id)
+    if code not in enabled:
+        await set_currencies(session, owner_id, enabled + [code])
+    await set_setting(session, owner_id, "main_currency", code)
 
 
 # --- Foydalanuvchilar -------------------------------------------------------
@@ -56,19 +92,21 @@ async def ensure_owner(session: AsyncSession, tg_id: int, name: str) -> User:
         await session.flush()
     elif user.role != Role.OWNER:
         user.role = Role.OWNER
+        user.owner_id = None
     return user
 
 
-async def get_owners(session: AsyncSession) -> list[User]:
-    """Botga ulangan barcha egalar (xabarnoma yuborish uchun)."""
-    q = select(User).where(User.role == Role.OWNER, User.tg_id.is_not(None)).order_by(User.id)
-    return list((await session.scalars(q)).all())
-
-
-async def create_worker(session: AsyncSession, name: str) -> User:
-    user = User(name=name, role=Role.WORKER, invite_token=secrets.token_urlsafe(12))
+async def create_worker(session: AsyncSession, owner_id: int, name: str) -> User:
+    user = User(name=name, role=Role.WORKER, owner_id=owner_id, invite_token=secrets.token_urlsafe(12))
     session.add(user)
     await session.flush()
+    return user
+
+
+async def get_worker(session: AsyncSession, owner_id: int, worker_id: int) -> User | None:
+    user = await session.get(User, worker_id)
+    if user is None or user.role != Role.WORKER or user.owner_id != owner_id:
+        return None
     return user
 
 
@@ -92,8 +130,8 @@ async def link_invite(session: AsyncSession, token: str, tg_id: int) -> User | N
     return user
 
 
-async def list_workers(session: AsyncSession, active_only: bool = True) -> list[User]:
-    q = select(User).where(User.role == Role.WORKER).order_by(User.name)
+async def list_workers(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[User]:
+    q = select(User).where(User.role == Role.WORKER, User.owner_id == owner_id).order_by(User.name)
     if active_only:
         q = q.where(User.is_active.is_(True))
     return list(await session.scalars(q))
@@ -101,21 +139,28 @@ async def list_workers(session: AsyncSession, active_only: bool = True) -> list[
 
 # --- Modellar ---------------------------------------------------------------
 
-async def list_models(session: AsyncSession, active_only: bool = True) -> list[ItemModel]:
-    q = select(ItemModel).order_by(ItemModel.name)
+async def list_models(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[ItemModel]:
+    q = select(ItemModel).where(ItemModel.owner_id == owner_id).order_by(ItemModel.name)
     if active_only:
         q = q.where(ItemModel.is_active.is_(True))
     return list(await session.scalars(q))
 
 
-async def get_model_by_name(session: AsyncSession, name: str) -> ItemModel | None:
-    return await session.scalar(select(ItemModel).where(func.lower(ItemModel.name) == name.lower()))
+async def get_model(session: AsyncSession, owner_id: int, model_id: int) -> ItemModel | None:
+    model = await session.get(ItemModel, model_id)
+    return model if model is not None and model.owner_id == owner_id else None
+
+
+async def get_model_by_name(session: AsyncSession, owner_id: int, name: str) -> ItemModel | None:
+    return await session.scalar(
+        select(ItemModel).where(ItemModel.owner_id == owner_id, func.lower(ItemModel.name) == name.lower())
+    )
 
 
 async def create_model(
-    session: AsyncSession, name: str, price: Decimal | None = None, currency: str = "UZS"
+    session: AsyncSession, owner_id: int, name: str, price: Decimal | None = None, currency: str = "UZS"
 ) -> ItemModel:
-    model = ItemModel(name=name, price=price, currency=currency)
+    model = ItemModel(owner_id=owner_id, name=name, price=price, currency=currency)
     session.add(model)
     await session.flush()
     return model
@@ -123,24 +168,24 @@ async def create_model(
 
 # --- Taxalluslar (ovozdagi xato ismlar) -------------------------------------
 
-async def get_aliases(session: AsyncSession, entity_type: str) -> list[tuple[int, str]]:
+async def get_aliases(session: AsyncSession, owner_id: int, entity_type: str) -> list[tuple[int, str]]:
     rows = await session.execute(
-        select(Alias.entity_id, Alias.alias).where(Alias.entity_type == entity_type)
+        select(Alias.entity_id, Alias.alias).where(Alias.owner_id == owner_id, Alias.entity_type == entity_type)
     )
     return [(r[0], r[1]) for r in rows]
 
 
-async def save_alias(session: AsyncSession, entity_type: str, entity_id: int, alias: str) -> None:
+async def save_alias(session: AsyncSession, owner_id: int, entity_type: str, entity_id: int, alias: str) -> None:
     alias = alias.strip().lower()[:100]
     if not alias:
         return
     row = await session.scalar(
-        select(Alias).where(Alias.entity_type == entity_type, Alias.alias == alias)
+        select(Alias).where(Alias.owner_id == owner_id, Alias.entity_type == entity_type, Alias.alias == alias)
     )
     if row:
         row.entity_id = entity_id
     else:
-        session.add(Alias(entity_type=entity_type, entity_id=entity_id, alias=alias))
+        session.add(Alias(owner_id=owner_id, entity_type=entity_type, entity_id=entity_id, alias=alias))
     await session.flush()
 
 
@@ -150,9 +195,9 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def get_work_entry(session: AsyncSession, entry_id: int) -> WorkEntry | None:
+async def get_work_entry(session: AsyncSession, owner_id: int, entry_id: int) -> WorkEntry | None:
     entry = await session.get(WorkEntry, entry_id)
-    if entry is None or entry.deleted_at is not None:
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
         return None
     return entry
 
@@ -160,6 +205,7 @@ async def get_work_entry(session: AsyncSession, entry_id: int) -> WorkEntry | No
 async def create_work_entry(
     session: AsyncSession,
     *,
+    owner_id: int,
     worker_id: int,
     model_id: int,
     quantity: int,
@@ -168,8 +214,9 @@ async def create_work_entry(
     raw_text: str | None,
     created_by: int,
 ) -> WorkEntry:
-    model = await session.get(ItemModel, model_id)
+    model = await get_model(session, owner_id, model_id)
     entry = WorkEntry(
+        owner_id=owner_id,
         worker_id=worker_id,
         model_id=model_id,
         quantity=quantity,
@@ -186,7 +233,7 @@ async def create_work_entry(
     return entry
 
 
-async def soft_delete_work_entry(session: AsyncSession, entry: WorkEntry) -> None:
+async def soft_delete(session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry) -> None:
     entry.deleted_at = _now()
     await session.flush()
 
@@ -199,11 +246,11 @@ async def review_work_entry(session: AsyncSession, entry: WorkEntry, reviewer: U
 
 
 async def recent_work_entries(
-    session: AsyncSession, worker_id: int | None = None, limit: int = 10
+    session: AsyncSession, owner_id: int, worker_id: int | None = None, limit: int = 10
 ) -> list[WorkEntry]:
     q = (
         select(WorkEntry)
-        .where(WorkEntry.deleted_at.is_(None))
+        .where(WorkEntry.owner_id == owner_id, WorkEntry.deleted_at.is_(None))
         .order_by(WorkEntry.id.desc())
         .limit(limit)
     )
@@ -212,10 +259,14 @@ async def recent_work_entries(
     return list(await session.scalars(q))
 
 
-async def pending_work_entries(session: AsyncSession) -> list[WorkEntry]:
+async def pending_work_entries(session: AsyncSession, owner_id: int) -> list[WorkEntry]:
     q = (
         select(WorkEntry)
-        .where(WorkEntry.deleted_at.is_(None), WorkEntry.status == EntryStatus.PENDING)
+        .where(
+            WorkEntry.owner_id == owner_id,
+            WorkEntry.deleted_at.is_(None),
+            WorkEntry.status == EntryStatus.PENDING,
+        )
         .order_by(WorkEntry.id)
     )
     return list(await session.scalars(q))
@@ -238,7 +289,7 @@ class WorkReportRow:
 
 
 async def work_report(
-    session: AsyncSession, start: date, end: date, worker_id: int | None = None
+    session: AsyncSession, owner_id: int, start: date, end: date, worker_id: int | None = None
 ) -> list[WorkReportRow]:
     """Tasdiqlangan ishlar: ishchi va model bo'yicha jamlangan (start..end, ikkalasi ham kiradi)."""
     price = func.coalesce(WorkEntry.unit_price, ItemModel.price)
@@ -256,6 +307,7 @@ async def work_report(
         .join(User, User.id == WorkEntry.worker_id)
         .join(ItemModel, ItemModel.id == WorkEntry.model_id)
         .where(
+            WorkEntry.owner_id == owner_id,
             WorkEntry.deleted_at.is_(None),
             WorkEntry.status == EntryStatus.APPROVED,
             WorkEntry.work_date >= start,
@@ -285,7 +337,7 @@ class WorkStatRow:
 
 
 async def work_stat_rows(
-    session: AsyncSession, start: date, end: date, worker_id: int | None = None
+    session: AsyncSession, owner_id: int, start: date, end: date, worker_id: int | None = None
 ) -> list[WorkStatRow]:
     """Tasdiqlangan ishlar: kun, ishchi va model bo'yicha jamlangan — grafiklar uchun."""
     price = func.coalesce(WorkEntry.unit_price, ItemModel.price)
@@ -304,6 +356,7 @@ async def work_stat_rows(
         .join(User, User.id == WorkEntry.worker_id)
         .join(ItemModel, ItemModel.id == WorkEntry.model_id)
         .where(
+            WorkEntry.owner_id == owner_id,
             WorkEntry.deleted_at.is_(None),
             WorkEntry.status == EntryStatus.APPROVED,
             WorkEntry.work_date >= start,
@@ -324,6 +377,7 @@ async def work_stat_rows(
 
 async def list_work_entries(
     session: AsyncSession,
+    owner_id: int,
     *,
     status: str | None = None,
     worker_id: int | None = None,
@@ -332,7 +386,7 @@ async def list_work_entries(
 ) -> list[WorkEntry]:
     q = (
         select(WorkEntry)
-        .where(WorkEntry.deleted_at.is_(None))
+        .where(WorkEntry.owner_id == owner_id, WorkEntry.deleted_at.is_(None))
         .order_by(WorkEntry.work_date.desc(), WorkEntry.id.desc())
         .limit(limit)
         .offset(offset)
@@ -344,10 +398,225 @@ async def list_work_entries(
     return list(await session.scalars(q))
 
 
-async def count_pending(session: AsyncSession, worker_id: int | None = None) -> int:
+async def count_pending(session: AsyncSession, owner_id: int, worker_id: int | None = None) -> int:
     q = select(func.count(WorkEntry.id)).where(
-        WorkEntry.deleted_at.is_(None), WorkEntry.status == EntryStatus.PENDING
+        WorkEntry.owner_id == owner_id, WorkEntry.deleted_at.is_(None), WorkEntry.status == EntryStatus.PENDING
     )
     if worker_id is not None:
         q = q.where(WorkEntry.worker_id == worker_id)
     return int(await session.scalar(q) or 0)
+
+
+# --- Shaxsiy xarajat / daromad ----------------------------------------------
+
+async def create_personal_entry(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    kind: str,
+    category: str,
+    amount: Decimal,
+    currency: str,
+    note: str | None,
+    entry_date: date,
+    raw_text: str | None,
+) -> PersonalEntry:
+    entry = PersonalEntry(
+        owner_id=owner_id,
+        kind=kind,
+        category=category[:50],
+        amount=amount,
+        currency=currency,
+        note=note,
+        entry_date=entry_date,
+        raw_text=raw_text,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def get_personal_entry(session: AsyncSession, owner_id: int, entry_id: int) -> PersonalEntry | None:
+    entry = await session.get(PersonalEntry, entry_id)
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
+        return None
+    return entry
+
+
+async def list_personal_entries(
+    session: AsyncSession, owner_id: int, *, limit: int = 30, offset: int = 0
+) -> list[PersonalEntry]:
+    q = (
+        select(PersonalEntry)
+        .where(PersonalEntry.owner_id == owner_id, PersonalEntry.deleted_at.is_(None))
+        .order_by(PersonalEntry.entry_date.desc(), PersonalEntry.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(await session.scalars(q))
+
+
+@dataclass
+class PersonalStatRow:
+    entry_date: date
+    kind: str
+    category: str
+    currency: str
+    amount: Decimal
+
+
+async def personal_stat_rows(session: AsyncSession, owner_id: int, start: date, end: date) -> list[PersonalStatRow]:
+    """Kun, tur, kategoriya va valyuta bo'yicha jamlangan summalar."""
+    q = (
+        select(
+            PersonalEntry.entry_date,
+            PersonalEntry.kind,
+            PersonalEntry.category,
+            PersonalEntry.currency,
+            func.sum(PersonalEntry.amount),
+        )
+        .where(
+            PersonalEntry.owner_id == owner_id,
+            PersonalEntry.deleted_at.is_(None),
+            PersonalEntry.entry_date >= start,
+            PersonalEntry.entry_date <= end,
+        )
+        .group_by(PersonalEntry.entry_date, PersonalEntry.kind, PersonalEntry.category, PersonalEntry.currency)
+    )
+    rows = await session.execute(q)
+    return [PersonalStatRow(r[0], r[1], r[2], r[3], Decimal(str(r[4] or 0))) for r in rows]
+
+
+async def personal_categories(session: AsyncSession, owner_id: int) -> list[str]:
+    """Ishlatilgan kategoriyalar — ko'p ishlatilgani birinchi."""
+    q = (
+        select(PersonalEntry.category)
+        .where(PersonalEntry.owner_id == owner_id, PersonalEntry.deleted_at.is_(None))
+        .group_by(PersonalEntry.category)
+        .order_by(func.count(PersonalEntry.id).desc())
+        .limit(40)
+    )
+    return list(await session.scalars(q))
+
+
+# --- Qarzlar ----------------------------------------------------------------
+
+def person_key(name: str) -> str:
+    return (normalize(name) or name.strip().lower())[:100]
+
+
+async def create_debt_entry(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    person: str,
+    direction: str,
+    amount: Decimal,
+    currency: str,
+    note: str | None,
+    entry_date: date,
+    raw_text: str | None,
+) -> DebtEntry:
+    person = person.strip()[:100]
+    entry = DebtEntry(
+        owner_id=owner_id,
+        person=person,
+        person_key=person_key(person),
+        direction=direction,
+        amount=amount,
+        currency=currency,
+        note=note,
+        entry_date=entry_date,
+        raw_text=raw_text,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def get_debt_entry(session: AsyncSession, owner_id: int, entry_id: int) -> DebtEntry | None:
+    entry = await session.get(DebtEntry, entry_id)
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
+        return None
+    return entry
+
+
+async def list_debt_entries(
+    session: AsyncSession, owner_id: int, *, key: str | None = None, limit: int = 30, offset: int = 0
+) -> list[DebtEntry]:
+    q = (
+        select(DebtEntry)
+        .where(DebtEntry.owner_id == owner_id, DebtEntry.deleted_at.is_(None))
+        .order_by(DebtEntry.entry_date.desc(), DebtEntry.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if key is not None:
+        q = q.where(DebtEntry.person_key == key)
+    return list(await session.scalars(q))
+
+
+@dataclass
+class DebtBalance:
+    key: str
+    person: str  # birinchi yozilishi
+    # valyuta -> qoldiq: musbat — u menga qarzdor, manfiy — men unga qarzdorman
+    balance: dict[str, Decimal] = field(default_factory=dict)
+    last_date: date | None = None
+    count: int = 0
+
+    @property
+    def settled(self) -> bool:
+        return not any(self.balance.values())
+
+
+async def debt_balances(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
+    signed = case((DebtEntry.direction == DebtDirection.OUT, DebtEntry.amount), else_=-DebtEntry.amount)
+    alive = (DebtEntry.owner_id == owner_id, DebtEntry.deleted_at.is_(None))
+    rows = await session.execute(
+        select(
+            DebtEntry.person_key,
+            DebtEntry.currency,
+            func.sum(signed),
+            func.max(DebtEntry.entry_date),
+            func.count(DebtEntry.id),
+        )
+        .where(*alive)
+        .group_by(DebtEntry.person_key, DebtEntry.currency)
+    )
+    balances: dict[str, DebtBalance] = {}
+    for key, currency, total, last, count in rows:
+        b = balances.setdefault(key, DebtBalance(key=key, person=key))
+        b.balance[currency] = Decimal(str(total or 0))
+        b.last_date = max(filter(None, [b.last_date, last]), default=None)
+        b.count += int(count)
+
+    # Ism birinchi yozilganidek ko'rsatiladi (keyingi yozuvlar ham shu ismga moslanadi)
+    names = await session.execute(
+        select(DebtEntry.person_key, DebtEntry.person).where(*alive).order_by(DebtEntry.id.desc())
+    )
+    for key, person in names:
+        if key in balances:
+            balances[key].person = person
+
+    result = list(balances.values())
+    result.sort(key=lambda b: (b.settled, -(b.last_date or date.min).toordinal(), b.person.lower()))
+    return result
+
+
+def debt_totals(balances: list[DebtBalance]) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
+    """(menga qarzlar, mening qarzlarim) — valyuta bo'yicha, ikkalasi ham musbat son."""
+    owed_to_me: dict[str, Decimal] = defaultdict(Decimal)
+    i_owe: dict[str, Decimal] = defaultdict(Decimal)
+    for b in balances:
+        for currency, value in b.balance.items():
+            if value > 0:
+                owed_to_me[currency] += value
+            elif value < 0:
+                i_owe[currency] += -value
+    return dict(owed_to_me), dict(i_owe)
+
+
+async def debt_people(session: AsyncSession, owner_id: int) -> list[tuple[str, str]]:
+    """(person_key, ism) — LLM va moslashtirish uchun."""
+    return [(b.key, b.person) for b in await debt_balances(session, owner_id)]

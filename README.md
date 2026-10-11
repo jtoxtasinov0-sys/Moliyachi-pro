@@ -2,7 +2,11 @@
 
 Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini App.
 
-**Holat:** 1-bosqich — bot, ovoz → matn, tasdiqlash, ishchilar bo'limi, Mini App (hisobot grafiklari).
+**Holat:** bot, ovoz → matn, tasdiqlash, ishchilar bo'limi, shaxsiy xarajat/daromad va qarzlar,
+Mini App (hisobot grafiklari, «Hamyon»).
+
+Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
+xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.
 
 ## Kompyuterda ishga tushirish (Windows)
 
@@ -54,7 +58,7 @@ Bepul tarifda server 15 daqiqa ishlatilmasa uxlaydi; Telegram xabari kelganda uy
 bot/
   __main__.py        ishga tushirish (webhook yoki polling + veb-server)
   config.py          .env sozlamalari
-  db/models.py       jadvallar (barcha 3 bo'lim)
+  db/models.py       jadvallar (har bir egada alohida kabinet)
   db/repo.py         bazaga so'rovlar
   services/stt.py    ElevenLabs Scribe
   services/llm.py    Claude: matn → JSON

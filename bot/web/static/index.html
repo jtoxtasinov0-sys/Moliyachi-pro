@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=2">
+  <link rel="stylesheet" href="static/style.css?v=3">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -102,8 +102,79 @@
         <button class="ghost-btn" id="moreBtn" hidden>Yana yuklash</button>
       </section>
 
+      <!-- Hamyon (egasining shaxsiy xarajatlari va qarzlari) -->
+      <section class="view" id="view-wallet" hidden>
+        <div class="seg two" id="walletTabs">
+          <button data-tab="money" class="on">Xarajatlar</button>
+          <button data-tab="debts">Qarzlar</button>
+        </div>
+
+        <div id="walletMoney">
+          <div class="seg" id="wPeriodSeg">
+            <button data-period="day">Bugun</button>
+            <button data-period="week">Hafta</button>
+            <button data-period="month" class="on">Oy</button>
+            <button data-period="year">Yil</button>
+          </div>
+          <div class="hero">
+            <div class="hero-circle c1"></div>
+            <div class="hero-circle c2"></div>
+            <div class="hero-label">Xarajatlar</div>
+            <div class="hero-amount" id="wAmount">—</div>
+            <div class="hero-extra" id="wExtra"></div>
+            <div class="hero-row two">
+              <div class="hero-stat"><span id="wIncome">0</span><small>daromad</small></div>
+              <div class="hero-stat"><span id="wNet">0</span><small>qoldiq</small></div>
+            </div>
+            <div class="delta" id="wDelta"></div>
+            <div class="hero-range" id="wRange"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 id="wChartTitle">Dinamika</h3></div>
+            <div class="chart-box"><canvas id="wTrendChart"></canvas></div>
+            <div class="empty-note" id="wTrendEmpty" hidden>Bu davrda xarajat yo'q</div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Kategoriyalar</h3><span class="muted" id="wCatCount"></span></div>
+            <div class="donut-wrap">
+              <div class="donut-box">
+                <canvas id="wCatChart"></canvas>
+                <div class="donut-center"><b id="wDonutTotal">0</b><small id="wDonutCur"></small></div>
+              </div>
+              <ul class="legend" id="wCatLegend"></ul>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Oxirgi yozuvlar</h3></div>
+            <div id="wEntryList"></div>
+            <button class="ghost-btn flat" id="wMoreBtn" hidden>Yana yuklash</button>
+          </div>
+        </div>
+
+        <div id="walletDebts" hidden>
+          <div class="hero">
+            <div class="hero-circle c1"></div>
+            <div class="hero-circle c2"></div>
+            <div class="hero-label">Qarzlar balansi</div>
+            <div class="hero-row two">
+              <div class="hero-stat"><span id="dOwed">0</span><small>sizga qarzlar</small></div>
+              <div class="hero-stat"><span id="dOwe">0</span><small>sizning qarzingiz</small></div>
+            </div>
+          </div>
+          <p class="muted small hint">Yozish uchun botga ayting: «Abbosdan 100 ming won oldim», «Valiga 50 dollar qarz berdim», «Abbosga 30 mingini qaytardim».</p>
+          <div id="debtList"></div>
+        </div>
+      </section>
+
       <!-- Ishchilar -->
       <section class="view" id="view-workers" hidden>
+        <div class="seg two team-seg" hidden>
+          <button data-team="workers" class="on">Ishchilar</button>
+          <button data-team="models">Modellar</button>
+        </div>
         <div class="page-head">
           <h2 class="page-title">Ishchilar</h2>
           <button class="pill-btn" id="addWorkerBtn">+ Qo'shish</button>
@@ -113,6 +184,10 @@
 
       <!-- Modellar -->
       <section class="view" id="view-models" hidden>
+        <div class="seg two team-seg" hidden>
+          <button data-team="workers">Ishchilar</button>
+          <button data-team="models" class="on">Modellar</button>
+        </div>
         <div class="page-head">
           <h2 class="page-title" id="modelsTitle">Modellar</h2>
           <button class="pill-btn" id="addModelBtn" hidden>+ Qo'shish</button>
@@ -152,13 +227,17 @@
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
       </div>
-      <button data-view="workers" id="navWorkers">
-        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8M16 5.2a3 3 0 0 1 0 5.6M18 14.6c1.4.7 2.3 2.2 2.6 4.4"/></svg>
-        <span>Ishchilar</span>
+      <button data-view="wallet" id="navWallet" hidden>
+        <svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5V17a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H6.5A2.5 2.5 0 0 1 4 7.5Z"/><path d="M16 13.5h.01"/></svg>
+        <span>Hamyon</span>
       </button>
-      <button data-view="models">
+      <button data-view="workers" id="navWorkers" hidden>
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.8 5.5-4.8s4.9 1.8 5.5 4.8M16 5.2a3 3 0 0 1 0 5.6M18 14.6c1.4.7 2.3 2.2 2.6 4.4"/></svg>
+        <span>Jamoa</span>
+      </button>
+      <button data-view="models" id="navModels" hidden>
         <svg viewBox="0 0 24 24"><path d="M12 3 3 7.5l9 4.5 9-4.5L12 3ZM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-        <span id="navModelsLabel">Modellar</span>
+        <span>Narxlar</span>
       </button>
       <button data-view="help" id="navHelp" hidden>
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/></svg>
@@ -176,6 +255,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=2"></script>
+  <script src="static/app.js?v=3"></script>
 </body>
 </html>

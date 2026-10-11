@@ -242,6 +242,29 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .tag.wait { background: var(--amber-soft); color: var(--amber); }
 .tag.off { background: var(--red-soft); color: var(--red); }
 
+/* Hamyon: xarajatlar va qarzlar */
+.seg.two { grid-template-columns: 1fr 1fr; }
+.hero-row.two { grid-template-columns: 1fr 1fr; }
+.hero-stat span.long { font-size: 15px; line-height: 1.3; }
+.hint { margin: 12px 4px; line-height: 1.45; }
+#wCatLegend .pct { display: none; }
+.ghost-btn.flat { box-shadow: none; background: var(--bg); }
+.mini-entry { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.mini-entry:first-child { border-top: 0; padding-top: 0; }
+.mini-icon {
+  width: 40px; height: 40px; border-radius: 14px; flex: none;
+  display: grid; place-items: center; font-size: 18px; background: var(--blue-soft);
+}
+.mini-icon.in { background: var(--green-soft); }
+.mini-icon.out { background: var(--red-soft); }
+.mini-entry .info { flex: 1; min-width: 0; }
+.mini-entry .info b { display: block; font-size: 14.5px; }
+.mini-entry .info small { display: block; color: var(--muted); font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-entry .amt { font-weight: 800; text-align: right; flex: none; font-size: 14.5px; }
+.amt.pos, .side.pos { color: var(--green); }
+.amt.neg, .side.neg { color: var(--red); }
+.mini-del { width: 34px; height: 34px; border-radius: 10px; background: var(--red-soft); color: var(--red); flex: none; font-size: 14px; }
+
 .help p { color: var(--muted); font-weight: 600; line-height: 1.5; margin: 8px 0; }
 .help .quote { background: var(--blue-soft); color: var(--navy); padding: 10px 12px; border-radius: 12px; font-style: italic; }
 

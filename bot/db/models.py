@@ -1,7 +1,8 @@
 """Ma'lumotlar bazasi jadvallari.
 
-Uchta bo'lim (ishchilar, mijozlar, shaxsiy) alohida jadvallarda saqlanadi,
-shuning uchun ular bir-biriga aralashmaydi.
+Har bir ega — alohida kabinet: ishchilar, modellar, sozlamalar, ish yozuvlari,
+shaxsiy xarajatlar va qarzlar egasining id si (owner_id) bilan ajratiladi.
+Bir ega boshqa eganing hech narsasini ko'rmaydi.
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -45,6 +46,8 @@ class User(Base):
     tg_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     name: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(10), default=Role.WORKER)
+    # Ishchi qaysi egaga tegishli (egada — bo'sh)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     # Ishchi taklif havolasi orqali ulanmaguncha shu token saqlanadi
     invite_token: Mapped[str | None] = mapped_column(String(32), unique=True)
@@ -54,14 +57,21 @@ class User(Base):
     def is_owner(self) -> bool:
         return self.role == Role.OWNER
 
+    @property
+    def account_id(self) -> int:
+        """Kabinet: egada — o'zi, ishchida — uning egasi."""
+        return self.id if self.is_owner else self.owner_id
+
 
 class ItemModel(Base):
     """Mahsulot modeli (masalan, "A-12"). Narx — bir dona uchun ish haqi."""
 
     __tablename__ = "item_models"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -72,9 +82,10 @@ class Alias(Base):
     """Ovozdan noto'g'ri chiqqan ismlarni eslab qolish: "alishir" -> Alisher."""
 
     __tablename__ = "aliases"
-    __table_args__ = (UniqueConstraint("entity_type", "alias"),)
+    __table_args__ = (UniqueConstraint("owner_id", "entity_type", "alias"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     entity_type: Mapped[str] = mapped_column(String(20))  # worker | model | client
     entity_id: Mapped[int]
     alias: Mapped[str] = mapped_column(String(100))
@@ -83,6 +94,7 @@ class Alias(Base):
 class Setting(Base):
     __tablename__ = "settings"
 
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
 
@@ -99,6 +111,7 @@ class WorkEntry(TimestampMixin, Base):
     __tablename__ = "work_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     worker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     model_id: Mapped[int] = mapped_column(ForeignKey("item_models.id"))
     quantity: Mapped[int]
@@ -117,13 +130,15 @@ class WorkEntry(TimestampMixin, Base):
     model: Mapped[ItemModel] = relationship(lazy="joined")
 
 
-# --- 2. Mijozlar (2-bosqich) ------------------------------------------------
+# --- 2. Mijozlar (keyingi bosqich) ------------------------------------------
 
 class Client(Base):
     __tablename__ = "clients"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
     phone: Mapped[str | None] = mapped_column(String(30))
     note: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -134,6 +149,7 @@ class ClientEntry(TimestampMixin, Base):
     __tablename__ = "client_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
     direction: Mapped[str] = mapped_column(String(10))  # received | given
     model_id: Mapped[int | None] = mapped_column(ForeignKey("item_models.id"))
@@ -149,23 +165,20 @@ class ClientEntry(TimestampMixin, Base):
     model: Mapped[ItemModel | None] = relationship(lazy="joined")
 
 
-# --- 3. Shaxsiy (3-bosqich) -------------------------------------------------
+# --- 3. Shaxsiy: xarajat/daromad va qarzlar ---------------------------------
 
-class Category(Base):
-    __tablename__ = "categories"
-    __table_args__ = (UniqueConstraint("name", "kind"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    kind: Mapped[str] = mapped_column(String(10))  # expense | income
+class PersonalKind:
+    EXPENSE = "expense"
+    INCOME = "income"
 
 
 class PersonalEntry(TimestampMixin, Base):
     __tablename__ = "personal_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(10))  # expense | income
-    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"))
+    category: Mapped[str] = mapped_column(String(50))
     amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     note: Mapped[str | None] = mapped_column(Text)
@@ -173,4 +186,27 @@ class PersonalEntry(TimestampMixin, Base):
     raw_text: Mapped[str | None] = mapped_column(Text)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    category: Mapped[Category | None] = relationship(lazy="joined")
+
+class DebtDirection:
+    IN = "in"  # men undan pul oldim (qarz oldim yoki u qarzini qaytardi)
+    OUT = "out"  # men unga pul berdim (qarz berdim yoki qarzimni qaytardim)
+
+
+class DebtEntry(TimestampMixin, Base):
+    """Qarz harakati. Odam bo'yicha qoldiq = berilgan − olingan:
+    musbat — u menga qarzdor, manfiy — men unga qarzdorman."""
+
+    __tablename__ = "debt_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    person: Mapped[str] = mapped_column(String(100))
+    # Bir odamning turli yozilishlarini ("Abbos", "аббос") birlashtirish uchun
+    person_key: Mapped[str] = mapped_column(String(100), index=True)
+    direction: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    note: Mapped[str | None] = mapped_column(Text)
+    entry_date: Mapped[date] = mapped_column(Date, index=True)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

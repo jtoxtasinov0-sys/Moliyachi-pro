@@ -10,6 +10,7 @@ const state = {
   entries: { status: "", workerId: "", offset: 0, items: [] },
   workers: [],
   models: [],
+  wallet: { tab: "money", period: "month", data: null, entries: { offset: 0, items: [] }, debts: null },
 };
 const charts = {};
 
@@ -20,6 +21,9 @@ const WD_LONG = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "sha
 const MON = ["Yan", "Fev", "Mar", "Apr", "May", "Iyn", "Iyl", "Avg", "Sen", "Okt", "Noy", "Dek"];
 const MON_LONG = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
 const PALETTE = ["#0f1f57", "#2b4fc9", "#5b7cf0", "#93aaf7", "#c6d3fb", "#e8972a", "#12a26b", "#9aa3bd"];
+const CHART_TITLES = { day: "Oxirgi 7 kun", week: "Hafta kunlari", month: "Kunlar bo'yicha", year: "Oylar bo'yicha" };
+const PREV_LABELS = { day: "kechaga", week: "o'tgan haftaga", month: "o'tgan oyga", year: "o'tgan yilga" };
+const SKELETONS = '<div class="skeleton"></div><div class="skeleton"></div>';
 
 // --- Yordamchilar -----------------------------------------------------------
 
@@ -53,9 +57,17 @@ function mainCurrency(pay) {
 const parseDate = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
 
+function rangeLabel(startIso, endIso) {
+  const s = parseDate(startIso), e = parseDate(endIso);
+  return startIso === endIso
+    ? `${s.getDate()}-${MON_LONG[s.getMonth()]} ${s.getFullYear()}`
+    : `${s.getDate()}-${MON_LONG[s.getMonth()]} — ${e.getDate()}-${MON_LONG[e.getMonth()]} ${e.getFullYear()}`;
+}
+
 function dateLabel(iso) {
   const d = parseDate(iso);
-  const today = parseDate(state.dash ? state.dash.today : new Date().toISOString().slice(0, 10));
+  const todayIso = (state.dash && state.dash.today) || (state.wallet.data && state.wallet.data.today);
+  const today = todayIso ? parseDate(todayIso) : new Date(new Date().toDateString());
   const diff = Math.round((today - d) / 864e5);
   const base = `${d.getDate()}-${MON_LONG[d.getMonth()]}`;
   if (diff === 0) return `Bugun · ${base}`;
@@ -116,14 +128,103 @@ function fail(err) {
 
 function show(view) {
   state.view = view;
+  // Egada «Modellar» — «Jamoa» bo'limining ichida
+  const navView = view === "models" && state.me && state.me.is_owner ? "workers" : view;
   document.querySelectorAll(".view").forEach((el) => (el.hidden = el.id !== `view-${view}`));
-  document.querySelectorAll("#nav > button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
+  document.querySelectorAll("#nav > button").forEach((b) => b.classList.toggle("on", b.dataset.view === navView));
   window.scrollTo({ top: 0 });
   haptic();
   if (view === "home") loadDashboard();
   if (view === "entries") loadEntries(true);
+  if (view === "wallet") loadWallet();
   if (view === "workers") loadWorkers();
   if (view === "models") loadModels();
+}
+
+// --- Grafiklar ---------------------------------------------------------------
+
+const TOOLTIP = {
+  backgroundColor: "#0a1640",
+  padding: 10,
+  cornerRadius: 12,
+  displayColors: false,
+  titleFont: { family: "Manrope", weight: "700" },
+  bodyFont: { family: "Manrope", weight: "700", size: 14 },
+};
+
+// Ustunli grafik: bugungi ustun — to'q sariq, kelajak — och kulrang
+function drawBars(key, canvasId, points, values, opts) {
+  const isMonth = opts.bucket === "month";
+  const labels = points.map((p) => {
+    if (isMonth) return MON[Number(p.key.slice(5, 7)) - 1];
+    const dt = parseDate(p.key);
+    return opts.period === "month" ? String(dt.getDate()) : WD[(dt.getDay() + 6) % 7];
+  });
+  const todayKey = isMonth ? opts.today.slice(0, 7) : opts.today;
+
+  const ctx = $(canvasId).getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 0, 220);
+  grad.addColorStop(0, "#3d63e0");
+  grad.addColorStop(1, "#0f1f57");
+  const colors = points.map((p) => (p.key === todayKey ? "#e8972a" : p.key > todayKey ? "#dfe5f4" : grad));
+
+  if (charts[key]) charts[key].destroy();
+  charts[key] = new Chart(ctx, {
+    type: "bar",
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 8, borderSkipped: false, maxBarThickness: 26 }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 500 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...TOOLTIP,
+          callbacks: {
+            title: (items) => {
+              const p = points[items[0].dataIndex];
+              if (isMonth) return MON_LONG[Number(p.key.slice(5, 7)) - 1];
+              const dt = parseDate(p.key);
+              return `${dt.getDate()}-${MON_LONG[dt.getMonth()]}, ${WD_LONG[(dt.getDay() + 6) % 7]}`;
+            },
+            label: (item) => opts.label(points[item.dataIndex], item.raw),
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, border: { display: false }, ticks: { color: "#6b7591", font: { family: "Manrope", weight: "600", size: 11 }, autoSkip: true, maxRotation: 0 } },
+        y: { beginAtZero: true, border: { display: false }, grid: { color: "#eef1f8" }, ticks: { color: "#9aa3bd", font: { family: "Manrope", size: 11 }, maxTicksLimit: 5, precision: 0, callback: (v) => fmtShort(v) } },
+      },
+    },
+  });
+}
+
+// Halqa grafik + yonidagi ro'yxat. rows: [{name, value}] — 6 tadan ko'pi «Boshqa»ga
+function drawDonut(key, canvasId, legendId, items, fmtValue, fmtLegend) {
+  const rows = items.slice(0, 6);
+  if (items.length > 6) rows.push({ name: "Boshqa", value: items.slice(6).reduce((s, r) => s + r.value, 0) });
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  const colors = rows.length ? rows.map((_, i) => PALETTE[i % PALETTE.length]) : ["#eef1f8"];
+
+  if (charts[key]) charts[key].destroy();
+  charts[key] = new Chart($(canvasId), {
+    type: "doughnut",
+    data: { labels: rows.map((r) => r.name), datasets: [{ data: rows.length ? rows.map((r) => r.value) : [1], backgroundColor: colors, borderWidth: 3, borderColor: "#fff", hoverOffset: 6 }] },
+    options: {
+      cutout: "70%",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...TOOLTIP, enabled: rows.length > 0, callbacks: { label: (item) => ` ${item.label}: ${fmtValue(item.raw)}` } },
+      },
+    },
+  });
+
+  $(legendId).innerHTML = rows.length
+    ? rows.map((r, i) => `<li><span class="dot" style="background:${colors[i]}"></span><span class="name">${esc(r.name)}</span><span>${fmtLegend(r.value)}</span><span class="pct">${Math.round((r.value / total) * 100)}%</span></li>`).join("")
+    : `<li class="muted">Ma'lumot yo'q</li>`;
+  return total;
 }
 
 // --- Asosiy (dashboard) ------------------------------------------------------
@@ -150,7 +251,7 @@ function renderDashboard() {
   $("heroAvg").textContent = d.totals.days ? fmtNum(Math.round(d.totals.qty / d.totals.days)) : "0";
 
   // O'tgan davr bilan taqqoslash (shu kungacha)
-  const prevLabel = { day: "kechaga", week: "o'tgan haftaga", month: "o'tgan oyga", year: "o'tgan yilga" }[d.period];
+  const prevLabel = PREV_LABELS[d.period];
   const delta = $("heroDelta");
   if (d.prev.qty > 0) {
     const pct = Math.round(((d.totals.qty - d.prev.qty) / d.prev.qty) * 100);
@@ -162,10 +263,7 @@ function renderDashboard() {
   } else {
     delta.innerHTML = "";
   }
-  const s = parseDate(d.start), e = parseDate(d.end);
-  $("heroRange").textContent = d.start === d.end
-    ? `${s.getDate()}-${MON_LONG[s.getMonth()]} ${s.getFullYear()}`
-    : `${s.getDate()}-${MON_LONG[s.getMonth()]} — ${e.getDate()}-${MON_LONG[e.getMonth()]} ${e.getFullYear()}`;
+  $("heroRange").textContent = rangeLabel(d.start, d.end);
 
   // Tasdiq kutayotganlar
   $("pendingCard").hidden = !(isOwner && d.pending > 0);
@@ -179,102 +277,28 @@ function renderDashboard() {
 function renderTrend() {
   const d = state.dash;
   const points = d.series.points;
-  const isMonth = d.series.bucket === "month";
   const cur = mainCurrency(d.totals.pay);
   const metric = state.metric;
   const values = points.map((p) => (metric === "qty" ? p.qty : p.pay[cur] || 0));
-  const labels = points.map((p) => {
-    if (isMonth) return MON[Number(p.key.slice(5, 7)) - 1];
-    const dt = parseDate(p.key);
-    return d.period === "month" ? String(dt.getDate()) : WD[(dt.getDay() + 6) % 7];
-  });
-  const todayKey = isMonth ? d.today.slice(0, 7) : d.today;
-  const future = points.map((p) => p.key > todayKey);
 
-  $("chartTitle").textContent = { day: "Oxirgi 7 kun", week: "Hafta kunlari", month: "Kunlar bo'yicha", year: "Oylar bo'yicha" }[d.period];
+  $("chartTitle").textContent = CHART_TITLES[d.period];
   $("trendEmpty").hidden = values.some((v) => v > 0);
-
-  const ctx = $("trendChart").getContext("2d");
-  const grad = ctx.createLinearGradient(0, 0, 0, 220);
-  grad.addColorStop(0, "#3d63e0");
-  grad.addColorStop(1, "#0f1f57");
-  const colors = points.map((p, i) => (p.key === todayKey ? "#e8972a" : future[i] ? "#dfe5f4" : grad));
-
-  if (charts.trend) charts.trend.destroy();
-  charts.trend = new Chart(ctx, {
-    type: "bar",
-    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 8, borderSkipped: false, maxBarThickness: 26 }] },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 500 },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: "#0a1640",
-          padding: 10,
-          cornerRadius: 12,
-          displayColors: false,
-          titleFont: { family: "Manrope", weight: "700" },
-          bodyFont: { family: "Manrope", weight: "700", size: 14 },
-          callbacks: {
-            title: (items) => {
-              const p = points[items[0].dataIndex];
-              if (isMonth) return MON_LONG[Number(p.key.slice(5, 7)) - 1];
-              const dt = parseDate(p.key);
-              return `${dt.getDate()}-${MON_LONG[dt.getMonth()]}, ${WD_LONG[(dt.getDay() + 6) % 7]}`;
-            },
-            label: (item) => {
-              const p = points[item.dataIndex];
-              const pay = moneyList(p.pay);
-              return metric === "qty" ? `${fmtNum(p.qty)} dona${pay ? " · " + pay : ""}` : money(item.raw, cur);
-            },
-          },
-        },
-      },
-      scales: {
-        x: { grid: { display: false }, border: { display: false }, ticks: { color: "#6b7591", font: { family: "Manrope", weight: "600", size: 11 }, autoSkip: true, maxRotation: 0 } },
-        y: { beginAtZero: true, border: { display: false }, grid: { color: "#eef1f8" }, ticks: { color: "#9aa3bd", font: { family: "Manrope", size: 11 }, maxTicksLimit: 5, precision: 0, callback: (v) => fmtShort(v) } },
-      },
+  drawBars("trend", "trendChart", points, values, {
+    bucket: d.series.bucket,
+    period: d.period,
+    today: d.today,
+    label: (p, v) => {
+      const pay = moneyList(p.pay);
+      return metric === "qty" ? `${fmtNum(p.qty)} dona${pay ? " · " + pay : ""}` : money(v, cur);
     },
   });
 }
 
 function renderModels() {
   const items = state.dash.by_model;
-  const total = items.reduce((s, m) => s + m.qty, 0);
-  $("donutTotal").textContent = fmtShort(total);
   $("modelCount").textContent = items.length ? `${items.length} ta model` : "";
-
-  // 6 tadan ko'p bo'lsa qolganlari «Boshqa»
-  let rows = items.slice(0, 6);
-  if (items.length > 6) rows.push({ name: "Boshqa", qty: items.slice(6).reduce((s, m) => s + m.qty, 0) });
-  const data = rows.length ? rows.map((r) => r.qty) : [1];
-  const colors = rows.length ? rows.map((_, i) => PALETTE[i % PALETTE.length]) : ["#eef1f8"];
-
-  if (charts.model) charts.model.destroy();
-  charts.model = new Chart($("modelChart"), {
-    type: "doughnut",
-    data: { labels: rows.map((r) => r.name), datasets: [{ data, backgroundColor: colors, borderWidth: 3, borderColor: "#fff", hoverOffset: 6 }] },
-    options: {
-      cutout: "70%",
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          enabled: rows.length > 0,
-          backgroundColor: "#0a1640", cornerRadius: 12, padding: 10,
-          bodyFont: { family: "Manrope", weight: "700" },
-          callbacks: { label: (item) => ` ${item.label}: ${fmtNum(item.raw)} dona` },
-        },
-      },
-    },
-  });
-
-  $("modelLegend").innerHTML = rows.length
-    ? rows.map((r, i) => `<li><span class="dot" style="background:${colors[i]}"></span><span class="name">${esc(r.name)}</span><span>${fmtNum(r.qty)}</span><span class="pct">${Math.round((r.qty / total) * 100)}%</span></li>`).join("")
-    : `<li class="muted">Ma'lumot yo'q</li>`;
+  const total = drawDonut("model", "modelChart", "modelLegend", items.map((m) => ({ name: m.name, value: m.qty })), (v) => `${fmtNum(v)} dona`, fmtNum);
+  $("donutTotal").textContent = fmtShort(total);
 }
 
 function renderRanking(cur) {
@@ -384,6 +408,211 @@ async function fillWorkerFilter() {
     sel.innerHTML = `<option value="">👷 Barcha ishchilar</option>` + state.workers.map((w) => `<option value="${w.id}">${esc(w.name)}</option>`).join("");
     sel.value = state.entries.workerId;
     sel.hidden = state.workers.length === 0;
+  } catch (e) { fail(e); }
+}
+
+// --- Hamyon: xarajatlar ------------------------------------------------------
+
+function loadWallet() {
+  const w = state.wallet;
+  $("walletMoney").hidden = w.tab !== "money";
+  $("walletDebts").hidden = w.tab !== "debts";
+  document.querySelectorAll("#walletTabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === w.tab));
+  if (w.tab === "money") {
+    loadPersonal();
+    loadPersonalEntries(true);
+  } else {
+    loadDebts();
+  }
+}
+
+async function loadPersonal() {
+  try {
+    state.wallet.data = await api(`/api/personal?period=${state.wallet.period}`);
+    renderPersonal();
+  } catch (e) { fail(e); }
+}
+
+function renderPersonal() {
+  const d = state.wallet.data;
+  const exp = d.totals.expense || {};
+  const inc = d.totals.income || {};
+  const cur = mainCurrency(Object.keys(exp).length ? exp : inc);
+
+  $("wAmount").innerHTML = `${fmtNum(exp[cur] || 0)}<small>${esc(CUR[cur] || cur)}</small>`;
+  $("wExtra").textContent = Object.entries(exp).filter(([c, v]) => c !== cur && v).map(([c, v]) => "+ " + money(v, c)).join("  ");
+  $("wIncome").textContent = fmtShort(inc[cur] || 0);
+  const net = (inc[cur] || 0) - (exp[cur] || 0);
+  $("wNet").textContent = (net > 0 ? "+" : "") + fmtShort(net);
+
+  // Xarajat o'tgan davrga nisbatan: ko'paygani — qizil
+  const prev = (d.prev.expense || {})[cur] || 0;
+  const now = exp[cur] || 0;
+  const delta = $("wDelta");
+  if (prev > 0) {
+    const pct = Math.round(((now - prev) / prev) * 100);
+    delta.className = "delta " + (pct > 0 ? "down" : "up");
+    delta.innerHTML = `<b>${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct)}%</b> ${PREV_LABELS[d.period]} nisbatan`;
+  } else {
+    delta.innerHTML = "";
+  }
+  $("wRange").textContent = rangeLabel(d.start, d.end);
+
+  const points = d.series.points;
+  const values = points.map((p) => p.expense[cur] || 0);
+  $("wChartTitle").textContent = CHART_TITLES[d.period];
+  $("wTrendEmpty").hidden = values.some((v) => v > 0);
+  drawBars("wTrend", "wTrendChart", points, values, {
+    bucket: d.series.bucket,
+    period: d.period,
+    today: d.today,
+    label: (p, v) => {
+      const parts = [`${money(v, cur)} xarajat`];
+      if (p.income[cur]) parts.push(`${money(p.income[cur], cur)} daromad`);
+      return parts.join(" · ");
+    },
+  });
+
+  const cats = d.by_category
+    .map((c) => ({ name: c.name, value: c.amounts[cur] || 0 }))
+    .filter((c) => c.value > 0)
+    .sort((a, b) => b.value - a.value);
+  $("wCatCount").textContent = cats.length ? `${cats.length} ta` : "";
+  const total = drawDonut("wCat", "wCatChart", "wCatLegend", cats, (v) => money(v, cur), fmtShort);
+  $("wDonutTotal").textContent = fmtShort(total);
+  $("wDonutCur").textContent = CUR[cur] || cur;
+}
+
+async function loadPersonalEntries(reset) {
+  const en = state.wallet.entries;
+  if (reset) {
+    en.offset = 0;
+    en.items = [];
+    $("wEntryList").innerHTML = SKELETONS;
+  }
+  try {
+    const data = await api(`/api/personal/entries?limit=20&offset=${en.offset}`);
+    en.items = en.items.concat(data.items);
+    en.offset += data.items.length;
+    $("wMoreBtn").hidden = !data.has_more;
+    renderPersonalEntries();
+  } catch (e) { fail(e); }
+}
+
+function renderPersonalEntries() {
+  const items = state.wallet.entries.items;
+  $("wEntryList").innerHTML = items.length
+    ? items.map(personalRow).join("")
+    : `<p class="muted">Hali yozuv yo'q. Botga ayting: «bozorga 50 ming won», «oylik tushdi 3 million».</p>`;
+}
+
+function personalRow(e) {
+  const income = e.kind === "income";
+  const sub = [dateLabel(e.date), e.note].filter(Boolean).join(" · ");
+  return `
+    <div class="mini-entry">
+      <div class="mini-icon ${income ? "in" : ""}">${income ? "💰" : "💸"}</div>
+      <div class="info"><b>${esc(e.category)}</b><small>${esc(sub)}</small></div>
+      <div class="amt ${income ? "pos" : ""}">${income ? "+" : "−"}${esc(money(e.amount, e.currency))}</div>
+      <button class="mini-del" data-del-personal="${e.id}" aria-label="O'chirish">🗑</button>
+    </div>`;
+}
+
+async function deletePersonal(id) {
+  if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
+  try {
+    await api(`/api/personal/${id}`, { method: "DELETE" });
+    state.wallet.entries.items = state.wallet.entries.items.filter((e) => e.id !== id);
+    renderPersonalEntries();
+    toast("O'chirildi");
+    loadPersonal();
+  } catch (e) { fail(e); }
+}
+
+// --- Hamyon: qarzlar ---------------------------------------------------------
+
+async function loadDebts() {
+  if (!state.wallet.debts) $("debtList").innerHTML = SKELETONS;
+  try {
+    state.wallet.debts = await api("/api/debts");
+    renderDebts();
+  } catch (e) { fail(e); }
+}
+
+function setMoneyStat(id, pay) {
+  const text = moneyList(pay) || "0";
+  $(id).textContent = text;
+  $(id).classList.toggle("long", text.length > 12);
+}
+
+// Qoldiq: musbat — u sizga qarzdor, manfiy — siz unga qarzdorsiz
+function balanceInfo(p) {
+  const entries = Object.entries(p.balance || {});
+  const pos = entries.filter(([, v]) => v > 0);
+  const neg = entries.filter(([, v]) => v < 0);
+  if (!entries.length) return { cls: "", text: "0", label: "yopilgan" };
+  if (!neg.length) return { cls: "pos", text: pos.map(([c, v]) => money(v, c)).join(" + "), label: "sizga qarzdor" };
+  if (!pos.length) return { cls: "neg", text: neg.map(([c, v]) => money(-v, c)).join(" + "), label: "siz qarzdorsiz" };
+  return { cls: "", text: entries.map(([c, v]) => (v > 0 ? "+" : "−") + money(Math.abs(v), c)).join(" "), label: "aralash" };
+}
+
+function renderDebts() {
+  const d = state.wallet.debts;
+  setMoneyStat("dOwed", d.owed_to_me);
+  setMoneyStat("dOwe", d.i_owe);
+  if (!d.people.length) {
+    $("debtList").innerHTML = `<div class="empty"><span class="big">🤝</span>Hali qarz yozilmagan</div>`;
+    return;
+  }
+  $("debtList").innerHTML = d.people.map((p) => {
+    const b = balanceInfo(p);
+    const sub = [p.last_date ? dateLabel(p.last_date) : "", `${p.count} ta yozuv`].filter(Boolean).join(" · ");
+    return `
+      <button class="row-card${p.settled ? " off" : ""}" data-person="${esc(p.key)}">
+        <div class="avatar">${esc(initials(p.name))}</div>
+        <div class="info"><b>${esc(p.name)}</b><small>${esc(sub)}</small></div>
+        <div class="side ${b.cls}">${esc(b.text)}<small>${b.label}</small></div>
+      </button>`;
+  }).join("");
+}
+
+function debtRow(e) {
+  const took = e.direction === "in";
+  const sub = [dateLabel(e.date), e.note].filter(Boolean).join(" · ");
+  return `
+    <div class="mini-entry">
+      <div class="mini-icon ${took ? "in" : "out"}">${took ? "📥" : "📤"}</div>
+      <div class="info"><b>${took ? "Olindi" : "Berildi"}</b><small>${esc(sub)}</small></div>
+      <div class="amt">${esc(money(e.amount, e.currency))}</div>
+      <button class="mini-del" data-del-debt="${e.id}" aria-label="O'chirish">🗑</button>
+    </div>`;
+}
+
+async function personSheet(key) {
+  const p = state.wallet.debts.people.find((x) => x.key === key);
+  if (!p) return closeSheet();
+  const b = balanceInfo(p);
+  openSheet(`
+    <h3>${esc(p.name)}</h3>
+    <div class="stat-pair">
+      <div><b class="amt ${b.cls}">${esc(b.text)}</b><small>${b.label}</small></div>
+      <div><b>${p.count} ta</b><small>yozuv</small></div>
+    </div>
+    <div id="personHistory">${SKELETONS}</div>
+  `);
+  try {
+    const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
+    $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
+    $("personHistory").onclick = async (ev) => {
+      const btn = ev.target.closest("[data-del-debt]");
+      if (!btn || !(await confirmBox("Qarz yozuvi o'chirilsinmi?"))) return;
+      try {
+        await api(`/api/debts/${btn.dataset.delDebt}`, { method: "DELETE" });
+        toast("O'chirildi");
+        await loadDebts();
+        personSheet(key);
+      } catch (e) { fail(e); }
+    };
   } catch (e) { fail(e); }
 }
 
@@ -576,22 +805,29 @@ function settingsSheet() {
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
     <div class="field"><label>Valyutalar</label></div>
     ${curRows}
+    <div class="field"><label>⭐ Asosiy valyuta — summa valyutasiz aytilsa shu olinadi</label>
+      <select class="select" id="sMain">${["UZS", "USD", "KRW"].map((c) => `<option value="${c}" ${c === me.currencies[0] ? "selected" : ""}>${c} (${CUR[c]})</option>`).join("")}</select>
+    </div>
   `);
   const save = async (body, input) => {
     try {
       const res = await api("/api/settings", { method: "PATCH", body });
       Object.assign(state.me, res);
       haptic();
+      if (body.main_currency) settingsSheet();
     } catch (e) {
       fail(e);
-      if (input) input.checked = !input.checked;
+      if (input && input.type === "checkbox") input.checked = !input.checked;
     }
   };
+  $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
   $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
   document.querySelectorAll("[data-cur]").forEach((inp) => {
     inp.onchange = () => {
       const cur = [...document.querySelectorAll("[data-cur]")].filter((x) => x.checked).map((x) => x.dataset.cur);
-      save({ currencies: cur }, inp);
+      save({ currencies: cur }, inp).then(() => {
+        $("sMain").value = state.me.currencies[0];
+      });
     };
   });
 }
@@ -676,6 +912,39 @@ function bind() {
     if (m) modelSheet(m);
   };
   $("addModelBtn").onclick = () => modelSheet(null);
+  document.querySelectorAll(".team-seg").forEach((seg) => {
+    seg.onclick = (ev) => {
+      const b = ev.target.closest("button");
+      if (b && b.dataset.team !== state.view) show(b.dataset.team);
+    };
+  });
+
+  // Hamyon
+  $("walletTabs").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || b.dataset.tab === state.wallet.tab) return;
+    state.wallet.tab = b.dataset.tab;
+    haptic();
+    loadWallet();
+  };
+  $("wPeriodSeg").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || b.dataset.period === state.wallet.period) return;
+    state.wallet.period = b.dataset.period;
+    document.querySelectorAll("#wPeriodSeg button").forEach((x) => x.classList.toggle("on", x === b));
+    haptic();
+    loadPersonal();
+  };
+  $("wMoreBtn").onclick = () => loadPersonalEntries(false);
+  $("wEntryList").onclick = (ev) => {
+    const b = ev.target.closest("[data-del-personal]");
+    if (b) deletePersonal(Number(b.dataset.delPersonal));
+  };
+  $("debtList").onclick = (ev) => {
+    const b = ev.target.closest("[data-person]");
+    if (b) personSheet(b.dataset.person);
+  };
+
   $("settingsBtn").onclick = settingsSheet;
   $("sheetBackdrop").onclick = closeSheet;
 
@@ -716,15 +985,13 @@ async function init() {
   $("hello").textContent = `Salom, ${me.name.split(" ")[0]}!`;
   $("settingsBtn").hidden = !me.is_owner;
   $("addModelBtn").hidden = !me.is_owner;
+  // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
+  $("navWallet").hidden = !me.is_owner;
   $("navWorkers").hidden = !me.is_owner;
+  $("navModels").hidden = me.is_owner;
   $("navHelp").hidden = me.is_owner;
-  if (!me.is_owner) {
-    $("navModelsLabel").textContent = "Narxlar";
-    $("modelsTitle").textContent = "Narxlar";
-    // Ishchida «Ishchilar» o'rniga «Narxlar» va «Yordam»
-    const nav = $("nav");
-    nav.insertBefore(document.querySelector('[data-view="models"]'), $("navWorkers"));
-  }
+  document.querySelectorAll(".team-seg").forEach((el) => (el.hidden = !me.is_owner));
+  if (!me.is_owner) $("modelsTitle").textContent = "Narxlar";
   await fillWorkerFilter();
   show("home");
 }

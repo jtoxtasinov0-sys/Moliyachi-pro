@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import User
-from bot.handlers.entries import notify_owners
+from bot.handlers.entries import notify_owner
 from bot.middlewares import Guest, Registered
 
 router = Router(name="common")
@@ -20,13 +20,19 @@ OWNER_HELP = """\
 🎙 Ovozli yoki matnli xabar yuboring, masalan:
 • <i>Alisher A-12 modeldan 50 ta topshirdi</i>
 • <i>Kecha Vali B-5 dan 30 ta, C-7 dan 20 ta</i>
+• <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
+• <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
 
 Bot yozuvni tushunib, «To'g'rimi?» deb so'raydi. Xato bo'lsa — shunchaki
 tuzatishni ayting: <i>«soni 45 ta»</i>, <i>«kecha edi»</i>.
 
+Sizning ma'lumotlaringizni faqat siz ko'rasiz.
+
 <b>Menyu</b>
-📊 Hisobot — kunlik / haftalik / oylik
+📊 Hisobot — ishchilar: kunlik / haftalik / oylik
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
+💸 Xarajatlar — kategoriyalar bo'yicha hisobot
+🤝 Qarzlar — kim kimga qancha qarz
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
 👷 Ishchilar — qo'shish, taklif havolasi
 🧵 Modellar — qo'shish, narx belgilash
@@ -61,7 +67,7 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
         f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{WORKER_HELP}",
         reply_markup=kbs.main_menu(user),
     )
-    await notify_owners(message.bot, session, f"👷 {escape(user.name)} botga ulandi.")
+    await notify_owner(message.bot, session, user.owner_id, f"👷 {escape(user.name)} botga ulandi.")
 
 
 @router.message(CommandStart(), Registered())

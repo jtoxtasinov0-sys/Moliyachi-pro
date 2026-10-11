@@ -43,18 +43,23 @@ def entry_text(entry: WorkEntry) -> str:
     return text
 
 
-async def notify_owners(bot: Bot, session: AsyncSession, text: str, entry: WorkEntry | None = None) -> None:
-    """Barcha egalarga xabar. Bittasiga yetmasa (botni bloklagan) — qolganlariga baribir boradi."""
-    for owner in await repo.get_owners(session):
-        markup = kbs.entry_kb(entry, owner) if entry is not None else None
-        try:
-            await bot.send_message(owner.tg_id, text, reply_markup=markup)
-        except TelegramAPIError:
-            log.warning("Egaga xabar yuborilmadi (chat %s)", owner.tg_id, exc_info=True)
+async def notify_owner(
+    bot: Bot, session: AsyncSession, owner_id: int | None, text: str, entry: WorkEntry | None = None
+) -> None:
+    """Kabinet egasiga xabar. Yetmasa (botni bloklagan) — faqat logga yoziladi."""
+    owner = await session.get(User, owner_id) if owner_id else None
+    if owner is None or owner.tg_id is None:
+        return
+    markup = kbs.entry_kb(entry, owner) if entry is not None else None
+    try:
+        await bot.send_message(owner.tg_id, text, reply_markup=markup)
+    except TelegramAPIError:
+        log.warning("Egaga xabar yuborilmadi (chat %s)", owner.tg_id, exc_info=True)
 
 
 async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry) -> None:
-    await notify_owners(bot, session, "🔔 <b>Yangi yozuv tasdiq kutmoqda</b>\n\n" + entry_text(entry), entry)
+    text = "🔔 <b>Yangi yozuv tasdiq kutmoqda</b>\n\n" + entry_text(entry)
+    await notify_owner(bot, session, entry.owner_id, text, entry)
 
 
 def _can_touch(user: User, entry: WorkEntry) -> bool:
@@ -62,7 +67,7 @@ def _can_touch(user: User, entry: WorkEntry) -> bool:
 
 
 async def _get_entry(call: CallbackQuery, session: AsyncSession, user: User, entry_id: int) -> WorkEntry | None:
-    entry = await repo.get_work_entry(session, entry_id)
+    entry = await repo.get_work_entry(session, user.account_id, entry_id)
     if entry is None or not _can_touch(user, entry):
         await call.answer("Yozuv topilmadi yoki o'chirilgan.", show_alert=True)
         return None
@@ -75,7 +80,7 @@ async def _get_entry(call: CallbackQuery, session: AsyncSession, user: User, ent
 @router.message(Command("oxirgi"))
 async def recent(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    entries = await repo.recent_work_entries(session, worker_id=None if user.is_owner else user.id)
+    entries = await repo.recent_work_entries(session, user.account_id, worker_id=None if user.is_owner else user.id)
     if not entries:
         await message.answer("Hali yozuvlar yo'q.")
         return
@@ -87,7 +92,7 @@ async def recent(message: Message, state: FSMContext, session: AsyncSession, use
 @router.message(F.text == kbs.BTN_PENDING, IsOwner())
 async def pending(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    entries = await repo.pending_work_entries(session)
+    entries = await repo.pending_work_entries(session, user.id)
     if not entries:
         await message.answer("✅ Tasdiq kutayotgan yozuv yo'q.")
         return
@@ -159,13 +164,15 @@ async def on_delete_yes(call: CallbackQuery, callback_data: kbs.EntryCb, session
     if entry is None:
         return
     text = entry_text(entry)
-    await repo.soft_delete_work_entry(session, entry)
+    await repo.soft_delete(session, entry)
     await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi")
     await call.answer("O'chirildi")
 
     # Ishchi tasdiqlangan yozuvni o'chirsa — egalarga xabar
     if not user.is_owner and entry.status == EntryStatus.APPROVED:
-        await notify_owners(call.bot, session, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}")
+        await notify_owner(
+            call.bot, session, user.owner_id, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}"
+        )
 
 
 # --- Hisobot ----------------------------------------------------------------
@@ -184,7 +191,8 @@ async def report_menu(message: Message, state: FSMContext) -> None:
 async def on_report(call: CallbackQuery, callback_data: kbs.ReportCb, session: AsyncSession, user: User) -> None:
     period = callback_data.period
     start, end = period_range(period)
-    rows = await repo.work_report(session, start, end, worker_id=None if user.is_owner else user.id)
+    worker_id = None if user.is_owner else user.id
+    rows = await repo.work_report(session, user.account_id, start, end, worker_id=worker_id)
     title = (
         f"📊 <b>{PERIOD_LABELS[period]}</b> "
         f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
@@ -197,7 +205,7 @@ async def on_report(call: CallbackQuery, callback_data: kbs.ReportCb, session: A
     else:
         body = _worker_report(rows)
 
-    pending_count = await repo.count_pending(session, worker_id=None if user.is_owner else user.id)
+    pending_count = await repo.count_pending(session, user.account_id, worker_id=worker_id)
     if pending_count:
         body += f"\n\n⏳ Tasdiq kutayotgan yozuvlar: {pending_count} ta (hisobotga kirmagan)"
 

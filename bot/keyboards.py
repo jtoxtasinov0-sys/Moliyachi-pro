@@ -8,13 +8,17 @@ from bot.db.models import EntryStatus, User, WorkEntry
 
 BTN_REPORT = "📊 Hisobot"
 BTN_RECENT = "🕘 Oxirgi yozuvlar"
+BTN_EXPENSES = "💸 Xarajatlar"
+BTN_DEBTS = "🤝 Qarzlar"
 BTN_PENDING = "⏳ Tasdiq kutayotganlar"
 BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
 BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
-MENU_TEXTS = {BTN_REPORT, BTN_RECENT, BTN_PENDING, BTN_WORKERS, BTN_MODELS, BTN_SETTINGS, BTN_HELP}
+MENU_TEXTS = {
+    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_PENDING, BTN_WORKERS, BTN_MODELS, BTN_SETTINGS, BTN_HELP
+}
 
 
 def main_menu(user: User) -> ReplyKeyboardMarkup:
@@ -22,6 +26,8 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
     kb.button(text=BTN_REPORT)
     kb.button(text=BTN_RECENT)
     if user.is_owner:
+        kb.button(text=BTN_EXPENSES)
+        kb.button(text=BTN_DEBTS)
         kb.button(text=BTN_PENDING)
         kb.button(text=BTN_WORKERS)
         kb.button(text=BTN_MODELS)
@@ -46,6 +52,25 @@ class ResolveCb(CallbackData, prefix="r"):
 class EntryCb(CallbackData, prefix="e"):
     action: str  # edit | del | del_yes | del_no | approve | reject
     entry_id: int
+
+
+class DebtDirCb(CallbackData, prefix="dd"):
+    line: int
+    direction: str  # in | out
+
+
+class MoneyCb(CallbackData, prefix="m"):
+    action: str  # del | del_yes | del_no
+    kind: str  # p — xarajat/daromad, d — qarz
+    entry_id: int
+
+
+class PersonalReportCb(CallbackData, prefix="pr"):
+    period: str  # day | week | month | recent
+
+
+class DebtsCb(CallbackData, prefix="db"):
+    action: str  # refresh | recent
 
 
 class ReportCb(CallbackData, prefix="rep"):
@@ -125,4 +150,44 @@ def report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Bugun", callback_data=ReportCb(period="day"))
     kb.button(text="Shu hafta", callback_data=ReportCb(period="week"))
     kb.button(text="Shu oy", callback_data=ReportCb(period="month"))
+    return kb.as_markup()
+
+
+def debt_direction_kb(line: int, person: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"📥 {person[:20]}dan oldim", callback_data=DebtDirCb(line=line, direction="in"))
+    kb.button(text=f"📤 {person[:20]}ga berdim", callback_data=DebtDirCb(line=line, direction="out"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def money_entry_kb(kind: str, entry_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
+    return kb.as_markup()
+
+
+def money_confirm_delete_kb(kind: str, entry_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 Ha, o'chirilsin", callback_data=MoneyCb(action="del_yes", kind=kind, entry_id=entry_id))
+    kb.button(text="↩️ Yo'q", callback_data=MoneyCb(action="del_no", kind=kind, entry_id=entry_id))
+    return kb.as_markup()
+
+
+def personal_report_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Bugun", callback_data=PersonalReportCb(period="day"))
+    kb.button(text="Shu hafta", callback_data=PersonalReportCb(period="week"))
+    kb.button(text="Shu oy", callback_data=PersonalReportCb(period="month"))
+    kb.button(text="🕘 Oxirgi yozuvlar", callback_data=PersonalReportCb(period="recent"))
+    kb.adjust(3, 1)
+    return kb.as_markup()
+
+
+def debts_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Yangilash", callback_data=DebtsCb(action="refresh"))
+    kb.button(text="🕘 Oxirgi yozuvlar", callback_data=DebtsCb(action="recent"))
+    kb.adjust(2)
     return kb.as_markup()

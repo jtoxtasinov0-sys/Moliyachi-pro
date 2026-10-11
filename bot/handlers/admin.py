@@ -34,8 +34,8 @@ async def _invite_link(bot: Bot, token: str) -> str:
     return f"https://t.me/{me.username}?start=inv_{token}"
 
 
-async def _workers_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
-    workers = await repo.list_workers(session, active_only=False)
+async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    workers = await repo.list_workers(session, owner_id, active_only=False)
     kb = InlineKeyboardBuilder()
     lines = []
     for w in workers:
@@ -59,9 +59,9 @@ async def _workers_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarku
 
 
 @router.message(F.text == kbs.BTN_WORKERS)
-async def workers(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def workers(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    text, kb = await _workers_view(session)
+    text, kb = await _workers_view(session, user.id)
     await message.answer(text, reply_markup=kb)
 
 
@@ -73,12 +73,12 @@ async def worker_add(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(AdminSG.worker_name, F.text, ~F.text.in_(kbs.MENU_TEXTS))
-async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session: AsyncSession) -> None:
+async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
     name = message.text.strip()[:100]
     if not name or name.startswith("/"):
         await message.answer("Ism bo'sh bo'lmasin. Qaytadan yozing:")
         return
-    worker = await repo.create_worker(session, name)
+    worker = await repo.create_worker(session, user.id, name)
     await state.clear()
     link = await _invite_link(bot, worker.invite_token)
     await message.answer(
@@ -89,9 +89,11 @@ async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "link"))
-async def worker_link(call: CallbackQuery, callback_data: kbs.WorkerCb, bot: Bot, session: AsyncSession) -> None:
-    worker = await session.get(User, callback_data.user_id)
-    if worker is None or worker.is_owner:
+async def worker_link(
+    call: CallbackQuery, callback_data: kbs.WorkerCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    worker = await repo.get_worker(session, user.id, callback_data.user_id)
+    if worker is None:
         await call.answer()
         return
     token = await repo.new_invite_token(session, worker)
@@ -101,22 +103,22 @@ async def worker_link(call: CallbackQuery, callback_data: kbs.WorkerCb, bot: Bot
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "toggle"))
-async def worker_toggle(call: CallbackQuery, callback_data: kbs.WorkerCb, session: AsyncSession) -> None:
-    worker = await session.get(User, callback_data.user_id)
-    if worker is None or worker.is_owner:
+async def worker_toggle(call: CallbackQuery, callback_data: kbs.WorkerCb, session: AsyncSession, user: User) -> None:
+    worker = await repo.get_worker(session, user.id, callback_data.user_id)
+    if worker is None:
         await call.answer()
         return
     worker.is_active = not worker.is_active
     await session.flush()
-    text, kb = await _workers_view(session)
+    text, kb = await _workers_view(session, user.id)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer("Faollashtirildi" if worker.is_active else "O'chirildi — endi botdan foydalana olmaydi")
 
 
 # --- Modellar ---------------------------------------------------------------
 
-async def _models_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
-    models = await repo.list_models(session, active_only=False)
+async def _models_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    models = await repo.list_models(session, owner_id, active_only=False)
     kb = InlineKeyboardBuilder()
     lines = []
     for m in models:
@@ -137,9 +139,9 @@ async def _models_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup
 
 
 @router.message(F.text == kbs.BTN_MODELS)
-async def models(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def models(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    text, kb = await _models_view(session)
+    text, kb = await _models_view(session, user.id)
     await message.answer(text, reply_markup=kb)
 
 
@@ -151,22 +153,22 @@ async def model_add(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(AdminSG.model_name, F.text, ~F.text.in_(kbs.MENU_TEXTS))
-async def model_add_name(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def model_add_name(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     name = message.text.strip()[:100]
     if not name or name.startswith("/"):
         await message.answer("Nom bo'sh bo'lmasin. Qaytadan yozing:")
         return
-    if await repo.get_model_by_name(session, name):
+    if await repo.get_model_by_name(session, user.id, name):
         await message.answer("Bunday model allaqachon bor. Boshqa nom yozing:")
         return
-    model = await repo.create_model(session, name)
+    model = await repo.create_model(session, user.id, name)
     await _ask_price(message, state, session, model)
 
 
 async def _ask_price(message: Message, state: FSMContext, session: AsyncSession, model: ItemModel) -> None:
     await state.set_state(AdminSG.model_price)
     await state.update_data(model_id=model.id)
-    currencies = await repo.enabled_currencies(session)
+    currencies = await repo.enabled_currencies(session, model.owner_id)
     examples = ", ".join(f"<i>5000 {CURRENCY_LABELS[c]}</i>" for c in currencies)
     kb = InlineKeyboardBuilder()
     kb.button(text="Narxsiz qoldirish", callback_data=kbs.ModelCb(action="noprice", model_id=model.id))
@@ -178,8 +180,10 @@ async def _ask_price(message: Message, state: FSMContext, session: AsyncSession,
 
 
 @router.callback_query(kbs.ModelCb.filter(F.action == "price"))
-async def model_price(call: CallbackQuery, callback_data: kbs.ModelCb, state: FSMContext, session: AsyncSession) -> None:
-    model = await session.get(ItemModel, callback_data.model_id)
+async def model_price(
+    call: CallbackQuery, callback_data: kbs.ModelCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    model = await repo.get_model(session, user.id, callback_data.model_id)
     if model is None:
         await call.answer()
         return
@@ -188,9 +192,9 @@ async def model_price(call: CallbackQuery, callback_data: kbs.ModelCb, state: FS
 
 
 @router.callback_query(kbs.ModelCb.filter(F.action == "noprice"))
-async def model_noprice(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def model_noprice(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    text, kb = await _models_view(session)
+    text, kb = await _models_view(session, user.id)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer()
 
@@ -232,13 +236,13 @@ def parse_price(text: str, default_currency: str) -> tuple[Decimal, str] | None:
 
 
 @router.message(AdminSG.model_price, F.text, ~F.text.in_(kbs.MENU_TEXTS))
-async def model_price_value(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def model_price_value(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     model_id = (await state.get_data()).get("model_id")
-    model = await session.get(ItemModel, model_id) if model_id else None
+    model = await repo.get_model(session, user.id, model_id) if model_id else None
     if model is None:
         await state.clear()
         return
-    currencies = await repo.enabled_currencies(session)
+    currencies = await repo.enabled_currencies(session, user.id)
     parsed = parse_price(message.text, currencies[0])
     if parsed is None:
         await message.answer("Narxni tushunmadim. Masalan: <i>5000</i> yoki <i>2 $</i>")
@@ -250,28 +254,28 @@ async def model_price_value(message: Message, state: FSMContext, session: AsyncS
         f"✅ <b>{escape(model.name)}</b>: {fmt_money(model.price, model.currency)}\n"
         "Yangi narx shu paytdan keyingi yozuvlarga qo'llanadi."
     )
-    text, kb = await _models_view(session)
+    text, kb = await _models_view(session, user.id)
     await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(kbs.ModelCb.filter(F.action == "toggle"))
-async def model_toggle(call: CallbackQuery, callback_data: kbs.ModelCb, session: AsyncSession) -> None:
-    model = await session.get(ItemModel, callback_data.model_id)
+async def model_toggle(call: CallbackQuery, callback_data: kbs.ModelCb, session: AsyncSession, user: User) -> None:
+    model = await repo.get_model(session, user.id, callback_data.model_id)
     if model is None:
         await call.answer()
         return
     model.is_active = not model.is_active
     await session.flush()
-    text, kb = await _models_view(session)
+    text, kb = await _models_view(session, user.id)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer()
 
 
 # --- Sozlamalar -------------------------------------------------------------
 
-async def _settings_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
-    approval = await repo.require_approval(session)
-    enabled = await repo.enabled_currencies(session)
+async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    approval = await repo.require_approval(session, owner_id)
+    enabled = await repo.enabled_currencies(session, owner_id)
     kb = InlineKeyboardBuilder()
     kb.button(
         text=f"{'✅' if approval else '⬜'} Ishchi yozuvlarini tasdiqlash",
@@ -282,29 +286,37 @@ async def _settings_view(session: AsyncSession) -> tuple[str, InlineKeyboardMark
             text=f"{'✅' if code in enabled else '⬜'} {code} ({CURRENCY_LABELS[code]})",
             callback_data=kbs.SettingsCb(action="cur", value=code),
         )
-    kb.adjust(1, 3)
+    for code in repo.ALL_CURRENCIES:
+        kb.button(
+            text=f"{'⭐' if code == enabled[0] else '☆'} {code}",
+            callback_data=kbs.SettingsCb(action="main", value=code),
+        )
+    kb.adjust(1, 3, 3)
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
-        f"• Valyutalar: {', '.join(enabled)}"
+        f"• Valyutalar: {', '.join(enabled)}\n"
+        f"• ⭐ Asosiy valyuta: <b>{enabled[0]}</b> — summa valyutasiz aytilsa shu olinadi"
     )
     return text, kb.as_markup()
 
 
 @router.message(F.text == kbs.BTN_SETTINGS)
-async def settings_menu(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def settings_menu(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    text, kb = await _settings_view(session)
+    text, kb = await _settings_view(session, user.id)
     await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(kbs.SettingsCb.filter())
-async def settings_toggle(call: CallbackQuery, callback_data: kbs.SettingsCb, session: AsyncSession) -> None:
+async def settings_toggle(
+    call: CallbackQuery, callback_data: kbs.SettingsCb, session: AsyncSession, user: User
+) -> None:
     if callback_data.action == "approval":
-        current = await repo.require_approval(session)
-        await repo.set_setting(session, "require_approval", "0" if current else "1")
+        current = await repo.require_approval(session, user.id)
+        await repo.set_setting(session, user.id, "require_approval", "0" if current else "1")
     elif callback_data.action == "cur":
-        enabled = await repo.enabled_currencies(session)
+        enabled = await repo.enabled_currencies(session, user.id)
         code = callback_data.value
         if code in enabled:
             if len(enabled) == 1:
@@ -313,8 +325,9 @@ async def settings_toggle(call: CallbackQuery, callback_data: kbs.SettingsCb, se
             enabled.remove(code)
         else:
             enabled.append(code)
-        ordered = [c for c in repo.ALL_CURRENCIES if c in enabled]
-        await repo.set_setting(session, "currencies", ",".join(ordered))
-    text, kb = await _settings_view(session)
+        await repo.set_currencies(session, user.id, enabled)
+    elif callback_data.action == "main" and callback_data.value in repo.ALL_CURRENCIES:
+        await repo.set_main_currency(session, user.id, callback_data.value)
+    text, kb = await _settings_view(session, user.id)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer()
