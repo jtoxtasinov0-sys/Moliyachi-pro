@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=3">
+  <link rel="stylesheet" href="static/style.css?v=4">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -38,6 +38,36 @@
           <button data-period="year">Yil</button>
         </div>
 
+        <!-- Egasining pullari: daromad, xarajat, qarzlar va oxirgi harakatlar -->
+        <div id="moneySection" hidden>
+          <div class="hero">
+            <div class="hero-circle c1"></div>
+            <div class="hero-circle c2"></div>
+            <div class="hero-label">Pullarim holati · qoldiq</div>
+            <div class="hero-amount" id="mNet">—</div>
+            <div class="hero-extra" id="mNetExtra"></div>
+            <div class="hero-row two">
+              <div class="hero-stat"><span id="mIncome">0</span><small>💰 daromad</small></div>
+              <div class="hero-stat"><span id="mExpense">0</span><small>💸 xarajat</small></div>
+              <div class="hero-stat"><span id="mOwed">0</span><small>📤 sizga qarzlar</small></div>
+              <div class="hero-stat"><span id="mOwe">0</span><small>📥 sizning qarzingiz</small></div>
+            </div>
+            <div class="hero-range" id="mRange"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>🤝 Qarzlar</h3><button class="link-btn" id="mDebtsAll">Hammasi →</button></div>
+            <div id="mDebtList"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Oxirgi harakatlar</h3><button class="link-btn" id="mFeedAll">Hammasi →</button></div>
+            <div id="mFeed"></div>
+          </div>
+        </div>
+
+        <div id="workSection">
+        <h2 class="section-title" id="workTitle" hidden>🧵 Ishxona</h2>
         <div class="hero">
           <div class="hero-circle c1"></div>
           <div class="hero-circle c2"></div>
@@ -86,11 +116,19 @@
           <div class="card-head"><h3>Ishchilar reytingi</h3><span class="muted" id="workerCount"></span></div>
           <ol class="rank" id="workerRank"></ol>
         </div>
+        </div>
       </section>
 
       <!-- Yozuvlar -->
       <section class="view" id="view-entries" hidden>
         <h2 class="page-title">Yozuvlar</h2>
+        <div class="chips" id="typeChips" hidden>
+          <button data-type="" class="on">Hammasi</button>
+          <button data-type="expense">💸 Xarajat</button>
+          <button data-type="income">💰 Daromad</button>
+          <button data-type="debt">🤝 Qarz</button>
+          <button data-type="work">🧵 Ish</button>
+        </div>
         <div class="chips" id="statusChips">
           <button data-status="" class="on">Hammasi</button>
           <button data-status="pending">⏳ Kutilmoqda</button>
@@ -255,6 +293,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=3"></script>
+  <script src="static/app.js?v=4"></script>
 </body>
 </html>

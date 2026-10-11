@@ -398,6 +398,19 @@ async def list_work_entries(
     return list(await session.scalars(q))
 
 
+async def has_work(session: AsyncSession, owner_id: int) -> bool:
+    """Kabinetda ishchi yoki ish yozuvi bormi — bo'lmasa ishxona hisoboti yashiriladi."""
+    worker = await session.scalar(
+        select(User.id).where(User.role == Role.WORKER, User.owner_id == owner_id).limit(1)
+    )
+    if worker is not None:
+        return True
+    entry = await session.scalar(
+        select(WorkEntry.id).where(WorkEntry.owner_id == owner_id, WorkEntry.deleted_at.is_(None)).limit(1)
+    )
+    return entry is not None
+
+
 async def count_pending(session: AsyncSession, owner_id: int, worker_id: int | None = None) -> int:
     q = select(func.count(WorkEntry.id)).where(
         WorkEntry.owner_id == owner_id, WorkEntry.deleted_at.is_(None), WorkEntry.status == EntryStatus.PENDING
@@ -444,7 +457,7 @@ async def get_personal_entry(session: AsyncSession, owner_id: int, entry_id: int
 
 
 async def list_personal_entries(
-    session: AsyncSession, owner_id: int, *, limit: int = 30, offset: int = 0
+    session: AsyncSession, owner_id: int, *, kind: str | None = None, limit: int = 30, offset: int = 0
 ) -> list[PersonalEntry]:
     q = (
         select(PersonalEntry)
@@ -453,6 +466,8 @@ async def list_personal_entries(
         .limit(limit)
         .offset(offset)
     )
+    if kind is not None:
+        q = q.where(PersonalEntry.kind == kind)
     return list(await session.scalars(q))
 
 

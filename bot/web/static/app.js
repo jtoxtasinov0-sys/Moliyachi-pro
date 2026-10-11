@@ -7,7 +7,9 @@ const state = {
   period: "month",
   metric: "qty",
   dash: null,
-  entries: { status: "", workerId: "", offset: 0, items: [] },
+  // type: "" — hammasi, expense | income | debt | work (ishchida doim work)
+  entries: { type: "", status: "", workerId: "", offset: 0, items: [] },
+  home: { personal: null, feed: [] },
   workers: [],
   models: [],
   wallet: { tab: "money", period: "month", data: null, entries: { offset: 0, items: [] }, debts: null },
@@ -230,10 +232,115 @@ function drawDonut(key, canvasId, legendId, items, fmtValue, fmtLegend) {
 // --- Asosiy (dashboard) ------------------------------------------------------
 
 async function loadDashboard() {
+  if (state.me.is_owner) loadHomeMoney();
   try {
     state.dash = await api(`/api/dashboard?period=${state.period}`);
     renderDashboard();
   } catch (e) { fail(e); }
+}
+
+// --- Asosiy: pullarim holati (egada) -----------------------------------------
+
+async function loadHomeMoney() {
+  const h = state.home;
+  if (!h.personal) {
+    $("mDebtList").innerHTML = SKELETONS;
+    $("mFeed").innerHTML = SKELETONS;
+  }
+  try {
+    const [personal, debts, feed] = await Promise.all([
+      api(`/api/personal?period=${state.period}`),
+      api("/api/debts"),
+      api("/api/activity?limit=8"),
+    ]);
+    h.personal = personal;
+    h.feed = feed.items;
+    state.wallet.debts = debts;
+    renderHomeMoney();
+  } catch (e) { fail(e); }
+}
+
+function renderHomeMoney() {
+  const d = state.home.personal;
+  const exp = d.totals.expense || {};
+  const inc = d.totals.income || {};
+  const all = {};
+  for (const src of [exp, inc]) for (const [c, v] of Object.entries(src)) all[c] = (all[c] || 0) + v;
+  const cur = mainCurrency(all);
+  const net = (c) => (inc[c] || 0) - (exp[c] || 0);
+
+  const main = net(cur);
+  $("mNet").innerHTML = `${main > 0 ? "+" : ""}${fmtNum(main)}<small>${esc(CUR[cur] || cur)}</small>`;
+  $("mNetExtra").textContent = Object.keys(all).filter((c) => c !== cur && net(c))
+    .map((c) => (net(c) > 0 ? "+ " : "− ") + money(Math.abs(net(c)), c)).join("  ");
+  setMoneyStat("mIncome", inc);
+  setMoneyStat("mExpense", exp);
+  $("mRange").textContent = rangeLabel(d.start, d.end);
+  renderHomeDebts();
+  renderHomeFeed();
+}
+
+function renderHomeDebts() {
+  const d = state.wallet.debts;
+  if (!d || !state.home.personal) return;
+  setMoneyStat("mOwed", d.owed_to_me);
+  setMoneyStat("mOwe", d.i_owe);
+  const open = d.people.filter((p) => !p.settled);
+  $("mDebtList").innerHTML = open.length
+    ? open.slice(0, 5).map((p) => {
+        const b = balanceInfo(p);
+        return `
+          <button class="mini-entry tap" data-person="${esc(p.key)}">
+            <div class="avatar">${esc(initials(p.name))}</div>
+            <div class="info"><b>${esc(p.name)}</b><small>${b.label}</small></div>
+            <div class="amt ${b.cls}">${esc(b.text)}</div>
+          </button>`;
+      }).join("") + (open.length > 5 ? `<p class="muted small" style="margin:10px 0 0">yana ${open.length - 5} kishi…</p>` : "")
+    : `<p class="muted">✅ Ochiq qarz yo'q. Yozish uchun botga ayting: «Abbosdan 100 ming won oldim».</p>`;
+}
+
+function renderHomeFeed() {
+  const items = state.home.feed;
+  $("mFeed").innerHTML = items.length
+    ? items.map((e) => feedRow(e, { date: true })).join("")
+    : `<p class="muted">Hali yozuv yo'q. Botga ovozli yoki matnli xabar yuboring: «bozorga 50 ming won», «oylik tushdi 3 million», «Valiga 50 dollar qarz berdim».</p>`;
+}
+
+// Bitta harakat qatori: xarajat, daromad, qarz yoki ish yozuvi
+function feedRow(e, opts = {}) {
+  let icon, iconCls = "", title, amt, amtCls = "";
+  const sub = opts.date ? [dateLabel(e.date)] : [];
+  if (e.type === "income" || e.type === "expense") {
+    const inc = e.type === "income";
+    icon = inc ? "💰" : "💸";
+    iconCls = inc ? "in" : "";
+    title = e.category;
+    amt = (inc ? "+" : "−") + money(e.amount, e.currency);
+    amtCls = inc ? "pos" : "";
+    sub.push(inc ? "Daromad" : "Xarajat");
+    if (e.note) sub.push(e.note);
+  } else if (e.type === "debt") {
+    const took = e.direction === "in";
+    icon = took ? "📥" : "📤";
+    iconCls = took ? "in" : "out";
+    title = took ? `${e.person}dan olindi` : `${e.person}ga berildi`;
+    amt = money(e.amount, e.currency);
+    sub.push("Qarz");
+    if (e.note) sub.push(e.note);
+  } else {
+    icon = "🧵";
+    title = `${e.model} · ${fmtNum(e.qty)} dona`;
+    amt = e.total != null ? money(e.total, e.currency) : "";
+    sub.push(e.worker.name, STATUS[e.status] || e.status);
+  }
+  const del = opts.del ? `<button class="mini-del" data-del-feed="${e.type}:${e.id}" aria-label="O'chirish">🗑</button>` : "";
+  return `
+    <div class="mini-entry">
+      <div class="mini-icon ${iconCls}">${icon}</div>
+      <div class="info"><b>${esc(title)}</b><small>${esc(sub.join(" · "))}</small></div>
+      <div class="amt ${amtCls}">${esc(amt)}</div>
+      ${del}
+    </div>`;
 }
 
 function renderDashboard() {
@@ -264,6 +371,9 @@ function renderDashboard() {
     delta.innerHTML = "";
   }
   $("heroRange").textContent = rangeLabel(d.start, d.end);
+
+  // Egada ishchi ham, ish yozuvi ham bo'lmasa — ishxona hisoboti kerak emas
+  $("workSection").hidden = isOwner && !d.has_team;
 
   // Tasdiq kutayotganlar
   $("pendingCard").hidden = !(isOwner && d.pending > 0);
@@ -327,10 +437,12 @@ async function loadEntries(reset) {
     $("entryList").innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
   }
   const q = new URLSearchParams({ limit: 30, offset: en.offset });
-  if (en.status) q.set("status", en.status);
-  if (en.workerId) q.set("worker_id", en.workerId);
+  const isWork = en.type === "work";
+  if (isWork && en.status) q.set("status", en.status);
+  if (isWork && en.workerId) q.set("worker_id", en.workerId);
+  if (!isWork && en.type) q.set("kind", en.type);
   try {
-    const data = await api(`/api/entries?${q}`);
+    const data = await api(`${isWork ? "/api/entries" : "/api/activity"}?${q}`);
     en.items = en.items.concat(data.items);
     en.offset += data.items.length;
     $("moreBtn").hidden = !data.has_more;
@@ -351,7 +463,7 @@ function renderEntries() {
       html += `<div class="date-head">${esc(dateLabel(e.date))}</div>`;
       lastDate = e.date;
     }
-    html += entryCard(e);
+    html += isWorkItem(e) ? entryCard(e) : `<div class="entry">${feedRow(e, { del: true })}</div>`;
   }
   $("entryList").innerHTML = html;
 }
@@ -388,15 +500,29 @@ async function entryAction(act, id) {
     if (act === "delete") {
       if (!(await confirmBox(`#${id} yozuvni o'chirasizmi?`))) return;
       await api(`/api/entries/${id}`, { method: "DELETE" });
-      state.entries.items = state.entries.items.filter((e) => e.id !== id);
+      state.entries.items = state.entries.items.filter((e) => !(isWorkItem(e) && e.id === id));
       toast("O'chirildi");
     } else {
       const updated = await api(`/api/entries/${id}/${act}`, { method: "POST" });
       const keep = !state.entries.status || state.entries.status === updated.status;
-      state.entries.items = state.entries.items.flatMap((e) => (e.id === id ? (keep ? [updated] : []) : [e]));
+      state.entries.items = state.entries.items.flatMap((e) => (isWorkItem(e) && e.id === id ? (keep ? [updated] : []) : [e]));
       toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
     }
     renderEntries();
+  } catch (e) { fail(e); }
+}
+
+const isWorkItem = (e) => !e.type || e.type === "work";
+
+const DELETE_URL = { expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/" };
+
+async function deleteFeedItem(type, id) {
+  if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
+  try {
+    await api(DELETE_URL[type] + id, { method: "DELETE" });
+    state.entries.items = state.entries.items.filter((e) => !(e.type === type && e.id === id));
+    renderEntries();
+    toast("O'chirildi");
   } catch (e) { fail(e); }
 }
 
@@ -407,7 +533,7 @@ async function fillWorkerFilter() {
     const sel = $("workerFilter");
     sel.innerHTML = `<option value="">👷 Barcha ishchilar</option>` + state.workers.map((w) => `<option value="${w.id}">${esc(w.name)}</option>`).join("");
     sel.value = state.entries.workerId;
-    sel.hidden = state.workers.length === 0;
+    syncChips();
   } catch (e) { fail(e); }
 }
 
@@ -558,6 +684,7 @@ function balanceInfo(p) {
 
 function renderDebts() {
   const d = state.wallet.debts;
+  renderHomeDebts();
   setMoneyStat("dOwed", d.owed_to_me);
   setMoneyStat("dOwe", d.i_owe);
   if (!d.people.length) {
@@ -697,6 +824,7 @@ function workerSheet(w) {
   };
   $("wEntries").onclick = () => {
     closeSheet();
+    state.entries.type = "work";
     state.entries.workerId = String(w.id);
     state.entries.status = "";
     syncChips();
@@ -847,7 +975,12 @@ function closeSheet() {
 }
 
 function syncChips() {
-  document.querySelectorAll("#statusChips button").forEach((b) => b.classList.toggle("on", b.dataset.status === state.entries.status));
+  const en = state.entries;
+  const isWork = en.type === "work";
+  document.querySelectorAll("#typeChips button").forEach((b) => b.classList.toggle("on", b.dataset.type === en.type));
+  document.querySelectorAll("#statusChips button").forEach((b) => b.classList.toggle("on", b.dataset.status === en.status));
+  $("statusChips").hidden = !isWork;
+  $("workerFilter").hidden = !isWork || !state.me.is_owner || state.workers.length === 0;
 }
 
 // --- Boshlash ----------------------------------------------------------------
@@ -872,12 +1005,24 @@ function bind() {
     renderTrend();
   };
   $("pendingCard").onclick = () => {
+    state.entries.type = "work";
     state.entries.status = "pending";
     state.entries.workerId = "";
     syncChips();
     show("entries");
   };
 
+  $("typeChips").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || b.dataset.type === state.entries.type) return;
+    state.entries.type = b.dataset.type;
+    state.entries.status = "";
+    state.entries.workerId = "";
+    $("workerFilter").value = "";
+    syncChips();
+    haptic();
+    loadEntries(true);
+  };
   $("statusChips").onclick = (ev) => {
     const b = ev.target.closest("button");
     if (!b) return;
@@ -892,8 +1037,32 @@ function bind() {
   };
   $("moreBtn").onclick = () => loadEntries(false);
   $("entryList").onclick = (ev) => {
+    const del = ev.target.closest("[data-del-feed]");
+    if (del) {
+      const [type, id] = del.dataset.delFeed.split(":");
+      deleteFeedItem(type, Number(id));
+      return;
+    }
     const b = ev.target.closest("[data-act]");
     if (b) entryAction(b.dataset.act, Number(b.dataset.id));
+  };
+
+  // Asosiy: qarzlar va harakatlar
+  $("mDebtList").onclick = (ev) => {
+    const b = ev.target.closest("[data-person]");
+    if (b) personSheet(b.dataset.person);
+  };
+  $("mDebtsAll").onclick = () => {
+    state.wallet.tab = "debts";
+    show("wallet");
+  };
+  $("mFeedAll").onclick = () => {
+    state.entries.type = "";
+    state.entries.status = "";
+    state.entries.workerId = "";
+    $("workerFilter").value = "";
+    syncChips();
+    show("entries");
   };
 
   $("workerList").onclick = (ev) => {
@@ -991,6 +1160,12 @@ async function init() {
   $("navModels").hidden = me.is_owner;
   $("navHelp").hidden = me.is_owner;
   document.querySelectorAll(".team-seg").forEach((el) => (el.hidden = !me.is_owner));
+  // Egada bosh sahifada — pullar holati, «Yozuvlar»da — barcha turdagi yozuvlar
+  $("moneySection").hidden = !me.is_owner;
+  $("workTitle").hidden = !me.is_owner;
+  $("typeChips").hidden = !me.is_owner;
+  if (!me.is_owner) state.entries.type = "work";
+  syncChips();
   if (!me.is_owner) $("modelsTitle").textContent = "Narxlar";
   await fillWorkerFilter();
   show("home");

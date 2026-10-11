@@ -265,6 +265,13 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .amt.neg, .side.neg { color: var(--red); }
 .mini-del { width: 34px; height: 34px; border-radius: 10px; background: var(--red-soft); color: var(--red); flex: none; font-size: 14px; }
 
+/* Asosiy sahifa: pullar holati */
+.section-title { font-size: 19px; font-weight: 800; margin: 26px 4px 12px; }
+.link-btn { color: var(--blue); font-weight: 800; font-size: 13.5px; padding: 4px 2px; }
+.mini-entry.tap { width: 100%; text-align: left; }
+.mini-entry .avatar { width: 40px; height: 40px; flex: none; }
+.entry .mini-entry { padding: 0; }
+
 .help p { color: var(--muted); font-weight: 600; line-height: 1.5; margin: 8px 0; }
 .help .quote { background: var(--blue-soft); color: var(--navy); padding: 10px 12px; border-radius: 12px; font-style: italic; }
 

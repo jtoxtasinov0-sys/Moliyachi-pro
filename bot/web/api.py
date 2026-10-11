@@ -235,6 +235,7 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
     }
     if user.is_owner:
         data["by_worker"] = _group(cur, "worker_id")
+        data["has_team"] = await repo.has_work(session, acc)
     return web.json_response(data)
 
 
@@ -665,3 +666,36 @@ async def delete_debt(request: web.Request, session: AsyncSession, user: User) -
         raise ApiError(404, "Yozuv topilmadi")
     await repo.soft_delete(session, entry)
     return web.json_response({"ok": True})
+
+
+# --- Barcha harakatlar: xarajat, daromad, qarz va ish yozuvlari bitta lentada ---
+
+ACTIVITY_KINDS = ("expense", "income", "debt", "work")
+ACTIVITY_MAX = 1000
+
+
+@routes.get("/api/activity")
+@endpoint(owner_only=True)
+async def activity(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    limit, offset = _paging(request)
+    kind = request.query.get("kind") or None
+    if kind is not None and kind not in ACTIVITY_KINDS:
+        raise ApiError(400, "Noto'g'ri tur")
+    if offset > ACTIVITY_MAX:
+        return web.json_response({"items": [], "has_more": False})
+
+    # Har jadvaldan kerakli miqdorni olib, sana bo'yicha birlashtiramiz
+    need = offset + limit + 1
+    items: list[tuple[date, float, dict]] = []
+    if kind in (None, "expense", "income"):
+        for e in await repo.list_personal_entries(session, user.id, kind=kind, limit=need):
+            items.append((e.entry_date, e.created_at.timestamp(), {"type": e.kind, **_personal_json(e)}))
+    if kind in (None, "debt"):
+        for e in await repo.list_debt_entries(session, user.id, limit=need):
+            items.append((e.entry_date, e.created_at.timestamp(), {"type": "debt", **_debt_json(e)}))
+    if kind in (None, "work"):
+        for e in await repo.list_work_entries(session, user.id, limit=need):
+            items.append((e.work_date, e.created_at.timestamp(), {"type": "work", **_entry_json(e)}))
+    items.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    page = [x[2] for x in items[offset : offset + limit]]
+    return web.json_response({"items": page, "has_more": len(items) > offset + limit})
