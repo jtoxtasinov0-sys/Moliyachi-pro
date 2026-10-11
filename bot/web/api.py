@@ -8,13 +8,17 @@ from html import escape
 from typing import Awaitable, Callable
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot import drafts, intake
+from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
 from bot.db.models import DebtEntry, EntryStatus, ItemModel, PersonalEntry, PersonalKind, User, WorkEntry
+from bot.services import stt
 from bot.services.utils import today
 from bot.web.auth import validate_init_data
 
@@ -699,3 +703,113 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     items.sort(key=lambda x: (x[0], x[1]), reverse=True)
     page = [x[2] for x in items[offset : offset + limit]]
     return web.json_response({"items": page, "has_more": len(items) > offset + limit})
+
+
+# --- Ilova ichida yozish: ovoz/matn -> qoralama -> «To'g'rimi?» -> saqlash ---
+# Qoralama bot chatidagidek ishlaydi (bot/intake.py), faqat server xotirasida saqlanadi.
+
+_drafts: dict[int, dict] = {}
+
+AUDIO_EXT = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/aac": "aac", "audio/mpeg": "mp3", "audio/wav": "wav"}
+MAX_AUDIO_BYTES = 8 * 1024**2
+
+
+def _current_draft(user: User) -> dict | None:
+    draft = _drafts.get(user.id)
+    if draft is not None and drafts.is_stale(draft):
+        _drafts.pop(user.id, None)
+        return None
+    return draft
+
+
+def _buttons(kb: InlineKeyboardMarkup) -> list[list[dict]]:
+    return [[{"text": b.text, "data": b.callback_data} for b in row if b.callback_data] for row in kb.inline_keyboard]
+
+
+async def _input_state(session: AsyncSession, user: User, **extra) -> web.Response:
+    """Ilovaga javob: joriy qoralama (matn + tugmalar) va qo'shimcha xabarlar."""
+    data: dict = {"draft": None, **extra}
+    draft = _current_draft(user)
+    if draft is not None:
+        html, kb = await drafts.present(session, draft, user)
+        data["draft"] = {"html": html, "buttons": _buttons(kb)}
+    return web.json_response(data)
+
+
+async def _analyze(session: AsyncSession, user: User, text: str, heard: bool = False) -> web.Response:
+    text = text.strip()[:2000]
+    if not text:
+        raise ApiError(400, "Matn bo'sh")
+    extra = {"heard": text} if heard else {}
+    try:
+        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user))
+    except intake.IntakeError as e:
+        return await _input_state(session, user, notice=e.message, **extra)
+    return await _input_state(session, user, **extra)
+
+
+@routes.get("/api/input")
+@endpoint()
+async def input_state(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    return await _input_state(session, user)
+
+
+@routes.post("/api/input")
+@endpoint()
+async def input_text(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    return await _analyze(session, user, str((await _json(request)).get("text") or ""))
+
+
+@routes.post("/api/input/voice")
+@endpoint()
+async def input_voice(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    ext = AUDIO_EXT.get(request.content_type)
+    if ext is None:
+        raise ApiError(400, "Ovoz formati qo'llab-quvvatlanmaydi")
+    audio = await request.read()
+    if not audio or len(audio) > MAX_AUDIO_BYTES:
+        raise ApiError(400, "Ovoz juda uzun yoki bo'sh")
+    try:
+        text = await stt.transcribe(audio, f"voice.{ext}", request.content_type)
+    except stt.SttError:
+        return await _input_state(session, user, notice="⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta ayting yoki yozing.")
+    if not text:
+        return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
+    return await _analyze(session, user, text, heard=True)
+
+
+@routes.post("/api/input/action")
+@endpoint()
+async def input_action(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Qoralama tugmasi: bot chatidagi callback_data qiymatining o'zi keladi."""
+    value = str((await _json(request)).get("data") or "")
+    draft = _current_draft(user)
+    if value == kbs.DraftCb(action="cancel").pack():
+        _drafts.pop(user.id, None)
+        return await _input_state(session, user, notice="❌ Bekor qilindi.")
+    if draft is None:
+        return await _input_state(session, user, notice="Bu qoralama eskirgan. Qaytadan ayting.")
+
+    try:
+        prefix = value.split(":", 1)[0]
+        if prefix == kbs.ResolveCb.__prefix__:
+            await intake.choose(session, user, draft, kbs.ResolveCb.unpack(value))
+        elif prefix == kbs.DebtDirCb.__prefix__:
+            intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
+        elif prefix == kbs.DraftCb.__prefix__:
+            action = kbs.DraftCb.unpack(value).action
+            if action in ("today", "yesterday"):
+                if not intake.set_date(draft, action):
+                    return await _input_state(session, user, notice="Sana o'zgarmadi.")
+            elif action == "save":
+                saved = await intake.save(session, request.app["bot"], user, draft)
+                _drafts.pop(user.id, None)
+                html = "\n\n".join([saved.header, *(text for text, _ in saved.cards)])
+                return await _input_state(session, user, saved=html)
+    except (ValueError, TypeError):
+        raise ApiError(400, "Noto'g'ri tugma")
+    except intake.IntakeError as e:
+        if e.drop:
+            _drafts.pop(user.id, None)
+        return await _input_state(session, user, notice=e.message)
+    return await _input_state(session, user)

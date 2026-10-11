@@ -120,8 +120,9 @@ async def on_personal_report(
             await call.message.answer("Hali xarajat yoki daromad yozilmagan.")
             return
         await call.message.answer(f"🕘 Oxirgi {len(items)} ta yozuv:")
-        for e in reversed(items):
-            await call.message.answer(personal_text(e), reply_markup=kbs.money_entry_kb("p", e.id))
+        for i, e in enumerate(reversed(items)):
+            kb = kbs.money_entry_kb("p", e.id, app=i == len(items) - 1)
+            await call.message.answer(personal_text(e), reply_markup=kb)
         return
     if callback_data.period not in PERIOD_LABELS:
         await call.answer()
@@ -185,8 +186,9 @@ async def on_debts(call: CallbackQuery, callback_data: kbs.DebtsCb, session: Asy
             await call.message.answer("Hali qarz yozilmagan.")
             return
         await call.message.answer(f"🕘 Oxirgi {len(items)} ta qarz yozuvi:")
-        for e in reversed(items):
-            await call.message.answer(debt_text(e), reply_markup=kbs.money_entry_kb("d", e.id))
+        for i, e in enumerate(reversed(items)):
+            kb = kbs.money_entry_kb("d", e.id, app=i == len(items) - 1)
+            await call.message.answer(debt_text(e), reply_markup=kb)
         return
     await call.message.edit_text(await _debts_view(session, user.id), reply_markup=kbs.debts_kb())
     await call.answer("Yangilandi")

@@ -105,12 +105,15 @@ function confirmBox(text) {
 
 async function api(path, opts = {}) {
   const headers = { "X-Telegram-Init-Data": (tg && tg.initData) || "" };
-  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(path, {
-    method: opts.method || "GET",
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  let body;
+  if (opts.blob) {
+    headers["Content-Type"] = opts.blob.type.split(";")[0];
+    body = opts.blob;
+  } else if (opts.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, { method: opts.method || "GET", headers, body });
   let data = null;
   try { data = await res.json(); } catch (_) { /* bo'sh javob */ }
   if (!res.ok) {
@@ -920,6 +923,184 @@ function modelSheet(m) {
   };
 }
 
+// --- Ilova ichida yozish: ovoz yoki matn -> qoralama -> saqlash -----------------
+
+const compose = { busy: false, recorder: null, chunks: [], stream: null, timer: null, started: 0 };
+const MAX_RECORD_SEC = 120;
+const FIX_ACTION = "d:fix";
+
+// Server Telegram HTML (<b>, <i>) qaytaradi — faqat shu teglarni qoldiramiz
+function tgHtml(html) {
+  const t = document.createElement("template");
+  t.innerHTML = String(html || "");
+  t.content.querySelectorAll("*").forEach((el) => {
+    if (["B", "I", "S"].includes(el.tagName)) [...el.attributes].forEach((a) => el.removeAttribute(a.name));
+    else el.replaceWith(document.createTextNode(el.textContent));
+  });
+  return t.innerHTML.replace(/\n/g, "<br>");
+}
+
+function composeSheet() {
+  const owner = state.me.is_owner;
+  const example = owner ? "Masalan: bozorga 50 ming won" : "Masalan: A-12 dan 50 ta topshirdim";
+  openSheet(`
+    <h3>Yangi yozuv</h3>
+    <div id="cOut"></div>
+    <button class="rec-btn" id="cMic"><span class="rec-dot"></span><span id="cMicText">🎤 Bosing va gapiring</span></button>
+    <div class="compose">
+      <textarea class="input" id="cText" rows="1" maxlength="2000" placeholder="${esc(example)}"></textarea>
+      <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
+    </div>
+    <p class="muted small compose-hint">${owner
+      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim»."
+      : "Model va sonini ayting: «kecha B-5 dan 30 ta»."}</p>
+  `);
+  const input = $("cText");
+  input.oninput = () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 140) + "px";
+  };
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendText(); }
+  };
+  $("cSend").onclick = sendText;
+  $("cMic").onclick = () => (compose.recorder ? stopRecording(false) : startRecording());
+  $("cOut").onclick = (ev) => {
+    const b = ev.target.closest("[data-cb]");
+    if (b) draftAction(b.dataset.cb);
+  };
+  composeRequest(api("/api/input"), null);
+}
+
+function setBusy(on, label) {
+  compose.busy = on;
+  ["cSend", "cMic", "cText"].forEach((id) => $(id) && ($(id).disabled = on));
+  document.querySelectorAll("#cOut [data-cb]").forEach((b) => (b.disabled = on));
+  if (on && label && $("cOut")) $("cOut").insertAdjacentHTML("afterbegin", `<div class="c-note busy" id="cBusy">${esc(label)}</div>`);
+  if (!on && $("cBusy")) $("cBusy").remove();
+}
+
+async function composeRequest(promise, label) {
+  if (label) setBusy(true, label);
+  try {
+    renderCompose(await promise);
+  } catch (e) {
+    fail(e);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderCompose(res) {
+  if (!$("cOut")) return; // oyna yopilgan
+  let html = "";
+  if (res.heard) html += `<div class="c-note heard">🗣 «${esc(res.heard)}»</div>`;
+  if (res.notice) html += `<div class="c-note">${tgHtml(res.notice)}</div>`;
+  if (res.saved) {
+    html += `<div class="c-note saved">${tgHtml(res.saved)}</div>`;
+    toast("Saqlandi");
+    refreshView();
+  }
+  if (res.draft) {
+    html += `<div class="draft-box">${tgHtml(res.draft.html)}</div>`;
+    html += res.draft.buttons.map((row) => `<div class="kb-row">${row.map((b) =>
+      `<button class="kb-btn${b.data === "d:save" ? " main" : ""}" data-cb="${esc(b.data)}">${esc(b.text)}</button>`).join("")}</div>`).join("");
+    if (!res.draft.buttons.length || res.draft.html.includes("❓")) html += `<p class="muted small c-ask">Javobni pastga yozing yoki 🎤 bilan ayting.</p>`;
+  }
+  $("cOut").innerHTML = html;
+  $("cMicText").textContent = res.draft ? "🎤 Tuzatish yoki javob — gapiring" : "🎤 Bosing va gapiring";
+}
+
+function sendText() {
+  const input = $("cText");
+  const text = input.value.trim();
+  if (!text || compose.busy) return input.focus();
+  input.value = "";
+  input.style.height = "auto";
+  haptic();
+  composeRequest(api("/api/input", { method: "POST", body: { text } }), "⏳ Tahlil qilinmoqda…");
+}
+
+function draftAction(data) {
+  if (compose.busy) return;
+  haptic();
+  if (data === FIX_ACTION) {
+    $("cText").placeholder = "Nimani o'zgartiramiz? Masalan: summa 45 ming, kecha edi";
+    $("cText").focus();
+    return;
+  }
+  composeRequest(api("/api/input/action", { method: "POST", body: { data } }), data === "d:save" ? "💾 Saqlanmoqda…" : null);
+}
+
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+}
+
+async function startRecording() {
+  if (compose.busy) return;
+  const mime = pickMime();
+  if (mime === null || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("Bu qurilmada ovoz yozib bo'lmaydi — matn bilan yozing (klaviaturadagi 🎤 ham ishlaydi)", true);
+    return;
+  }
+  try {
+    compose.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (_) {
+    toast("Mikrofonga ruxsat berilmadi. Matn bilan yozing yoki klaviaturadagi 🎤 ni ishlating.", true);
+    return;
+  }
+  compose.chunks = [];
+  compose.recorder = new MediaRecorder(compose.stream, mime ? { mimeType: mime } : undefined);
+  compose.recorder.ondataavailable = (ev) => ev.data.size && compose.chunks.push(ev.data);
+  compose.recorder.onstop = onRecorded;
+  compose.recorder.start();
+  compose.started = Date.now();
+  $("cMic").classList.add("on");
+  haptic("ok");
+  const tick = () => {
+    const sec = Math.floor((Date.now() - compose.started) / 1000);
+    const clock = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    if ($("cMicText")) $("cMicText").textContent = `To'xtatish va yuborish · ${clock}`;
+    if (sec >= MAX_RECORD_SEC) stopRecording(false);
+  };
+  tick();
+  compose.timer = setInterval(tick, 500);
+}
+
+// cancel=true — oyna yopildi, yozilgani yuborilmaydi
+function stopRecording(cancel) {
+  const rec = compose.recorder;
+  if (!rec) return;
+  clearInterval(compose.timer);
+  compose.cancel = cancel;
+  compose.recorder = null;
+  if (rec.state !== "inactive") rec.stop();
+  if (compose.stream) compose.stream.getTracks().forEach((t) => t.stop());
+  compose.stream = null;
+  if ($("cMic")) $("cMic").classList.remove("on");
+}
+
+function onRecorded(ev) {
+  const type = (ev.target.mimeType || compose.chunks[0]?.type || "audio/webm");
+  const blob = new Blob(compose.chunks, { type });
+  compose.chunks = [];
+  if (compose.cancel || !$("cOut")) return;
+  if (blob.size < 1500) {
+    toast("Juda qisqa — tugmani bosib, gapirib, keyin yana bosing", true);
+    if ($("cMicText")) $("cMicText").textContent = "🎤 Bosing va gapiring";
+    return;
+  }
+  composeRequest(api("/api/input/voice", { method: "POST", blob }), "🎧 Eshitilmoqda…");
+}
+
+// Saqlangandan keyin ochiq bo'limdagi raqamlar yangilansin
+function refreshView() {
+  if (state.view === "home") loadDashboard();
+  else if (state.view === "entries") loadEntries(true);
+  else if (state.view === "wallet") loadWallet();
+}
+
 // --- Sozlamalar --------------------------------------------------------------
 
 function settingsSheet() {
@@ -969,6 +1150,7 @@ function openSheet(html) {
   if (tg && tg.BackButton) tg.BackButton.show();
 }
 function closeSheet() {
+  stopRecording(true);
   $("sheet").hidden = true;
   $("sheetBackdrop").hidden = true;
   if (tg && tg.BackButton) tg.BackButton.hide();
@@ -1117,11 +1299,10 @@ function bind() {
   $("settingsBtn").onclick = settingsSheet;
   $("sheetBackdrop").onclick = closeSheet;
 
-  // O'rtadagi tugma: chatga qaytib ovozli xabar yuborish
+  // O'rtadagi tugma: ilova ichida ovoz yoki matn bilan yozish
   $("fab").onclick = () => {
     haptic("ok");
-    if (tg && tg.initData) tg.close();
-    else toast("Ovozli xabarni bot chatida yuboring");
+    composeSheet();
   };
 
   if (tg && tg.BackButton) tg.BackButton.onClick(closeSheet);
@@ -1168,7 +1349,19 @@ async function init() {
   syncChips();
   if (!me.is_owner) $("modelsTitle").textContent = "Narxlar";
   await fillWorkerFilter();
-  show("home");
+  show(startView());
+}
+
+// Botdagi «Ilovani ochish» tugmasi kerakli bo'limni ochadi: ?view=debts | wallet | entries
+function startView() {
+  const view = new URLSearchParams(location.search).get("view");
+  if (view === "entries") return "entries";
+  if (!state.me.is_owner) return "home";
+  if (view === "debts" || view === "wallet") {
+    state.wallet.tab = view === "debts" ? "debts" : "money";
+    return "wallet";
+  }
+  return "home";
 }
 
 init();

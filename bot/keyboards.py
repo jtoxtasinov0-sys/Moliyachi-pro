@@ -1,7 +1,8 @@
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+from bot.config import settings
 from bot.db.models import EntryStatus, User, WorkEntry
 
 # --- Asosiy menyu -----------------------------------------------------------
@@ -94,6 +95,14 @@ class ModelCb(CallbackData, prefix="md"):
 
 # --- Tugmalar ---------------------------------------------------------------
 
+def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
+    """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries)."""
+    url = settings.webapp_url
+    if url:
+        url += f"?view={view}" if view else ""
+        kb.row(InlineKeyboardButton(text="📱 Ilovani ochish", web_app=WebAppInfo(url=url)))
+
+
 def draft_kb(with_date_buttons: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Saqlash", callback_data=DraftCb(action="save"))
@@ -127,7 +136,7 @@ def resolve_kb(
     return kb.as_markup()
 
 
-def entry_kb(entry: WorkEntry, viewer: User) -> InlineKeyboardMarkup:
+def entry_kb(entry: WorkEntry, viewer: User, app: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     if viewer.is_owner and entry.status == EntryStatus.PENDING:
         kb.button(text="✅ Tasdiqlash", callback_data=EntryCb(action="approve", entry_id=entry.id))
@@ -135,6 +144,8 @@ def entry_kb(entry: WorkEntry, viewer: User) -> InlineKeyboardMarkup:
     kb.button(text="✏️ Tahrirlash", callback_data=EntryCb(action="edit", entry_id=entry.id))
     kb.button(text="🗑 O'chirish", callback_data=EntryCb(action="del", entry_id=entry.id))
     kb.adjust(2)
+    if app:
+        add_app_button(kb, "entries")
     return kb.as_markup()
 
 
@@ -150,6 +161,7 @@ def report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Bugun", callback_data=ReportCb(period="day"))
     kb.button(text="Shu hafta", callback_data=ReportCb(period="week"))
     kb.button(text="Shu oy", callback_data=ReportCb(period="month"))
+    add_app_button(kb)
     return kb.as_markup()
 
 
@@ -162,9 +174,11 @@ def debt_direction_kb(line: int, person: str) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def money_entry_kb(kind: str, entry_id: int) -> InlineKeyboardMarkup:
+def money_entry_kb(kind: str, entry_id: int, app: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
+    if app:
+        add_app_button(kb, "debts" if kind == "d" else "wallet")
     return kb.as_markup()
 
 
@@ -182,6 +196,7 @@ def personal_report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Shu oy", callback_data=PersonalReportCb(period="month"))
     kb.button(text="🕘 Oxirgi yozuvlar", callback_data=PersonalReportCb(period="recent"))
     kb.adjust(3, 1)
+    add_app_button(kb, "wallet")
     return kb.as_markup()
 
 
@@ -190,4 +205,5 @@ def debts_kb() -> InlineKeyboardMarkup:
     kb.button(text="🔄 Yangilash", callback_data=DebtsCb(action="refresh"))
     kb.button(text="🕘 Oxirgi yozuvlar", callback_data=DebtsCb(action="recent"))
     kb.adjust(2)
+    add_app_button(kb, "debts")
     return kb.as_markup()

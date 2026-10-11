@@ -85,8 +85,9 @@ async def recent(message: Message, state: FSMContext, session: AsyncSession, use
         await message.answer("Hali yozuvlar yo'q.")
         return
     await message.answer(f"🕘 Oxirgi {len(entries)} ta yozuv:")
-    for entry in reversed(entries):
-        await message.answer(entry_text(entry), reply_markup=kbs.entry_kb(entry, user))
+    for i, entry in enumerate(reversed(entries)):
+        last = i == len(entries) - 1
+        await message.answer(entry_text(entry), reply_markup=kbs.entry_kb(entry, user, app=last))
 
 
 @router.message(F.text == kbs.BTN_PENDING, IsOwner())
@@ -97,8 +98,9 @@ async def pending(message: Message, state: FSMContext, session: AsyncSession, us
         await message.answer("✅ Tasdiq kutayotgan yozuv yo'q.")
         return
     await message.answer(f"⏳ Tasdiq kutayotganlar: {len(entries)} ta")
-    for entry in entries[:30]:
-        await message.answer(entry_text(entry), reply_markup=kbs.entry_kb(entry, user))
+    shown = entries[:30]
+    for i, entry in enumerate(shown):
+        await message.answer(entry_text(entry), reply_markup=kbs.entry_kb(entry, user, app=i == len(shown) - 1))
 
 
 # --- Yozuv tugmalari --------------------------------------------------------

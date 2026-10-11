@@ -15,12 +15,12 @@ class SttError(Exception):
     pass
 
 
-async def transcribe(audio: bytes, filename: str = "voice.ogg") -> str:
+async def transcribe(audio: bytes, filename: str = "voice.ogg", content_type: str = "audio/ogg") -> str:
     form = aiohttp.FormData()
     form.add_field("model_id", STT_MODEL)
     form.add_field("language_code", "uzb")
     form.add_field("tag_audio_events", "false")
-    form.add_field("file", audio, filename=filename, content_type="audio/ogg")
+    form.add_field("file", audio, filename=filename, content_type=content_type)
 
     headers = {"xi-api-key": settings.elevenlabs_api_key}
     timeout = aiohttp.ClientTimeout(total=90)
