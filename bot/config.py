@@ -2,7 +2,7 @@ import hashlib
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bot_token: str
-    owner_tg_id: int
+    # Bir nechta ega bo'lsa — vergul bilan: 111,222
+    owner_tg_id: str
     database_url: str = "sqlite+aiosqlite:///moliyachi.db"
 
     elevenlabs_api_key: str
@@ -25,6 +26,18 @@ class Settings(BaseSettings):
     public_url: str | None = Field(default=None, validation_alias=AliasChoices("PUBLIC_URL", "RENDER_EXTERNAL_URL"))
     # Faqat kompyuterda sinash uchun: Telegramsiz brauzerda ilovani egasi sifatida ochish
     webapp_dev: bool = False
+
+    @field_validator("owner_tg_id")
+    @classmethod
+    def _check_owner_ids(cls, value: str) -> str:
+        ids = [part.strip() for part in value.split(",") if part.strip()]
+        if not ids or not all(part.isdigit() for part in ids):
+            raise ValueError("OWNER_TG_ID — Telegram ID raqamlari, bir nechta bo'lsa vergul bilan: 111,222")
+        return ",".join(ids)
+
+    @property
+    def owner_ids(self) -> tuple[int, ...]:
+        return tuple(int(part) for part in self.owner_tg_id.split(","))
 
     @property
     def tz(self) -> ZoneInfo:

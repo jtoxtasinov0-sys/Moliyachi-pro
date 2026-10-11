@@ -57,12 +57,12 @@ async def _auth(request: web.Request, session: AsyncSession) -> User:
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     tg_user = validate_init_data(init_data, settings.bot_token) if init_data else None
     if tg_user is None and settings.webapp_dev:
-        tg_user = {"id": settings.owner_tg_id, "first_name": "Egasi"}
+        tg_user = {"id": settings.owner_ids[0], "first_name": "Egasi"}
     if tg_user is None:
         raise ApiError(401, "Ilovani Telegram ichida oching")
 
     tg_id = int(tg_user["id"])
-    if tg_id == settings.owner_tg_id:
+    if tg_id in settings.owner_ids:
         name = " ".join(filter(None, [tg_user.get("first_name"), tg_user.get("last_name")])) or "Egasi"
         return await repo.ensure_owner(session, tg_id, name)
     user = await repo.get_user_by_tg(session, tg_id)
@@ -338,8 +338,7 @@ async def delete_entry(request: web.Request, session: AsyncSession, user: User) 
     text = entry_text(entry)
     await repo.soft_delete_work_entry(session, entry)
     if not user.is_owner and entry.status == EntryStatus.APPROVED:
-        owner = await repo.get_owner(session)
-        if owner and owner.tg_id:
+        for owner in await repo.get_owners(session):
             _notify(request, owner.tg_id, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}")
     return web.json_response({"ok": True})
 

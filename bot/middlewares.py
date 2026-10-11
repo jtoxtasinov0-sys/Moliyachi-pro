@@ -27,7 +27,7 @@ class DbUserMiddleware(BaseMiddleware):
             tg_user = data.get("event_from_user")
             user = None
             if tg_user is not None:
-                if tg_user.id == settings.owner_tg_id:
+                if tg_user.id in settings.owner_ids:
                     user = await repo.ensure_owner(session, tg_user.id, tg_user.full_name)
                 else:
                     user = await repo.get_user_by_tg(session, tg_user.id)

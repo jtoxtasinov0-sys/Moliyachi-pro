@@ -1,4 +1,5 @@
 """Saqlangan yozuvlar: ko'rish, tahrirlash, o'chirish, tasdiqlash va hisobot."""
+import logging
 from collections import defaultdict
 from decimal import Decimal
 from html import escape
@@ -6,6 +7,7 @@ from html import escape
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,8 @@ from bot.db import repo
 from bot.db.models import EntryStatus, User, WorkEntry
 from bot.middlewares import IsOwner, Registered
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
+
+log = logging.getLogger(__name__)
 
 router = Router(name="entries")
 router.message.filter(Registered())
@@ -39,15 +43,18 @@ def entry_text(entry: WorkEntry) -> str:
     return text
 
 
+async def notify_owners(bot: Bot, session: AsyncSession, text: str, entry: WorkEntry | None = None) -> None:
+    """Barcha egalarga xabar. Bittasiga yetmasa (botni bloklagan) — qolganlariga baribir boradi."""
+    for owner in await repo.get_owners(session):
+        markup = kbs.entry_kb(entry, owner) if entry is not None else None
+        try:
+            await bot.send_message(owner.tg_id, text, reply_markup=markup)
+        except TelegramAPIError:
+            log.warning("Egaga xabar yuborilmadi (chat %s)", owner.tg_id, exc_info=True)
+
+
 async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry) -> None:
-    owner = await repo.get_owner(session)
-    if owner is None or owner.tg_id is None:
-        return
-    await bot.send_message(
-        owner.tg_id,
-        "🔔 <b>Yangi yozuv tasdiq kutmoqda</b>\n\n" + entry_text(entry),
-        reply_markup=kbs.entry_kb(entry, owner),
-    )
+    await notify_owners(bot, session, "🔔 <b>Yangi yozuv tasdiq kutmoqda</b>\n\n" + entry_text(entry), entry)
 
 
 def _can_touch(user: User, entry: WorkEntry) -> bool:
@@ -156,13 +163,9 @@ async def on_delete_yes(call: CallbackQuery, callback_data: kbs.EntryCb, session
     await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi")
     await call.answer("O'chirildi")
 
-    # Ishchi tasdiqlangan yozuvni o'chirsa — egasiga xabar
+    # Ishchi tasdiqlangan yozuvni o'chirsa — egalarga xabar
     if not user.is_owner and entry.status == EntryStatus.APPROVED:
-        owner = await repo.get_owner(session)
-        if owner and owner.tg_id:
-            await call.bot.send_message(
-                owner.tg_id, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}"
-            )
+        await notify_owners(call.bot, session, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}")
 
 
 # --- Hisobot ----------------------------------------------------------------

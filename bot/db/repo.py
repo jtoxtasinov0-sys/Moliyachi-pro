@@ -59,8 +59,10 @@ async def ensure_owner(session: AsyncSession, tg_id: int, name: str) -> User:
     return user
 
 
-async def get_owner(session: AsyncSession) -> User | None:
-    return await session.scalar(select(User).where(User.role == Role.OWNER).limit(1))
+async def get_owners(session: AsyncSession) -> list[User]:
+    """Botga ulangan barcha egalar (xabarnoma yuborish uchun)."""
+    q = select(User).where(User.role == Role.OWNER, User.tg_id.is_not(None)).order_by(User.id)
+    return list((await session.scalars(q)).all())
 
 
 async def create_worker(session: AsyncSession, name: str) -> User:

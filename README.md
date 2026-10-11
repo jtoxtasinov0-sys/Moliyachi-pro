@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 3. `.env.example` faylini `.env` nomi bilan nusxalang va to'ldiring:
    - `BOT_TOKEN` — @BotFather → /newbot
-   - `OWNER_TG_ID` — botni ishga tushirib `/id` yozing (yoki @userinfobot)
+   - `OWNER_TG_ID` — botni ishga tushirib `/id` yozing (yoki @userinfobot). Bir nechta ega bo'lsa — vergul bilan: `111,222`
    - `ELEVENLABS_API_KEY` — elevenlabs.io → Profile → API Keys (**Speech to Text** ruxsati yoqilgan bo'lsin)
    - `ANTHROPIC_API_KEY` — console.anthropic.com → API Keys (balansga pul tashlash kerak)
    - `DATABASE_URL` — sinash uchun SQLite qoldiring; serverda PostgreSQL (Neon)

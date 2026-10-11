@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import User
+from bot.handlers.entries import notify_owners
 from bot.middlewares import Guest, Registered
 
 router = Router(name="common")
@@ -60,9 +61,7 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
         f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{WORKER_HELP}",
         reply_markup=kbs.main_menu(user),
     )
-    owner = await repo.get_owner(session)
-    if owner and owner.tg_id:
-        await message.bot.send_message(owner.tg_id, f"👷 {escape(user.name)} botga ulandi.")
+    await notify_owners(message.bot, session, f"👷 {escape(user.name)} botga ulandi.")
 
 
 @router.message(CommandStart(), Registered())
