@@ -20,7 +20,7 @@ from bot.db.base import session_factory
 from bot.db.models import DebtEntry, EntryStatus, ItemModel, PersonalEntry, PersonalKind, User, WorkEntry
 from bot.services import stt
 from bot.services.utils import today
-from bot.web.auth import validate_init_data
+from bot.web.auth import validate_init_data, validate_web_token
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +60,16 @@ def endpoint(owner_only: bool = False):
 async def _auth(request: web.Request, session: AsyncSession) -> User:
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     tg_user = validate_init_data(init_data, settings.bot_token) if init_data else None
+    if tg_user is None:
+        # Brauzerda: botning /web buyrug'i bergan shaxsiy kalit
+        web_token = request.headers.get("X-Web-Token", "")
+        tg_id = validate_web_token(web_token, settings.bot_token) if web_token else None
+        if tg_id is not None:
+            tg_user = {"id": tg_id}
     if tg_user is None and settings.webapp_dev:
         tg_user = {"id": settings.owner_ids[0], "first_name": "Egasi"}
     if tg_user is None:
-        raise ApiError(401, "Ilovani Telegram ichida oching")
+        raise ApiError(401, "Ilovani Telegram ichida oching yoki brauzer uchun botga /web deb yozing")
 
     tg_id = int(tg_user["id"])
     if tg_id in settings.owner_ids:
@@ -261,6 +267,43 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "require_approval": await repo.require_approval(session, user.account_id),
         }
     )
+
+
+# Telegram profil rasmi: tg_id -> (olingan vaqt, rasm yoki None)
+_avatars: dict[int, tuple[float, bytes | None]] = {}
+AVATAR_TTL = 6 * 3600
+
+
+async def _load_avatar(bot: Bot, tg_id: int) -> bytes | None:
+    photos = await bot.get_user_profile_photos(tg_id, limit=1)
+    if not photos.photos:
+        return None
+    sizes = photos.photos[0]
+    # Kichik, lekin aniq ko'rinadigan o'lcham (160 px atrofida)
+    size = next((s for s in sizes if s.width >= 160), sizes[-1])
+    file = await bot.get_file(size.file_id)
+    data = await bot.download_file(file.file_path)
+    return data.read() if data else None
+
+
+@routes.get("/api/avatar")
+@endpoint()
+async def avatar(request: web.Request, session: AsyncSession, user: User) -> web.StreamResponse:
+    if not user.tg_id:
+        raise ApiError(404, "Rasm yo'q")
+    loop = asyncio.get_running_loop()
+    cached = _avatars.get(user.tg_id)
+    if cached is None or loop.time() - cached[0] > AVATAR_TTL:
+        try:
+            image = await _load_avatar(request.app["bot"], user.tg_id)
+        except Exception:
+            log.warning("Profil rasmi olinmadi (tg %s)", user.tg_id, exc_info=True)
+            image = None
+        cached = (loop.time(), image)
+        _avatars[user.tg_id] = cached
+    if cached[1] is None:
+        raise ApiError(404, "Rasm yo'q")
+    return web.Response(body=cached[1], content_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @routes.patch("/api/settings")

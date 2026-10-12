@@ -3,14 +3,16 @@ from html import escape
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import LinkPreviewOptions, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards as kbs
+from bot.config import settings
 from bot.db import repo
 from bot.db.models import User
 from bot.handlers.entries import notify_owner
 from bot.middlewares import Guest, Registered
+from bot.web.auth import WEB_TOKEN_DAYS, make_web_token
 
 router = Router(name="common")
 
@@ -82,6 +84,22 @@ async def start(message: Message, state: FSMContext, user: User) -> None:
 async def help_cmd(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     await message.answer(OWNER_HELP if user.is_owner else WORKER_HELP, reply_markup=kbs.main_menu(user))
+
+
+@router.message(Command("web", "brauzer"), Registered())
+async def web_link(message: Message, user: User) -> None:
+    if not settings.base_url or not user.tg_id:
+        await message.answer("Ilova manzili sozlanmagan (PUBLIC_URL).")
+        return
+    url = f"{settings.base_url}/app/?key={make_web_token(user.tg_id, settings.bot_token)}"
+    await message.answer(
+        "🌐 <b>Ilovani brauzerda ochish</b>\n\n"
+        f"{escape(url)}\n\n"
+        "Havolani kompyuter yoki telefon brauzerida oching — ilova sizning kabinetingiz bilan ochiladi. "
+        f"Havola {WEB_TOKEN_DAYS} kun amal qiladi, keyin /web bilan yangisini oling.\n\n"
+        "⚠️ Bu shaxsiy havola — uni hech kimga bermang.",
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 @router.message(Command("id"))

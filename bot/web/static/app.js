@@ -103,8 +103,31 @@ function confirmBox(text) {
   });
 }
 
-async function api(path, opts = {}) {
+// Brauzerda: botning /web buyrug'i bergan shaxsiy kalit (?key=...) saqlab qo'yiladi
+const WEB_KEY = "moliyachi_web_key";
+function webKey() {
+  const params = new URLSearchParams(location.search);
+  const fromUrl = params.get("key");
+  if (fromUrl) {
+    try { localStorage.setItem(WEB_KEY, fromUrl); } catch (_) { /* xotira yopiq */ }
+    params.delete("key");
+    const qs = params.toString();
+    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    return fromUrl;
+  }
+  try { return localStorage.getItem(WEB_KEY) || ""; } catch (_) { return ""; }
+}
+const inTelegram = Boolean(tg && tg.initData);
+const browserKey = inTelegram ? "" : webKey();
+
+function authHeaders() {
   const headers = { "X-Telegram-Init-Data": (tg && tg.initData) || "" };
+  if (browserKey) headers["X-Web-Token"] = browserKey;
+  return headers;
+}
+
+async function api(path, opts = {}) {
+  const headers = authHeaders();
   let body;
   if (opts.blob) {
     headers["Content-Type"] = opts.blob.type.split(";")[0];
@@ -1333,6 +1356,7 @@ async function init() {
   }
   const me = state.me;
   $("hello").textContent = `Salom, ${me.name.split(" ")[0]}!`;
+  loadAvatar();
   $("settingsBtn").hidden = !me.is_owner;
   $("addModelBtn").hidden = !me.is_owner;
   // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
@@ -1350,6 +1374,27 @@ async function init() {
   if (!me.is_owner) $("modelsTitle").textContent = "Narxlar";
   await fillWorkerFilter();
   show(startView());
+}
+
+// Logotip o'rnida — Telegram profil rasmi (bo'lmasa logotip qoladi)
+async function loadAvatar() {
+  const setImg = (src, onError) => {
+    const img = new Image();
+    img.alt = "";
+    img.onload = () => $("logo").replaceChildren(img);
+    if (onError) img.onerror = onError;
+    img.src = src;
+  };
+  const fromServer = async () => {
+    try {
+      const res = await fetch("/api/avatar", { headers: authHeaders() });
+      if (!res.ok) return;
+      setImg(URL.createObjectURL(await res.blob()));
+    } catch (_) { /* rasm bo'lmasa logotip qoladi */ }
+  };
+  const photoUrl = inTelegram && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.photo_url;
+  if (photoUrl) setImg(photoUrl, fromServer);
+  else fromServer();
 }
 
 // Botdagi «Ilovani ochish» tugmasi kerakli bo'limni ochadi: ?view=debts | wallet | entries
