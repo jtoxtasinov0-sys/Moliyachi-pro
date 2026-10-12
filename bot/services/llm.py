@@ -57,12 +57,17 @@ class PersonalItem(BaseModel):
 class DebtItem(BaseModel):
     person: str | None = Field(description="Odam ismi, aytilmagan bo'lsa null")
     direction: Literal["in", "out"] | None = Field(
-        description="in — men undan pul oldim (qarz oldim yoki u qarzini qaytardi); "
-        "out — men unga pul berdim (qarz berdim yoki qarzimni qaytardim)"
+        description="in — men undan pul oldim yoki men unga qarzdorman (qarz oldim, u qarzini qaytardi, "
+        "\"qarzim bor\", \"uning haqqi bor\"); "
+        "out — men unga pul berdim yoki u menga qarzdor (qarz berdim, qarzimni qaytardim, "
+        "\"undan haqqim bor\", \"undan olishim kerak\")"
     )
     amount: float | None
     currency: Currency | None
-    note: str | None = Field(description="Qisqa izoh, bo'lmasa null")
+    note: str | None = Field(
+        description="Qisqa izoh egasi tilidan (men — egasi), qo'shimcha ma'lumot bo'lmasa null. "
+        "Gapni qayta aytma va odamlarni almashtirib yuborma"
+    )
 
 
 class Extraction(BaseModel):
@@ -116,6 +121,11 @@ ro'yxatida bo'lmasa ham (yangi mijoz).
 Narxni o'zing hisoblama, faqat aytilganini yoz.
 - Odamdan pul olish yoki odamga pul berish (dona/tovar aytilmagan, odam mijoz emas) — bu debt. Odam kimligini \
 so'rama, faqat ismini yoz. "undan oldim" -> in, "unga berdim"/"qaytardim" -> out, "u qaytardi" -> in.
+- Qarz holati (pul hozir berilmagan, kim kimga qarzdorligi aytilgan) ham debt:
+  * U menga qarzdor -> out: "Hayrulloda 65 million haqqim bor", "Valida 100 dollar pulim bor", "Vali mendan 50 ming qarz", "Validan 2 million olishim kerak", "Valining menga qarzi bor".
+  * Men unga qarzdorman -> in: "Validan 50 ming qarzim bor", "Valiga 2 million qarzman", "Valiga berishim kerak", "Valining mendan haqqi bor".
+  * "haqqim bor" — men pul olishim kerak (u menga qarzdor), "haqqi bor" — u pul olishi kerak (men qarzdorman).
+- debt note: odatda null. Yozsang — egasi tilidan, ma'noni o'zgartirmay ("u menga qarzdor" yoki "men qarzdorman"), "haqqim"ni "haqqi"ga almashtirma.
 - Do'kon, bozor, benzin, kafe, to'lov kabi narsaga pul sarflash — personal (expense), debt emas.
 - personal kategoriyasi: avval "Kategoriyalar" ro'yxatidan mosini tanla, bo'lmasa quyidagilardan: \
 xarajat — {", ".join(EXPENSE_CATEGORIES)}; daromad — {", ".join(INCOME_CATEGORIES)}. \
