@@ -127,7 +127,9 @@ async def on_fix(call: CallbackQuery, state: FSMContext) -> None:
     if draft is None:
         return
     await call.answer()
-    if draft["section"] == "money":
+    if draft["section"] == "client":
+        examples = "• <i>12 komplekt</i>\n• <i>150 mingdan</i>\n• <i>mijoz Tohir emas, Toxir aka</i>\n• <i>kecha edi</i>"
+    elif draft["section"] == "money":
         examples = "• <i>summa 45 ming</i>\n• <i>dollarda</i>\n• <i>kategoriya Mashina</i>\n• <i>kecha edi</i>"
     else:
         examples = "• <i>soni 45 ta</i>\n• <i>model B-12</i>\n• <i>kecha edi</i>\n• <i>ishchi Vali</i>"
@@ -142,6 +144,19 @@ async def on_debt_direction(
     if draft is None:
         return
     if not intake.set_direction(draft, callback_data):
+        await call.answer()
+        return
+    await _show(call, state, session, user, draft)
+
+
+@router.callback_query(kbs.ClientKindCb.filter())
+async def on_client_kind(
+    call: CallbackQuery, callback_data: kbs.ClientKindCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    draft = await _load_draft(call, state)
+    if draft is None:
+        return
+    if not intake.set_client_kind(draft, callback_data):
         await call.answer()
         return
     await _show(call, state, session, user, draft)

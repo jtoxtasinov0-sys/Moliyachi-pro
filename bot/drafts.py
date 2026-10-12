@@ -15,6 +15,12 @@ Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
   ..., "personal": [{kind, category, amount, currency, note}],
        "debt": [{person, direction, amount, currency, note}],
 }
+Mijoz bilan savdo — "section": "client":
+{
+  ..., "set_size": 5,
+       "client": [{kind, client_id, client_name, client_q, client_new, product,
+                   sets, pieces, price, price_unit, total, currency, note}],
+}
 """
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -25,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import DebtDirection, ItemModel, PersonalKind, User, WorkEntry
+from bot.db.models import ClientKind, DebtDirection, ItemModel, PersonalKind, PriceUnit, User, WorkEntry
 from bot.services import matcher
 from bot.services.llm import Extraction
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, today
@@ -69,8 +75,61 @@ def is_money(ext: Extraction) -> bool:
     return ext.section in ("personal", "debt") and bool(ext.personal or ext.debt)
 
 
+def is_client(ext: Extraction) -> bool:
+    return ext.section == "client" and bool(ext.client)
+
+
+def _count(value: int | None) -> int | None:
+    return value if value and 0 < value < 1_000_000 else None
+
+
+def client_total(item: dict, set_size: int) -> None:
+    """Dona sonini va jami summani komplekt soni va narxdan hisoblaydi."""
+    if item["sets"]:
+        item["pieces"] = item["sets"] * set_size
+    if item["kind"] == ClientKind.PAYMENT or not item["price"]:
+        return
+    qty = item["sets"] if item["price_unit"] == PriceUnit.SET else item["pieces"]
+    if qty:
+        item["total"] = _amount(float(Decimal(item["price"]) * qty))
+
+
+def _client_items(ext: Extraction, default_currency: str, set_size: int) -> list[dict]:
+    items = []
+    for c in ext.client:
+        price, unit = None, None
+        if c.price_per_set:
+            price, unit = _amount(c.price_per_set), PriceUnit.SET
+        elif c.price_per_piece:
+            price, unit = _amount(c.price_per_piece), PriceUnit.PIECE
+        item = {
+            "kind": c.kind,
+            "client_id": None,
+            "client_name": None,
+            "client_q": (c.client_name or "").strip()[:100] or None,
+            "client_new": False,
+            "product": (c.product or "").strip()[:100] or None,
+            "sets": _count(c.sets),
+            "pieces": _count(c.pieces),
+            "price": price,
+            "price_unit": unit,
+            "total": _amount(c.total),
+            "currency": c.currency or default_currency,
+            "note": (c.note or "").strip()[:200] or None,
+        }
+        if item["kind"] == ClientKind.PAYMENT:
+            item.update(sets=None, pieces=None, price=None, price_unit=None)
+        client_total(item, set_size)
+        items.append(item)
+    return items
+
+
 def from_extraction(
-    ext: Extraction, raw_text: str, entry_id: int | None = None, default_currency: str = "UZS"
+    ext: Extraction,
+    raw_text: str,
+    entry_id: int | None = None,
+    default_currency: str = "UZS",
+    set_size: int = 5,
 ) -> dict:
     draft = {
         "section": "work",
@@ -79,6 +138,13 @@ def from_extraction(
         "raw_text": raw_text,
         "created": datetime.now(timezone.utc).isoformat(),
     }
+    if is_client(ext):
+        said = {item.currency for item in ext.client if item.currency}
+        if len(said) == 1:
+            default_currency = said.pop()
+        draft.update(section="client", entry_id=None, set_size=set_size)
+        draft["client"] = _client_items(ext, default_currency, set_size)
+        return draft
     if is_money(ext):
         # «bozorga 35 ming won, benzinga 60 ming» — ikkinchisi ham won
         said = {item.currency for item in [*ext.personal, *ext.debt] if item.currency}
@@ -143,11 +209,33 @@ def is_stale(draft: dict) -> bool:
     return datetime.now(timezone.utc) - created > DRAFT_TTL
 
 
+def _num(v: str | None) -> float | None:
+    return float(v) if v is not None else None
+
+
 def for_llm(draft: dict) -> dict:
     """LLM ga tuzatish uchun yuboriladigan qisqa ko'rinish."""
+    if draft["section"] == "client":
+        return {
+            "date": draft["date"],
+            "client": [
+                {
+                    "client_name": c["client_name"] or c["client_q"],
+                    "kind": c["kind"],
+                    "product": c["product"],
+                    "sets": c["sets"],
+                    "pieces": None if c["sets"] else c["pieces"],
+                    "price_per_set": _num(c["price"]) if c["price_unit"] == PriceUnit.SET else None,
+                    "price_per_piece": _num(c["price"]) if c["price_unit"] == PriceUnit.PIECE else None,
+                    "total": None if c["price"] else _num(c["total"]),
+                    "currency": c["currency"],
+                    "note": c["note"],
+                }
+                for c in draft["client"]
+            ],
+        }
     if draft["section"] == "money":
-        def num(v: str | None) -> float | None:
-            return float(v) if v is not None else None
+        num = _num
 
         return {
             "date": draft["date"],
@@ -174,6 +262,7 @@ async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]
         known["workers"] = [w.name for w in await repo.list_workers(session, acc)]
         known["categories"] = await repo.personal_categories(session, acc)
         known["people"] = [name for _, name in await repo.debt_people(session, acc)][:60]
+        known["clients"] = [c.name for c in await repo.list_clients(session, acc)][:100]
     return known
 
 
@@ -187,6 +276,9 @@ def set_model(line: dict, model: ItemModel) -> None:
 async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     """Ismlarni bazadagi yozuvlarga bog'laydi (faqat aniq mos kelganlarini)."""
     acc = user.account_id
+    if draft["section"] == "client":
+        await _resolve_clients(session, draft, acc)
+        return
     if draft["section"] == "money":
         # Qarz: avval yozilgan odam bo'lsa — o'sha yozilishi. Yangi odam haqida savol berilmaydi.
         people = await repo.debt_people(session, acc)
@@ -219,7 +311,34 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
                 set_model(line, models_by_id[res.exact_id])
 
 
+async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None:
+    """Aniq mos kelsa — mavjud mijoz, o'xshashi bo'lmasa — yangi mijoz, aks holda so'raladi."""
+    clients = await repo.list_clients(session, acc)
+    items = [(c.id, c.name) for c in clients]
+    aliases = await repo.get_aliases(session, acc, "client")
+    names = dict(items)
+    for c in draft["client"]:
+        if c["client_id"] is not None or c["client_new"] or not c["client_q"]:
+            continue
+        res = matcher.match(c["client_q"], items, aliases)
+        if res.exact_id is not None:
+            c["client_id"], c["client_name"] = res.exact_id, names[res.exact_id]
+        elif not res.options:
+            c["client_new"], c["client_name"] = True, c["client_q"]
+
+
 def next_missing(draft: dict) -> tuple[str, int] | None:
+    if draft["section"] == "client":
+        for i, c in enumerate(draft["client"]):
+            if c["client_id"] is None and not c["client_new"]:
+                return ("client" if c["client_q"] else "client_name"), i
+            if c["kind"] not in (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN):
+                return "client_kind", i
+            if c["total"] is None:
+                if c["kind"] != ClientKind.PAYMENT and not (c["sets"] or c["pieces"]):
+                    return "c_qty", i
+                return ("c_price" if c["kind"] != ClientKind.PAYMENT else "c_amount"), i
+        return None
     if draft["section"] == "money":
         for i, p in enumerate(draft["personal"]):
             if p["amount"] is None:
@@ -355,8 +474,92 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     return text + f"\n\n❓ <b>{escape(debt['person'])}</b> — qancha? Summani yozing.", kbs.cancel_only_kb()
 
 
+CLIENT_KIND_LABELS = {
+    ClientKind.SALE: "📦 Mol berildi",
+    ClientKind.PAYMENT: "💵 To'lov olindi",
+    ClientKind.RETURN: "↩️ Mol qaytarildi",
+}
+
+
+def qty_text(sets: int | None, pieces: int | None) -> str:
+    if sets:
+        return f"{sets} komplekt ({pieces} dona)" if pieces else f"{sets} komplekt"
+    return f"{pieces} dona" if pieces else "? komplekt"
+
+
+def client_line(c: dict) -> str:
+    """«📦 Mol berildi: Maksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm»"""
+    label = CLIENT_KIND_LABELS.get(c["kind"], "❔ Mol yoki to'lov?")
+    if c["kind"] == ClientKind.PAYMENT:
+        return f"{label}: {_money_amount(c['total'], c['currency'])}"
+    text = f"{label}: "
+    if c["product"]:
+        text += f"{escape(c['product'])} — "
+    text += qty_text(c["sets"], c["pieces"])
+    if c["price"]:
+        text += f" × {fmt_money(Decimal(c['price']), c['currency'])}"
+        if c["price_unit"] == PriceUnit.PIECE:
+            text += " (dona)"
+    text += f" = {_money_amount(c['total'], c['currency'])}"
+    return text
+
+
+def _client_who(c: dict) -> str:
+    name = c["client_name"] or (f"{c['client_q']}?" if c["client_q"] else "?")
+    return f"<b>{escape(name)}</b>" + (" <i>(yangi mijoz)</i>" if c["client_new"] else "")
+
+
+def _render_client(draft: dict) -> str:
+    parts = ["📝 <b>Mijoz bilan oldi-berdi</b>"]
+    if raw := _short_raw(draft):
+        parts.append(raw)
+    parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
+    items = draft["client"]
+    one_client = len({(c["client_id"], c["client_name"], c["client_q"]) for c in items}) == 1
+    if one_client:
+        parts.append(f"👤 Mijoz: {_client_who(items[0])}")
+        parts.append("\n".join(f"• {client_line(c)}" for c in items))
+    else:
+        parts.append("\n".join(f"• {_client_who(c)} — {client_line(c)}" for c in items))
+    return "\n\n".join(parts)
+
+
+async def _present_client(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
+    text = _render_client(draft)
+    missing = next_missing(draft)
+    if missing is None:
+        return text + "\n\n<b>To'g'rimi?</b>", kbs.draft_kb(with_date_buttons=True)
+
+    kind, i = missing
+    c = draft["client"][i]
+    if kind == "client_name":
+        return text + "\n\n❓ Qaysi mijoz? Ismini yozing yoki ayting.", kbs.cancel_only_kb()
+    if kind == "client":
+        acc = user.account_id
+        items = [(x.id, x.name) for x in await repo.list_clients(session, acc)]
+        aliases = await repo.get_aliases(session, acc, "client")
+        options = [(o[0], o[1]) for o in matcher.match(c["client_q"], items, aliases).options] or items[:20]
+        return (
+            text + f"\n\n❓ «{escape(c['client_q'])}» — qaysi mijoz?",
+            kbs.resolve_kb("client", i, options, c["client_q"]),
+        )
+    who = escape(c["client_name"] or "")
+    if kind == "client_kind":
+        return text + f"\n\n❓ <b>{who}</b> — mol berdingizmi yoki to'lov oldingizmi?", kbs.client_kind_kb(i)
+    if kind == "c_qty":
+        return text + "\n\n❓ Nechta komplekt? Sonini yozing yoki ayting.", kbs.cancel_only_kb()
+    if kind == "c_price":
+        return (
+            text + "\n\n❓ Bir komplekt narxi qancha? (yoki jami summani ayting: «jami 1,4 million»)",
+            kbs.cancel_only_kb(),
+        )
+    return text + f"\n\n❓ <b>{who}</b> qancha to'ladi? Summani yozing.", kbs.cancel_only_kb()
+
+
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi."""
+    if draft["section"] == "client":
+        return await _present_client(session, draft, user)
     if draft["section"] == "money":
         return _present_money(draft)
 

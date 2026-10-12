@@ -17,7 +17,16 @@ from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
-from bot.db.models import DebtEntry, EntryStatus, ItemModel, PersonalEntry, PersonalKind, User, WorkEntry
+from bot.db.models import (
+    ClientEntry,
+    DebtEntry,
+    EntryStatus,
+    ItemModel,
+    PersonalEntry,
+    PersonalKind,
+    User,
+    WorkEntry,
+)
 from bot.services import stt
 from bot.services.utils import today
 from bot.web.auth import validate_init_data, validate_web_token
@@ -265,6 +274,7 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "bot_username": bot_me.username,
             "currencies": await repo.enabled_currencies(session, user.account_id),
             "require_approval": await repo.require_approval(session, user.account_id),
+            "set_size": await repo.set_size(session, user.account_id),
         }
     )
 
@@ -321,10 +331,19 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
         if data["main_currency"] not in repo.ALL_CURRENCIES:
             raise ApiError(400, "Valyuta noto'g'ri")
         await repo.set_main_currency(session, user.id, data["main_currency"])
+    if "set_size" in data:
+        try:
+            size = int(data["set_size"])
+        except (TypeError, ValueError):
+            size = 0
+        if not 1 <= size <= repo.MAX_SET_SIZE:
+            raise ApiError(400, f"Komplektdagi dona soni 1 dan {repo.MAX_SET_SIZE} gacha bo'lsin")
+        await repo.set_setting(session, user.id, "set_size", str(size))
     return web.json_response(
         {
             "currencies": await repo.enabled_currencies(session, user.id),
             "require_approval": await repo.require_approval(session, user.id),
+            "set_size": await repo.set_size(session, user.id),
         }
     )
 
@@ -715,9 +734,148 @@ async def delete_debt(request: web.Request, session: AsyncSession, user: User) -
     return web.json_response({"ok": True})
 
 
-# --- Barcha harakatlar: xarajat, daromad, qarz va ish yozuvlari bitta lentada ---
+# --- Mijozlar: optom savdo --------------------------------------------------
 
-ACTIVITY_KINDS = ("expense", "income", "debt", "work")
+def _client_entry_json(e: ClientEntry) -> dict:
+    return {
+        "id": e.id,
+        "date": e.entry_date.isoformat(),
+        "client": {"id": e.client_id, "name": e.client.name},
+        "kind": e.kind,
+        "product": e.product,
+        "sets": e.sets,
+        "pieces": e.pieces,
+        "unit_price": _num(e.unit_price),
+        "price_unit": e.price_unit,
+        "amount": _num(e.amount) or 0,
+        "currency": e.currency,
+        "note": e.note,
+        "raw_text": e.raw_text,
+    }
+
+
+def _client_json(st: repo.ClientStats) -> dict:
+    c = st.client
+    return {
+        "id": c.id,
+        "name": c.name,
+        "phone": c.phone,
+        "is_active": c.is_active,
+        "balance": _money({cur: v for cur, v in st.balance.items() if v}),
+        "sold": _money(st.sold),
+        "paid": _money(st.paid),
+        "sets": st.sets,
+        "pieces": st.pieces,
+        "last_date": st.last_date.isoformat() if st.last_date else None,
+        "count": st.count,
+    }
+
+
+def _sum_money(items: list[dict[str, Decimal]]) -> dict[str, float]:
+    out: dict[str, Decimal] = defaultdict(Decimal)
+    for item in items:
+        for currency, value in item.items():
+            out[currency] += value
+    return _money({c: v for c, v in out.items() if v})
+
+
+@routes.get("/api/clients")
+@endpoint(owner_only=True)
+async def clients(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    period = request.query.get("period", "month")
+    if period not in PERIODS:
+        raise ApiError(400, "Noto'g'ri davr")
+    t = today()
+    b = _period_bounds(period, t)
+    stats = await repo.client_stats(session, user.id, b["start"], b["end"])
+    return web.json_response(
+        {
+            "period": period,
+            "start": b["start"].isoformat(),
+            "end": b["end"].isoformat(),
+            "today": t.isoformat(),
+            "set_size": await repo.set_size(session, user.id),
+            "items": [_client_json(st) for st in stats],
+            "totals": {
+                "owed": _sum_money([{c: v for c, v in st.balance.items() if v > 0} for st in stats]),
+                "prepaid": _sum_money([{c: -v for c, v in st.balance.items() if v < 0} for st in stats]),
+                "sold": _sum_money([st.sold for st in stats]),
+                "paid": _sum_money([st.paid for st in stats]),
+                "sets": sum(st.sets for st in stats),
+                "pieces": sum(st.pieces for st in stats),
+            },
+        }
+    )
+
+
+def _client_fields(data: dict) -> tuple[str | None, str | None]:
+    name = str(data.get("name") or "").strip()[:100] or None
+    phone = str(data.get("phone") or "").strip()[:30] or None
+    return name, phone
+
+
+@routes.post("/api/clients")
+@endpoint(owner_only=True)
+async def add_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    name, phone = _client_fields(await _json(request))
+    if not name:
+        raise ApiError(400, "Ismini kiriting")
+    if await repo.get_client_by_name(session, user.id, name):
+        raise ApiError(400, "Bunday mijoz bor")
+    client = await repo.create_client(session, user.id, name, phone)
+    return web.json_response(_client_json(repo.ClientStats(client=client)))
+
+
+@routes.patch(r"/api/clients/{id:\d+}")
+@endpoint(owner_only=True)
+async def update_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    client = await repo.get_client(session, user.id, int(request.match_info["id"]))
+    if client is None:
+        raise ApiError(404, "Mijoz topilmadi")
+    data = await _json(request)
+    name, phone = _client_fields(data)
+    if "name" in data:
+        if not name:
+            raise ApiError(400, "Ismini kiriting")
+        same = await repo.get_client_by_name(session, user.id, name)
+        if same is not None and same.id != client.id:
+            raise ApiError(400, "Bunday mijoz bor")
+        client.name = name
+    if "phone" in data:
+        client.phone = phone
+    if "is_active" in data:
+        client.is_active = bool(data["is_active"])
+    await session.flush()
+    return web.json_response({"ok": True})
+
+
+@routes.get("/api/clients/entries")
+@endpoint(owner_only=True)
+async def client_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    limit, offset = _paging(request)
+    client_id = request.query.get("client_id")
+    rows = await repo.list_client_entries(
+        session, user.id, client_id=int(client_id) if client_id and client_id.isdigit() else None,
+        limit=limit + 1, offset=offset,
+    )
+    return web.json_response(
+        {"items": [_client_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit}
+    )
+
+
+@routes.delete(r"/api/clients/entries/{id:\d+}")
+@endpoint(owner_only=True)
+async def delete_client_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    entry = await repo.get_client_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    await repo.soft_delete(session, entry)
+    return web.json_response({"ok": True})
+
+
+# --- Barcha harakatlar: xarajat, daromad, qarz, mijoz va ish yozuvlari bitta lentada ---
+
+ACTIVITY_KINDS = ("expense", "income", "debt", "client", "work")
 ACTIVITY_MAX = 1000
 
 
@@ -740,6 +898,9 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     if kind in (None, "debt"):
         for e in await repo.list_debt_entries(session, user.id, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "debt", **_debt_json(e)}))
+    if kind in (None, "client"):
+        for e in await repo.list_client_entries(session, user.id, limit=need):
+            items.append((e.entry_date, e.created_at.timestamp(), {"type": "client", **_client_entry_json(e)}))
     if kind in (None, "work"):
         for e in await repo.list_work_entries(session, user.id, limit=need):
             items.append((e.work_date, e.created_at.timestamp(), {"type": "work", **_entry_json(e)}))
@@ -839,6 +1000,8 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
             await intake.choose(session, user, draft, kbs.ResolveCb.unpack(value))
         elif prefix == kbs.DebtDirCb.__prefix__:
             intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
+        elif prefix == kbs.ClientKindCb.__prefix__:
+            intake.set_client_kind(draft, kbs.ClientKindCb.unpack(value))
         elif prefix == kbs.DraftCb.__prefix__:
             action = kbs.DraftCb.unpack(value).action
             if action in ("today", "yesterday"):

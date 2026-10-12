@@ -11,6 +11,7 @@ BTN_REPORT = "📊 Hisobot"
 BTN_RECENT = "🕘 Oxirgi yozuvlar"
 BTN_EXPENSES = "💸 Xarajatlar"
 BTN_DEBTS = "🤝 Qarzlar"
+BTN_CLIENTS = "🛍 Mijozlar"
 BTN_PENDING = "⏳ Tasdiq kutayotganlar"
 BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
@@ -18,7 +19,8 @@ BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
-    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_PENDING, BTN_WORKERS, BTN_MODELS, BTN_SETTINGS, BTN_HELP
+    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_PENDING, BTN_WORKERS, BTN_MODELS,
+    BTN_SETTINGS, BTN_HELP,
 }
 
 
@@ -27,6 +29,7 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
     kb.button(text=BTN_REPORT)
     kb.button(text=BTN_RECENT)
     if user.is_owner:
+        kb.button(text=BTN_CLIENTS)
         kb.button(text=BTN_EXPENSES)
         kb.button(text=BTN_DEBTS)
         kb.button(text=BTN_PENDING)
@@ -45,7 +48,7 @@ class DraftCb(CallbackData, prefix="d"):
 
 
 class ResolveCb(CallbackData, prefix="r"):
-    kind: str  # worker | model
+    kind: str  # worker | model | client
     line: int
     item_id: int  # 0 — yangi qo'shish
 
@@ -60,9 +63,14 @@ class DebtDirCb(CallbackData, prefix="dd"):
     direction: str  # in | out
 
 
+class ClientKindCb(CallbackData, prefix="ck"):
+    line: int
+    kind: str  # sale | payment | return
+
+
 class MoneyCb(CallbackData, prefix="m"):
     action: str  # del | del_yes | del_no
-    kind: str  # p — xarajat/daromad, d — qarz
+    kind: str  # p — xarajat/daromad, d — qarz, c — mijoz yozuvi
     entry_id: int
 
 
@@ -96,7 +104,7 @@ class ModelCb(CallbackData, prefix="md"):
 # --- Tugmalar ---------------------------------------------------------------
 
 def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
-    """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries)."""
+    """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries, clients)."""
     url = settings.webapp_url
     if url:
         url += f"?view={view}" if view else ""
@@ -174,11 +182,27 @@ def debt_direction_kb(line: int, person: str) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def client_kind_kb(line: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 Mol berdim", callback_data=ClientKindCb(line=line, kind="sale"))
+    kb.button(text="💵 To'lov oldim", callback_data=ClientKindCb(line=line, kind="payment"))
+    kb.button(text="↩️ Mol qaytardi", callback_data=ClientKindCb(line=line, kind="return"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.adjust(2, 1, 1)
+    return kb.as_markup()
+
+
 def money_entry_kb(kind: str, entry_id: int, app: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
     if app:
-        add_app_button(kb, "debts" if kind == "d" else "wallet")
+        add_app_button(kb, {"d": "debts", "c": "clients"}.get(kind, "wallet"))
+    return kb.as_markup()
+
+
+def clients_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    add_app_button(kb, "clients")
     return kb.as_markup()
 
 

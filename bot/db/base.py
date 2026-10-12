@@ -27,8 +27,33 @@ def _drop_single_owner_schema(conn: Connection) -> None:
     log.warning("Eski sxema o'chirildi, jadvallar kabinetlar bilan qayta yaratiladi")
 
 
+# Keyin qo'shilgan ustunlar: jadval avvaldan bo'lsa ALTER TABLE bilan qo'shiladi
+_NEW_COLUMNS = {
+    "client_entries": {
+        "product": "VARCHAR(100)",
+        "pieces": "INTEGER",
+        "unit_price": "NUMERIC(14, 2)",
+        "price_unit": "VARCHAR(5)",
+        "note": "TEXT",
+    },
+}
+
+
+def _add_new_columns(conn: Connection) -> None:
+    insp = inspect(conn)
+    for table, columns in _NEW_COLUMNS.items():
+        if not insp.has_table(table):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table)}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                log.info("Ustun qo'shildi: %s.%s", table, name)
+
+
 async def init_db() -> None:
-    """Jadvallarni yaratadi (mavjud bo'lsa tegmaydi)."""
+    """Jadvallarni yaratadi (mavjud bo'lsa tegmaydi) va yangi ustunlarni qo'shadi."""
     async with engine.begin() as conn:
         await conn.run_sync(_drop_single_owner_schema)
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_new_columns)

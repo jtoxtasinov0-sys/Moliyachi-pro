@@ -31,14 +31,19 @@ class WorkItem(BaseModel):
 
 
 class ClientItem(BaseModel):
-    client_name: str | None
-    direction: Literal["received", "given"] | None = Field(
-        description="received — mijozdan oldim; given — mijozga berdim/topshirdim"
+    client_name: str | None = Field(description="Mijoz ismi, aytilmagan bo'lsa null")
+    kind: Literal["sale", "payment", "return"] | None = Field(
+        description="sale — mijozga mol berdim/sotdim; payment — mijoz pul to'ladi (men undan pul oldim); "
+        "return — mijoz molni qaytardi"
     )
-    model_name: str | None
-    quantity: int | None
-    amount: float | None = Field(description="Umumiy summa")
+    product: str | None = Field(description="Mahsulot/model nomi (masalan: Maksima), aytilmasa null")
+    sets: int | None = Field(description="Komplekt soni, aytilmasa null")
+    pieces: int | None = Field(description="Faqat dona aytilganda (komplekt emas) — dona soni, aks holda null")
+    price_per_set: float | None = Field(description="Bir komplekt narxi")
+    price_per_piece: float | None = Field(description="Bir dona narxi")
+    total: float | None = Field(description="Umumiy summa (to'lovda — to'langan summa)")
     currency: Currency | None
+    note: str | None = Field(description="Qisqa izoh, bo'lmasa null")
 
 
 class PersonalItem(BaseModel):
@@ -87,7 +92,9 @@ Vazifang: matndan yozuvlarni ajratib, berilgan JSON sxemada qaytarish.
 
 Bo'limlar:
 - work — ishchi ish topshirdi: "Alisher A-12 dan 50 ta topshirdi", "bugun B5 modeldan 30 ta tikdim".
-- client — "Mijozlar" ro'yxatidagi mijoz bilan tovar (dona) savdosi: "Karimdan 200 ta oldim".
+- client — korxona mijozlar bilan optom savdo qiladi: mijozga mol (komplekt yoki dona) berish/sotish, \
+mijozning to'lovi, mijoz molni qaytarishi: "Tohirga 10 komplekt maksima berdim, 140 mingdan", \
+"Tohir 2 million to'ladi", "Tohir 3 komplekt qaytardi".
 - personal — egasining shaxsiy xarajati yoki daromadi: "benzinga 200 ming", "bozorga 50 ming won", \
 "oylik tushdi 10 million".
 - debt — biror odam bilan qarz: "Abbosdan 100 ming won oldim", "Valiga 50 dollar qarz berdim", \
@@ -98,7 +105,16 @@ Qoidalar:
 - Faqat tegishli bo'lim ro'yxatini to'ldir, qolganlari bo'sh bo'lsin. Istisno: bitta xabarda ham \
 xarajat/daromad, ham qarz bo'lsa — personal va debt ikkalasini to'ldir, section esa asosiysi.
 - Bitta xabarda bir nechta yozuv bo'lishi mumkin ("A-12 dan 50, B-5 dan 30") — har birini alohida element qil.
-- Odamdan pul olish yoki odamga pul berish (dona/tovar aytilmagan) — bu debt. Odam kimligini \
+- Mijoz bilan savdo (client):
+  * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
+ro'yxatida bo'lmasa ham (yangi mijoz).
+  * "Mijozlar" ro'yxatidagi odam pul to'lasa yoki undan pul olinsa — client, kind=payment. \
+"mijoz", "to'lov qildi", "pul tashladi" so'zlari ham client payment.
+  * Komplekt — bitta modelning har razmeridan bittadan. Komplekt soni — sets, dona soni — pieces.
+  * Narx: "140 mingdan", "140 ming so'mlik" (komplekt soni bilan birga) — bir komplekt narxi \
+(price_per_set). "donasi 28 ming" — price_per_piece. "jami", "hammasi", "umumiy" bilan — total. \
+Narxni o'zing hisoblama, faqat aytilganini yoz.
+- Odamdan pul olish yoki odamga pul berish (dona/tovar aytilmagan, odam mijoz emas) — bu debt. Odam kimligini \
 so'rama, faqat ismini yoz. "undan oldim" -> in, "unga berdim"/"qaytardim" -> out, "u qaytardi" -> in.
 - Do'kon, bozor, benzin, kafe, to'lov kabi narsaga pul sarflash — personal (expense), debt emas.
 - personal kategoriyasi: avval "Kategoriyalar" ro'yxatidan mosini tanla, bo'lmasa quyidagilardan: \
@@ -120,8 +136,10 @@ _LABELS = {
 }
 
 
-def _context_block(today: date, known: dict[str, list[str]]) -> str:
+def _context_block(today: date, known: dict[str, list[str]], info: str = "") -> str:
     lines = [f"Bugun: {today.isoformat()} ({WEEKDAYS[today.weekday()]})."]
+    if info:
+        lines.append(info)
     for key, names in known.items():
         if names:
             lines.append(f"{_LABELS.get(key, key)}: {', '.join(names)}")
@@ -157,23 +175,28 @@ def _worker_rules(worker_name: str) -> str:
 
 
 async def extract(
-    text: str, today: date, known: dict[str, list[str]], worker_name: str | None = None
+    text: str, today: date, known: dict[str, list[str]], worker_name: str | None = None, info: str = ""
 ) -> Extraction:
     """worker_name berilsa — yozuvchi ishchi, bo'lim har doim "work" va ishchi o'zi."""
     extra = _worker_rules(worker_name) if worker_name else ""
-    content = f"{_context_block(today, known)}\n\nXabar:\n«{text}»"
+    content = f"{_context_block(today, known, info)}\n\nXabar:\n«{text}»"
     return await _call(content, extra)
 
 
 async def correct(
-    draft: dict, correction: str, today: date, known: dict[str, list[str]], worker_name: str | None = None
+    draft: dict,
+    correction: str,
+    today: date,
+    known: dict[str, list[str]],
+    worker_name: str | None = None,
+    info: str = "",
 ) -> Extraction:
     """Mavjud qoralamaga foydalanuvchi tuzatishini qo'llaydi."""
     extra = "Senga joriy qoralama va tuzatish beriladi. Tuzatishni qo'llab, TO'LIQ yangilangan natijani qaytar."
     if worker_name:
         extra += " " + _worker_rules(worker_name)
     content = (
-        f"{_context_block(today, known)}\n\n"
+        f"{_context_block(today, known, info)}\n\n"
         f"Joriy qoralama:\n{json.dumps(draft, ensure_ascii=False)}\n\n"
         f"Foydalanuvchi tuzatishi:\n«{correction}»"
     )

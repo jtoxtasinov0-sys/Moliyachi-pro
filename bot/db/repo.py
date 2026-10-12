@@ -13,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import (
     Alias,
+    Client,
+    ClientEntry,
+    ClientKind,
     DebtDirection,
     DebtEntry,
     EntryStatus,
@@ -34,6 +37,8 @@ DEFAULT_SETTINGS = {
     "currencies": ",".join(ALL_CURRENCIES),
     # Summa valyutasiz aytilsa shu valyuta olinadi
     "main_currency": ALL_CURRENCIES[0],
+    # Bir komplektdagi dona (razmerlar) soni
+    "set_size": "5",
 }
 
 
@@ -76,6 +81,17 @@ async def set_main_currency(session: AsyncSession, owner_id: int, code: str) -> 
     if code not in enabled:
         await set_currencies(session, owner_id, enabled + [code])
     await set_setting(session, owner_id, "main_currency", code)
+
+
+MAX_SET_SIZE = 50
+
+
+async def set_size(session: AsyncSession, owner_id: int) -> int:
+    try:
+        value = int(await get_setting(session, owner_id, "set_size"))
+    except ValueError:
+        value = 0
+    return value if 1 <= value <= MAX_SET_SIZE else int(DEFAULT_SETTINGS["set_size"])
 
 
 # --- Foydalanuvchilar -------------------------------------------------------
@@ -233,7 +249,9 @@ async def create_work_entry(
     return entry
 
 
-async def soft_delete(session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry) -> None:
+async def soft_delete(
+    session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry | ClientEntry
+) -> None:
     entry.deleted_at = _now()
     await session.flush()
 
@@ -635,3 +653,168 @@ def debt_totals(balances: list[DebtBalance]) -> tuple[dict[str, Decimal], dict[s
 async def debt_people(session: AsyncSession, owner_id: int) -> list[tuple[str, str]]:
     """(person_key, ism) — LLM va moslashtirish uchun."""
     return [(b.key, b.person) for b in await debt_balances(session, owner_id)]
+
+
+# --- Mijozlar: optom savdo --------------------------------------------------
+
+async def list_clients(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[Client]:
+    q = select(Client).where(Client.owner_id == owner_id).order_by(Client.name)
+    if active_only:
+        q = q.where(Client.is_active.is_(True))
+    return list(await session.scalars(q))
+
+
+async def get_client(session: AsyncSession, owner_id: int, client_id: int) -> Client | None:
+    client = await session.get(Client, client_id)
+    return client if client is not None and client.owner_id == owner_id else None
+
+
+async def get_client_by_name(session: AsyncSession, owner_id: int, name: str) -> Client | None:
+    return await session.scalar(
+        select(Client).where(Client.owner_id == owner_id, func.lower(Client.name) == name.strip().lower())
+    )
+
+
+async def create_client(session: AsyncSession, owner_id: int, name: str, phone: str | None = None) -> Client:
+    client = Client(owner_id=owner_id, name=name.strip()[:100], phone=phone)
+    session.add(client)
+    await session.flush()
+    return client
+
+
+async def get_or_create_client(session: AsyncSession, owner_id: int, name: str) -> Client:
+    client = await get_client_by_name(session, owner_id, name)
+    if client is None:
+        client = await create_client(session, owner_id, name)
+    elif not client.is_active:
+        client.is_active = True
+    return client
+
+
+async def create_client_entry(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    client_id: int,
+    kind: str,
+    product: str | None,
+    sets: int | None,
+    pieces: int | None,
+    unit_price: Decimal | None,
+    price_unit: str | None,
+    amount: Decimal | None,
+    currency: str,
+    note: str | None,
+    entry_date: date,
+    raw_text: str | None,
+    created_by: int,
+) -> ClientEntry:
+    entry = ClientEntry(
+        owner_id=owner_id,
+        client_id=client_id,
+        kind=kind,
+        product=product,
+        sets=sets,
+        pieces=pieces,
+        unit_price=unit_price,
+        price_unit=price_unit,
+        amount=amount,
+        currency=currency,
+        note=note,
+        entry_date=entry_date,
+        raw_text=raw_text,
+        created_by=created_by,
+    )
+    session.add(entry)
+    await session.flush()
+    await session.refresh(entry, ["client"])
+    return entry
+
+
+async def get_client_entry(session: AsyncSession, owner_id: int, entry_id: int) -> ClientEntry | None:
+    entry = await session.get(ClientEntry, entry_id)
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
+        return None
+    return entry
+
+
+async def list_client_entries(
+    session: AsyncSession, owner_id: int, *, client_id: int | None = None, limit: int = 30, offset: int = 0
+) -> list[ClientEntry]:
+    q = (
+        select(ClientEntry)
+        .where(ClientEntry.owner_id == owner_id, ClientEntry.deleted_at.is_(None))
+        .order_by(ClientEntry.entry_date.desc(), ClientEntry.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if client_id is not None:
+        q = q.where(ClientEntry.client_id == client_id)
+    return list(await session.scalars(q))
+
+
+@dataclass
+class ClientStats:
+    client: Client
+    # valyuta -> qoldiq: musbat — mijoz bizga qarzdor, manfiy — oldindan to'lagan
+    balance: dict[str, Decimal] = field(default_factory=dict)
+    sold: dict[str, Decimal] = field(default_factory=dict)
+    paid: dict[str, Decimal] = field(default_factory=dict)
+    sets: int = 0
+    pieces: int = 0
+    last_date: date | None = None
+    count: int = 0
+
+
+async def client_stats(
+    session: AsyncSession, owner_id: int, start: date | None = None, end: date | None = None
+) -> list[ClientStats]:
+    """Har bir mijoz bo'yicha jami. Qoldiq doim butun davr uchun, qolganlari — start..end oralig'ida."""
+    clients = {c.id: c for c in await list_clients(session, owner_id, active_only=False)}
+    stats = {cid: ClientStats(client=c) for cid, c in clients.items()}
+    rows = await session.execute(
+        select(
+            ClientEntry.client_id,
+            ClientEntry.kind,
+            ClientEntry.currency,
+            ClientEntry.entry_date,
+            func.sum(ClientEntry.amount),
+            func.sum(ClientEntry.sets),
+            func.sum(ClientEntry.pieces),
+            func.count(ClientEntry.id),
+        )
+        .where(ClientEntry.owner_id == owner_id, ClientEntry.deleted_at.is_(None))
+        .group_by(ClientEntry.client_id, ClientEntry.kind, ClientEntry.currency, ClientEntry.entry_date)
+    )
+    for client_id, kind, currency, entry_date, amount, sets, pieces, count in rows:
+        st = stats.get(client_id)
+        if st is None:
+            continue
+        amount = Decimal(str(amount or 0))
+        sign = 1 if kind == ClientKind.SALE else -1
+        st.balance[currency] = st.balance.get(currency, Decimal(0)) + sign * amount
+        st.last_date = max(filter(None, [st.last_date, entry_date]), default=None)
+        st.count += int(count)
+        if (start is None or entry_date >= start) and (end is None or entry_date <= end):
+            if kind == ClientKind.SALE:
+                st.sold[currency] = st.sold.get(currency, Decimal(0)) + amount
+                st.sets += int(sets or 0)
+                st.pieces += int(pieces or 0)
+            elif kind == ClientKind.PAYMENT:
+                st.paid[currency] = st.paid.get(currency, Decimal(0)) + amount
+    result = [st for st in stats.values() if st.client.is_active or st.count]
+    result.sort(
+        key=lambda st: (
+            not any(v > 0 for v in st.balance.values()),
+            -(st.last_date or date.min).toordinal(),
+            st.client.name.lower(),
+        )
+    )
+    return result
+
+
+async def client_balance(session: AsyncSession, owner_id: int, client_id: int) -> dict[str, Decimal]:
+    for st in await client_stats(session, owner_id):
+        if st.client.id == client_id:
+            return {c: v for c, v in st.balance.items() if v}
+    return {}

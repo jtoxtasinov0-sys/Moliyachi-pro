@@ -2,8 +2,9 @@
 
 Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini App.
 
-**Holat:** bot, ovoz → matn, tasdiqlash, ishchilar bo'limi, shaxsiy xarajat/daromad va qarzlar,
-Mini App (hisobot grafiklari, «Hamyon»).
+**Holat:** bot, ovoz → matn, tasdiqlash, ishchilar bo'limi, mijozlar (optom savdo: komplekt bilan mol
+berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
+«Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
 Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
 xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.

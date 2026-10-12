@@ -15,9 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import drafts
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import EntryStatus, User
+from bot.db.models import ClientKind, EntryStatus, User
 from bot.services import llm
 from bot.services.utils import today
+
+
+CLIENT_KINDS = (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN)
 
 
 class IntakeError(Exception):
@@ -34,23 +37,20 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
     correcting = draft is not None and not drafts.is_stale(draft)
     known = await drafts.known_names(session, user)
     worker_name = None if user.is_owner else user.name
+    set_size = await repo.set_size(session, user.account_id)
+    info = f"Bir komplekt = {set_size} dona (har razmerdan bittadan)." if user.is_owner else ""
     try:
         if correcting:
-            ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name)
+            ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
         else:
-            ext = await llm.extract(text, today(), known, worker_name)
+            ext = await llm.extract(text, today(), known, worker_name, info)
     except llm.LlmError:
         raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
 
-    if ext.section == "client" and user.is_owner:
-        raise IntakeError(
-            f"🗣 <i>«{escape(text)}»</i>\n\nBu mijozlar bo'limiga tegishli — u keyingi bosqichda qo'shiladi."
-        )
-
-    money = user.is_owner and drafts.is_money(ext)
-    if not money and (ext.section != "work" or not ext.work):
+    special = user.is_owner and (drafts.is_money(ext) or drafts.is_client(ext))
+    if not special and (ext.section != "work" or not ext.work):
         example = (
-            "«bozorga 50 ming won» yoki «A-12 modeldan 50 ta»"
+            "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan» yoki «A-12 modeldan 50 ta»"
             if user.is_owner
             else "«A-12 modeldan 50 ta topshirdim»"
         )
@@ -60,7 +60,7 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
     raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
     entry_id = draft["entry_id"] if correcting else None
     currency = (await repo.enabled_currencies(session, user.account_id))[0]
-    new_draft = drafts.from_extraction(ext, raw, entry_id=entry_id, default_currency=currency)
+    new_draft = drafts.from_extraction(ext, raw, entry_id=entry_id, default_currency=currency, set_size=set_size)
     if entry_id and (new_draft["section"] != "work" or len(new_draft["lines"]) != 1):
         raise IntakeError("Tahrirlashda faqat bitta yozuv bo'lishi kerak. Qaytadan ayting.")
 
@@ -69,7 +69,9 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
 
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
-    """Ishchi yoki modelni tanlash tugmasi. False — o'zgarish yo'q."""
+    """Ishchi, model yoki mijozni tanlash tugmasi. False — o'zgarish yo'q."""
+    if draft["section"] == "client":
+        return await _choose_client(session, user, draft, cb)
     if draft["section"] != "work" or cb.line >= len(draft["lines"]):
         return False
     line = draft["lines"][cb.line]
@@ -104,6 +106,33 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
     return False
 
 
+async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
+    if cb.kind != "client" or not user.is_owner or cb.line >= len(draft["client"]):
+        return False
+    item = draft["client"][cb.line]
+    if cb.item_id == 0:
+        if not item["client_q"]:
+            return False
+        item.update(client_id=None, client_new=True, client_name=item["client_q"])
+        return True
+    client = await repo.get_client(session, user.account_id, cb.item_id)
+    if client is None:
+        raise IntakeError("Mijoz topilmadi.")
+    if item["client_q"] and item["client_q"].lower() != client.name.lower():
+        await repo.save_alias(session, user.account_id, "client", client.id, item["client_q"])
+    item.update(client_id=client.id, client_new=False, client_name=client.name)
+    return True
+
+
+def set_client_kind(draft: dict, cb: kbs.ClientKindCb) -> bool:
+    if draft["section"] != "client" or cb.line >= len(draft["client"]) or cb.kind not in CLIENT_KINDS:
+        return False
+    item = draft["client"][cb.line]
+    item["kind"] = cb.kind
+    drafts.client_total(item, draft.get("set_size", 5))
+    return True
+
+
 def set_direction(draft: dict, cb: kbs.DebtDirCb) -> bool:
     if draft["section"] != "money" or cb.line >= len(draft["debt"]) or cb.direction not in ("in", "out"):
         return False
@@ -133,9 +162,11 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
-    if draft["section"] == "money":
+    if draft["section"] in ("money", "client"):
         if not user.is_owner:
             raise IntakeError("Ruxsat yo'q.", drop=True)
+        if draft["section"] == "client":
+            return await _save_client(session, user, draft)
         return await _save_money(session, user, draft)
 
     acc = user.account_id
@@ -232,3 +263,40 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
         header,
         [(text, kbs.money_entry_kb(kind, entry_id, app=i == last)) for i, (text, kind, entry_id) in enumerate(cards)],
     )
+
+
+async def _save_client(session: AsyncSession, user: User, draft: dict) -> Saved:
+    from bot.handlers.money import client_balance_line, client_text
+
+    entry_date = date.fromisoformat(draft["date"])
+    entries = []
+    for c in draft["client"]:
+        client = await repo.get_client(session, user.id, c["client_id"]) if c["client_id"] else None
+        if client is None:
+            client = await repo.get_or_create_client(session, user.id, c["client_name"] or c["client_q"])
+        entries.append(
+            await repo.create_client_entry(
+                session,
+                owner_id=user.id,
+                client_id=client.id,
+                kind=c["kind"],
+                product=c["product"],
+                sets=c["sets"],
+                pieces=c["pieces"],
+                unit_price=Decimal(c["price"]) if c["price"] else None,
+                price_unit=c["price_unit"] if c["price"] else None,
+                amount=Decimal(c["total"]),
+                currency=c["currency"],
+                note=c["note"],
+                entry_date=entry_date,
+                raw_text=draft["raw_text"],
+                created_by=user.id,
+            )
+        )
+
+    header = "✅ <b>Saqlandi</b>"
+    clients = list({e.client_id: e.client for e in entries}.values())
+    balance = [await client_balance_line(session, user.id, client) for client in clients]
+    header += "\n\n" + "\n".join(balance)
+    last = len(entries) - 1
+    return Saved(header, [(client_text(e), kbs.money_entry_kb("c", e.id, app=i == last)) for i, e in enumerate(entries)])

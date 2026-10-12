@@ -24,6 +24,8 @@ OWNER_HELP = """\
 • <i>Kecha Vali B-5 dan 30 ta, C-7 dan 20 ta</i>
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
 • <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
+• <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i> — mijozga mol
+• <i>Tohir 2 million to'ladi</i> — mijoz to'lovi
 
 Bot yozuvni tushunib, «To'g'rimi?» deb so'raydi. Xato bo'lsa — shunchaki
 tuzatishni ayting: <i>«soni 45 ta»</i>, <i>«kecha edi»</i>.
@@ -34,6 +36,7 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 📊 Hisobot — ishchilar: kunlik / haftalik / oylik
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 💸 Xarajatlar — kategoriyalar bo'yicha hisobot
+🛍 Mijozlar — kim qancha mol oldi va qancha qarzi bor
 🤝 Qarzlar — kim kimga qancha qarz
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
 👷 Ishchilar — qo'shish, taklif havolasi

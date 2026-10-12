@@ -331,8 +331,51 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
   display: grid; place-items: center; color: #fff;
   transition: transform .15s;
 }
+.fab, .rec-btn { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .fab:active { transform: scale(.94); }
+/* Ovoz yozilayotganda — Telegramdagidek kattalashgan qizil tugma */
+.fab.rec {
+  transform: scale(1.3);
+  background: radial-gradient(circle at 30% 25%, #ff7486, var(--red) 70%);
+  animation: rec-pulse 1.2s ease-out infinite;
+}
 .fab svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* Ovoz yozish paneli */
+.rec-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + var(--safe-b) + 40px);
+  width: calc(100% - 24px); max-width: 536px; z-index: 50;
+  display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 56px;
+  background: #fff; border-radius: 20px; box-shadow: 0 10px 34px rgba(19, 38, 95, .22);
+  font-weight: 700; animation: up .15s;
+}
+.rec-bar .rec-dot { display: block; animation: blink 1s infinite; flex: none; }
+.rec-bar b { font-variant-numeric: tabular-nums; min-width: 38px; }
+.rec-hint {
+  flex: 1; text-align: center; color: var(--muted); font-size: 13.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; transform: translateX(var(--dx, 0px)); transition: transform .05s;
+}
+.rec-bar.locked .rec-hint { color: var(--red); cursor: pointer; transform: none; }
+.rec-send { flex: none; background: var(--navy-900); color: #fff; padding: 10px 16px; border-radius: 999px; font-weight: 800; }
+.rec-lock {
+  position: absolute; right: 18px; bottom: 66px; width: 44px; padding: 8px 0; border-radius: 22px;
+  background: #fff; box-shadow: 0 6px 18px rgba(19, 38, 95, .18); text-align: center; font-size: 16px;
+  transform: translateY(var(--dy, 0px));
+}
+.rec-lock small { display: block; font-size: 9.5px; color: var(--muted); font-weight: 700; }
+.rec-bar.locked .rec-lock { display: none; }
+@keyframes rec-pulse {
+  0% { box-shadow: 0 0 0 7px var(--bg), 0 0 0 7px rgba(224, 71, 91, .45); }
+  100% { box-shadow: 0 0 0 7px var(--bg), 0 0 0 26px rgba(224, 71, 91, 0); }
+}
+
+/* Mijozlar */
+.mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.mini-stats div { background: var(--bg); border-radius: 14px; padding: 10px; min-width: 0; }
+.mini-stats b { display: block; font-size: 14.5px; font-weight: 800; overflow-wrap: anywhere; }
+.mini-stats b.long { font-size: 12.5px; }
+.mini-stats small { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+a.link-box.phone { display: block; text-decoration: none; font-size: 15px; }
 
 /* --- Pastdan chiquvchi oyna ----------------------------------------------- */
 .sheet-backdrop { position: fixed; inset: 0; background: rgba(10, 22, 64, .4); z-index: 40; animation: fade .2s; }

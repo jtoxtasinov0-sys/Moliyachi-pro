@@ -13,6 +13,8 @@ const state = {
   workers: [],
   models: [],
   wallet: { tab: "money", period: "month", data: null, entries: { offset: 0, items: [] }, debts: null },
+  // home — bosh sahifadagi qisqa ko'rinish, data — «Mijozlar» bo'limi
+  clients: { period: "month", data: null, home: null, byId: {}, feed: { offset: 0, items: [] } },
 };
 const charts = {};
 
@@ -165,6 +167,7 @@ function show(view) {
   if (view === "home") loadDashboard();
   if (view === "entries") loadEntries(true);
   if (view === "wallet") loadWallet();
+  if (view === "clients") loadClients();
   if (view === "workers") loadWorkers();
   if (view === "models") loadModels();
 }
@@ -274,15 +277,19 @@ async function loadHomeMoney() {
     $("mFeed").innerHTML = SKELETONS;
   }
   try {
-    const [personal, debts, feed] = await Promise.all([
+    const [personal, debts, feed, clients] = await Promise.all([
       api(`/api/personal?period=${state.period}`),
       api("/api/debts"),
       api("/api/activity?limit=8"),
+      api(`/api/clients?period=${state.period}`),
     ]);
     h.personal = personal;
     h.feed = feed.items;
     state.wallet.debts = debts;
+    state.clients.home = clients;
+    rememberClients(clients);
     renderHomeMoney();
+    renderHomeClients();
   } catch (e) { fail(e); }
 }
 
@@ -353,6 +360,18 @@ function feedRow(e, opts = {}) {
     amt = money(e.amount, e.currency);
     sub.push("Qarz");
     if (e.note) sub.push(e.note);
+  } else if (e.type === "client") {
+    icon = CLIENT_ICON[e.kind] || "❔";
+    iconCls = e.kind === "payment" ? "in" : e.kind === "return" ? "out" : "";
+    title = opts.noWho ? CLIENT_KIND[e.kind] : `${e.client.name} · ${CLIENT_KIND[e.kind] || ""}`;
+    amt = money(e.amount, e.currency);
+    amtCls = e.kind === "payment" ? "pos" : "";
+    if (!opts.noWho) sub.push("Mijoz");
+    if (e.kind !== "payment") {
+      sub.push([e.product, qtyText(e)].filter(Boolean).join(" — "));
+      if (e.unit_price != null) sub.push(money(e.unit_price, e.currency) + (e.price_unit === "piece" ? " / dona" : " / komplekt"));
+    }
+    if (e.note) sub.push(e.note);
   } else {
     icon = "🧵";
     title = `${e.model} · ${fmtNum(e.qty)} dona`;
@@ -363,7 +382,7 @@ function feedRow(e, opts = {}) {
   return `
     <div class="mini-entry">
       <div class="mini-icon ${iconCls}">${icon}</div>
-      <div class="info"><b>${esc(title)}</b><small>${esc(sub.join(" · "))}</small></div>
+      <div class="info"><b>${esc(title)}</b><small>${esc(sub.filter(Boolean).join(" · "))}</small></div>
       <div class="amt ${amtCls}">${esc(amt)}</div>
       ${del}
     </div>`;
@@ -540,7 +559,7 @@ async function entryAction(act, id) {
 
 const isWorkItem = (e) => !e.type || e.type === "work";
 
-const DELETE_URL = { expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/" };
+const DELETE_URL = { expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/", client: "/api/clients/entries/" };
 
 async function deleteFeedItem(type, id) {
   if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
@@ -769,6 +788,171 @@ async function personSheet(key) {
   } catch (e) { fail(e); }
 }
 
+// --- Mijozlar: optom savdo ---------------------------------------------------
+
+const CLIENT_KIND = { sale: "Mol berildi", payment: "To'lov olindi", return: "Mol qaytarildi" };
+const CLIENT_ICON = { sale: "📦", payment: "💵", return: "↩️" };
+
+function qtyText(e) {
+  if (e.sets) return `${fmtNum(e.sets)} komplekt` + (e.pieces ? ` (${fmtNum(e.pieces)} dona)` : "");
+  return e.pieces ? `${fmtNum(e.pieces)} dona` : "";
+}
+
+// Qoldiq: musbat — mijoz qarzdor, manfiy — oldindan to'lagan
+function clientBalance(c) {
+  const entries = Object.entries(c.balance || {});
+  const pos = entries.filter(([, v]) => v > 0);
+  const neg = entries.filter(([, v]) => v < 0);
+  if (!entries.length) return { cls: "", text: "0", label: "hisob yopilgan" };
+  if (!neg.length) return { cls: "pos", text: pos.map(([cur, v]) => money(v, cur)).join(" + "), label: "qarzi" };
+  if (!pos.length) return { cls: "neg", text: neg.map(([cur, v]) => money(-v, cur)).join(" + "), label: "oldindan to'lagan" };
+  return { cls: "", text: entries.map(([cur, v]) => (v > 0 ? "" : "−") + money(Math.abs(v), cur)).join(" "), label: "aralash" };
+}
+
+function rememberClients(data) {
+  for (const c of data.items) state.clients.byId[c.id] = { ...c, period: data.period };
+}
+
+function setHeroAmount(amountId, extraId, pay) {
+  const cur = mainCurrency(pay);
+  $(amountId).innerHTML = `${fmtNum((pay || {})[cur] || 0)}<small>${esc(CUR[cur] || cur)}</small>`;
+  $(extraId).textContent = Object.entries(pay || {}).filter(([c, v]) => c !== cur && v).map(([c, v]) => "+ " + money(v, c)).join("  ");
+}
+
+function renderHomeClients() {
+  const d = state.clients.home;
+  if (!d) return;
+  setMoneyStat("mcOwed", d.totals.owed);
+  setMoneyStat("mcSold", d.totals.sold);
+  setMoneyStat("mcPaid", d.totals.paid);
+  const owing = d.items.filter((c) => Object.values(c.balance).some((v) => v > 0));
+  $("mClientList").innerHTML = owing.length
+    ? owing.slice(0, 4).map((c) => {
+        const b = clientBalance(c);
+        return `
+          <button class="mini-entry tap" data-client="${c.id}">
+            <div class="avatar">${esc(initials(c.name))}</div>
+            <div class="info"><b>${esc(c.name)}</b><small>${b.label}</small></div>
+            <div class="amt ${b.cls}">${esc(b.text)}</div>
+          </button>`;
+      }).join("") + (owing.length > 4 ? `<p class="muted small" style="margin:10px 0 0">yana ${owing.length - 4} mijoz…</p>` : "")
+    : `<p class="muted">✅ Mijozlarda qarz yo'q. Yozish uchun 🎤 ni bosib turib ayting: «Tohirga 10 komplekt maksima berdim, 140 mingdan».</p>`;
+}
+
+async function loadClients() {
+  const c = state.clients;
+  if (!c.data) $("clientList").innerHTML = SKELETONS;
+  loadClientFeed(true);
+  try {
+    c.data = await api(`/api/clients?period=${c.period}`);
+    rememberClients(c.data);
+    renderClients();
+  } catch (e) { fail(e); }
+}
+
+function renderClients() {
+  const d = state.clients.data;
+  setHeroAmount("cOwed", "cOwedExtra", d.totals.owed);
+  setMoneyStat("cSold", d.totals.sold);
+  setMoneyStat("cPaid", d.totals.paid);
+  const qty = d.totals.sets ? ` · ${fmtNum(d.totals.sets)} komplekt (${fmtNum(d.totals.pieces)} dona)` : "";
+  $("cRange").textContent = rangeLabel(d.start, d.end) + qty;
+  if (!d.items.length) {
+    $("clientList").innerHTML = `<div class="empty"><span class="big">🛍</span>Hali mijoz yo'q.<br>🎤 bilan ayting yoki «+ Qo'shish» tugmasini bosing.</div>`;
+    return;
+  }
+  $("clientList").innerHTML = d.items.map((c) => {
+    const b = clientBalance(c);
+    const sub = [c.sets ? `${fmtNum(c.sets)} komplekt` : "", c.last_date ? dateLabel(c.last_date) : "yozuv yo'q"].filter(Boolean).join(" · ");
+    return `
+      <button class="row-card${c.is_active ? "" : " off"}" data-client="${c.id}">
+        <div class="avatar">${esc(initials(c.name))}</div>
+        <div class="info"><b>${esc(c.name)}</b><small>${esc(sub)}</small></div>
+        <div class="side ${b.cls}">${esc(b.text)}<small>${b.label}</small></div>
+      </button>`;
+  }).join("");
+}
+
+async function loadClientFeed(reset) {
+  const f = state.clients.feed;
+  if (reset) {
+    f.offset = 0;
+    f.items = [];
+  }
+  try {
+    const data = await api(`/api/clients/entries?limit=20&offset=${f.offset}`);
+    f.items = f.items.concat(data.items.map((e) => ({ type: "client", ...e })));
+    f.offset += data.items.length;
+    $("cMoreBtn").hidden = !data.has_more;
+    $("cFeed").innerHTML = f.items.map((e) => feedRow(e, { date: true, del: true })).join("")
+      || `<p class="muted">Hali oldi-berdi yozilmagan.</p>`;
+  } catch (e) { fail(e); }
+}
+
+async function deleteClientEntry(id, after) {
+  if (!(await confirmBox("Yozuv o'chirilsinmi? Mijoz qoldig'i qayta hisoblanadi."))) return;
+  try {
+    await api(`/api/clients/entries/${id}`, { method: "DELETE" });
+    toast("O'chirildi");
+    refreshView();
+    if (after) after();
+  } catch (e) { fail(e); }
+}
+
+async function clientSheet(id) {
+  const c = state.clients.byId[id];
+  if (!c) return;
+  const b = clientBalance(c);
+  const periodLabel = { day: "bugun", week: "shu hafta", month: "shu oy", year: "shu yil" }[c.period] || "";
+  openSheet(`
+    <h3>${esc(c.name)}</h3>
+    ${c.phone ? `<a class="link-box phone" href="tel:${esc(c.phone.replace(/[^+\d]/g, ""))}">📞 ${esc(c.phone)}</a>` : ""}
+    <div class="stat-pair">
+      <div><b class="amt ${b.cls}">${esc(b.text)}</b><small>${b.label}</small></div>
+      <div><b>${fmtNum(c.sets)} komplekt</b><small>${periodLabel} · ${esc(moneyList(c.sold) || "0")}</small></div>
+    </div>
+    <div id="clientHistory">${SKELETONS}</div>
+    <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
+  `);
+  $("clEdit").onclick = () => clientEditSheet(c);
+  try {
+    const data = await api(`/api/clients/entries?client_id=${id}&limit=100`);
+    if (!$("clientHistory")) return;
+    $("clientHistory").innerHTML = data.items.map((e) => feedRow({ type: "client", ...e }, { date: true, del: true, noWho: true })).join("")
+      || `<p class="muted">Hali oldi-berdi yo'q</p>`;
+    $("clientHistory").onclick = (ev) => {
+      const btn = ev.target.closest("[data-del-feed]");
+      if (btn) deleteClientEntry(Number(btn.dataset.delFeed.split(":")[1]), () => closeSheet());
+    };
+  } catch (e) { fail(e); }
+}
+
+function clientEditSheet(c) {
+  const isNew = !c;
+  c = c || { name: "", phone: "", is_active: true };
+  openSheet(`
+    <h3>${isNew ? "Yangi mijoz" : esc(c.name)}</h3>
+    <div class="field"><label>Ismi</label><input class="input" id="clName" maxlength="100" value="${esc(c.name)}" placeholder="Masalan: Tohir" autocomplete="off"></div>
+    <div class="field"><label>Telefon (ixtiyoriy)</label><input class="input" id="clPhone" maxlength="30" inputmode="tel" value="${esc(c.phone || "")}" placeholder="+998 90 123 45 67"></div>
+    ${isNew ? "" : `<label class="switch-row"><div>Faol<small>O'chirilgan mijoz ro'yxat oxirida turadi, yozuvlari saqlanadi</small></div><span class="switch"><input type="checkbox" id="clActive" ${c.is_active ? "checked" : ""}><i></i></span></label>`}
+    <button class="primary" id="clSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
+  `);
+  if (isNew) setTimeout(() => $("clName").focus(), 250);
+  $("clSave").onclick = async () => {
+    const body = { name: $("clName").value.trim(), phone: $("clPhone").value.trim() };
+    if (!body.name) return $("clName").focus();
+    if (!isNew) body.is_active = $("clActive").checked;
+    $("clSave").disabled = true;
+    try {
+      if (isNew) await api("/api/clients", { method: "POST", body });
+      else await api(`/api/clients/${c.id}`, { method: "PATCH", body });
+      closeSheet();
+      toast("Saqlandi");
+      refreshView();
+    } catch (e) { fail(e); $("clSave").disabled = false; }
+  };
+}
+
 // --- Ishchilar ---------------------------------------------------------------
 
 async function loadWorkers() {
@@ -948,7 +1132,7 @@ function modelSheet(m) {
 
 // --- Ilova ichida yozish: ovoz yoki matn -> qoralama -> saqlash -----------------
 
-const compose = { busy: false, recorder: null, chunks: [], stream: null, timer: null, started: 0 };
+const compose = { busy: false, recorder: null, chunks: [], stream: null, timer: null, started: 0, starting: false, abort: false };
 const MAX_RECORD_SEC = 120;
 const FIX_ACTION = "d:fix";
 
@@ -963,13 +1147,13 @@ function tgHtml(html) {
   return t.innerHTML.replace(/\n/g, "<br>");
 }
 
-function composeSheet() {
+function composeSheet(voice) {
   const owner = state.me.is_owner;
   const example = owner ? "Masalan: bozorga 50 ming won" : "Masalan: A-12 dan 50 ta topshirdim";
   openSheet(`
     <h3>Yangi yozuv</h3>
     <div id="cOut"></div>
-    <button class="rec-btn" id="cMic"><span class="rec-dot"></span><span id="cMicText">🎤 Bosing va gapiring</span></button>
+    <button class="rec-btn" id="cMic"><span id="cMicText">🎤 Bosib turing va gapiring</span></button>
     <div class="compose">
       <textarea class="input" id="cText" rows="1" maxlength="2000" placeholder="${esc(example)}"></textarea>
       <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
@@ -987,12 +1171,17 @@ function composeSheet() {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendText(); }
   };
   $("cSend").onclick = sendText;
-  $("cMic").onclick = () => (compose.recorder ? stopRecording(false) : startRecording());
+  bindHoldToTalk($("cMic"), () => toast("🎤 Tugmani bosib turing, gapiring va qo'yib yuboring"));
   $("cOut").onclick = (ev) => {
     const b = ev.target.closest("[data-cb]");
     if (b) draftAction(b.dataset.cb);
   };
-  composeRequest(api("/api/input"), null);
+  if (voice) sendVoice(voice);
+  else composeRequest(api("/api/input"), null);
+}
+
+function sendVoice(blob) {
+  composeRequest(api("/api/input/voice", { method: "POST", blob }), "🎧 Eshitilmoqda…");
 }
 
 function setBusy(on, label) {
@@ -1031,7 +1220,7 @@ function renderCompose(res) {
     if (!res.draft.buttons.length || res.draft.html.includes("❓")) html += `<p class="muted small c-ask">Javobni pastga yozing yoki 🎤 bilan ayting.</p>`;
   }
   $("cOut").innerHTML = html;
-  $("cMicText").textContent = res.draft ? "🎤 Tuzatish yoki javob — gapiring" : "🎤 Bosing va gapiring";
+  $("cMicText").textContent = res.draft ? "🎤 Tuzatish yoki javob — bosib turing" : "🎤 Bosib turing va gapiring";
 }
 
 function sendText() {
@@ -1060,61 +1249,184 @@ function pickMime() {
   return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
 }
 
+// --- Ovozli xabar: Telegramdagidek bosib turib gapiriladi ----------------------
+// Bosib turish — yozish, qo'yib yuborish — yuborish, chapga surish — bekor, tepaga surish — qulflash
+// (qulflanganda qo'l bo'shaydi, «Yuborish» tugmasi chiqadi). Qisqa bosish — onTap.
+
+const HOLD_MS = 200;
+const CANCEL_DX = 90;
+const LOCK_DY = 70;
+const hold = { el: null, pointerId: null, x: 0, y: 0, timer: null, active: false };
+
+function bindHoldToTalk(el, onTap) {
+  el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  el.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || hold.el) return;
+    ev.preventDefault();
+    if (compose.locked) return finishVoice(false); // qulflangan yozuvni shu tugma ham yuboradi
+    if (compose.busy || compose.recorder || compose.starting) return;
+    Object.assign(hold, { el, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, active: false });
+    try { el.setPointerCapture(ev.pointerId); } catch (_) { /* eski brauzer */ }
+    hold.timer = setTimeout(() => {
+      hold.active = true;
+      startRecording();
+    }, HOLD_MS);
+  });
+  el.addEventListener("pointermove", (ev) => {
+    if (hold.el !== el || ev.pointerId !== hold.pointerId || !hold.active || compose.locked || !compose.recorder) return;
+    const dx = Math.min(0, ev.clientX - hold.x);
+    const dy = Math.min(0, ev.clientY - hold.y);
+    $("recBar").style.setProperty("--dx", `${Math.max(dx, -CANCEL_DX)}px`);
+    $("recBar").style.setProperty("--dy", `${Math.max(dy, -LOCK_DY)}px`);
+    if (dx <= -CANCEL_DX) {
+      releaseHold();
+      finishVoice(true);
+      toast("Bekor qilindi");
+    } else if (dy <= -LOCK_DY) {
+      releaseHold();
+      lockRecording();
+    }
+  });
+  const up = (ev) => {
+    if (hold.el !== el || ev.pointerId !== hold.pointerId) return;
+    const wasActive = hold.active;
+    releaseHold();
+    if (!wasActive) onTap();
+    else if (!compose.locked) finishVoice(false);
+  };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+}
+
+function releaseHold() {
+  clearTimeout(hold.timer);
+  if (hold.el) try { hold.el.releasePointerCapture(hold.pointerId); } catch (_) { /* allaqachon qo'yilgan */ }
+  hold.el = null;
+  hold.active = false;
+}
+
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+}
+
+function verticalSwipes(on) {
+  // Yozayotganda barmoq tepaga surilsa ilova yopilib qolmasin
+  try {
+    if (!tg || !tg.isVersionAtLeast || !tg.isVersionAtLeast("7.7")) return;
+    if (on) tg.enableVerticalSwipes();
+    else tg.disableVerticalSwipes();
+  } catch (_) { /* eski Telegram */ }
+}
+
 async function startRecording() {
-  if (compose.busy) return;
   const mime = pickMime();
   if (mime === null || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    releaseHold();
     toast("Bu qurilmada ovoz yozib bo'lmaydi — matn bilan yozing (klaviaturadagi 🎤 ham ishlaydi)", true);
     return;
   }
+  compose.starting = true;
+  compose.abort = false;
+  verticalSwipes(false);
+  setRecUI(true);
+  let stream;
   try {
-    compose.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (_) {
+    compose.starting = false;
+    setRecUI(false);
+    releaseHold();
     toast("Mikrofonga ruxsat berilmadi. Matn bilan yozing yoki klaviaturadagi 🎤 ni ishlating.", true);
     return;
   }
+  compose.starting = false;
+  if (compose.abort) {
+    // Ruxsat so'ralayotganda barmoq qo'yib yuborildi — endi qayta bosib turish kifoya
+    stream.getTracks().forEach((t) => t.stop());
+    setRecUI(false);
+    toast("🎤 Tayyor — endi tugmani bosib turib gapiring");
+    return;
+  }
+  compose.stream = stream;
   compose.chunks = [];
-  compose.recorder = new MediaRecorder(compose.stream, mime ? { mimeType: mime } : undefined);
+  compose.cancel = false;
+  compose.recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   compose.recorder.ondataavailable = (ev) => ev.data.size && compose.chunks.push(ev.data);
   compose.recorder.onstop = onRecorded;
   compose.recorder.start();
   compose.started = Date.now();
-  $("cMic").classList.add("on");
   haptic("ok");
   const tick = () => {
     const sec = Math.floor((Date.now() - compose.started) / 1000);
-    const clock = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
-    if ($("cMicText")) $("cMicText").textContent = `To'xtatish va yuborish · ${clock}`;
-    if (sec >= MAX_RECORD_SEC) stopRecording(false);
+    $("recClock").textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    if (sec >= MAX_RECORD_SEC) finishVoice(false);
   };
   tick();
-  compose.timer = setInterval(tick, 500);
+  compose.timer = setInterval(tick, 250);
 }
 
-// cancel=true — oyna yopildi, yozilgani yuborilmaydi
+function setRecUI(on) {
+  const bar = $("recBar");
+  bar.hidden = !on;
+  bar.classList.remove("locked");
+  bar.style.setProperty("--dx", "0px");
+  bar.style.setProperty("--dy", "0px");
+  $("recHint").textContent = "‹ Bekor qilish uchun chapga suring";
+  $("recSend").hidden = true;
+  $("recClock").textContent = "0:00";
+  $("fab").classList.toggle("rec", on);
+  if ($("cMic")) $("cMic").classList.toggle("on", on);
+  if (!on) {
+    compose.locked = false;
+    verticalSwipes(true);
+  }
+}
+
+function lockRecording() {
+  if (!compose.recorder) return;
+  compose.locked = true;
+  haptic();
+  $("recBar").classList.add("locked");
+  $("recHint").textContent = "✕ Bekor qilish";
+  $("recSend").hidden = false;
+}
+
+// cancel=true — yozilgani yuborilmaydi
+function finishVoice(cancel) {
+  if (compose.starting) {
+    compose.abort = true;
+    return;
+  }
+  stopRecording(cancel);
+}
+
 function stopRecording(cancel) {
   const rec = compose.recorder;
   if (!rec) return;
   clearInterval(compose.timer);
-  compose.cancel = cancel;
+  const tooShort = Date.now() - compose.started < 600;
+  if (tooShort && !cancel) toast("Juda qisqa — tugmani bosib turib gapiring", true);
+  compose.cancel = cancel || tooShort;
   compose.recorder = null;
   if (rec.state !== "inactive") rec.stop();
   if (compose.stream) compose.stream.getTracks().forEach((t) => t.stop());
   compose.stream = null;
-  if ($("cMic")) $("cMic").classList.remove("on");
+  setRecUI(false);
 }
 
 function onRecorded(ev) {
   const type = (ev.target.mimeType || compose.chunks[0]?.type || "audio/webm");
   const blob = new Blob(compose.chunks, { type });
   compose.chunks = [];
-  if (compose.cancel || !$("cOut")) return;
+  if (compose.cancel) return;
   if (blob.size < 1500) {
-    toast("Juda qisqa — tugmani bosib, gapirib, keyin yana bosing", true);
-    if ($("cMicText")) $("cMicText").textContent = "🎤 Bosing va gapiring";
+    toast("Juda qisqa — tugmani bosib turib gapiring", true);
     return;
   }
-  composeRequest(api("/api/input/voice", { method: "POST", blob }), "🎧 Eshitilmoqda…");
+  // Pastdagi 🎤 dan yozilgan bo'lsa — oyna ochilib, natija shu yerda chiqadi
+  if ($("cOut") && !$("sheet").hidden) sendVoice(blob);
+  else composeSheet(blob);
 }
 
 // Saqlangandan keyin ochiq bo'limdagi raqamlar yangilansin
@@ -1122,6 +1434,7 @@ function refreshView() {
   if (state.view === "home") loadDashboard();
   else if (state.view === "entries") loadEntries(true);
   else if (state.view === "wallet") loadWallet();
+  else if (state.view === "clients") loadClients();
 }
 
 // --- Sozlamalar --------------------------------------------------------------
@@ -1135,6 +1448,9 @@ function settingsSheet() {
     <h3>Sozlamalar</h3>
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
+    <div class="field"><label>📦 Bir komplektdagi dona (razmerlar) soni</label>
+      <input class="input" id="sSetSize" type="number" inputmode="numeric" min="1" max="50" value="${me.set_size}">
+    </div>
     <div class="field"><label>Valyutalar</label></div>
     ${curRows}
     <div class="field"><label>⭐ Asosiy valyuta — summa valyutasiz aytilsa shu olinadi</label>
@@ -1154,6 +1470,14 @@ function settingsSheet() {
   };
   $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
   $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
+  $("sSetSize").onchange = (ev) => {
+    const n = Number(ev.target.value);
+    if (!Number.isInteger(n) || n < 1 || n > 50) {
+      ev.target.value = me.set_size;
+      return toast("1 dan 50 gacha son kiriting", true);
+    }
+    save({ set_size: n }).then(() => toast(`Komplekt = ${state.me.set_size} dona`));
+  };
   document.querySelectorAll("[data-cur]").forEach((inp) => {
     inp.onchange = () => {
       const cur = [...document.querySelectorAll("[data-cur]")].filter((x) => x.checked).map((x) => x.dataset.cur);
@@ -1261,6 +1585,27 @@ function bind() {
     state.wallet.tab = "debts";
     show("wallet");
   };
+  const openClient = (ev) => {
+    const b = ev.target.closest("[data-client]");
+    if (b) clientSheet(Number(b.dataset.client));
+  };
+  $("mClientList").onclick = openClient;
+  $("clientList").onclick = openClient;
+  $("mClientsAll").onclick = () => show("clients");
+  $("addClientBtn").onclick = () => clientEditSheet(null);
+  $("cMoreBtn").onclick = () => loadClientFeed(false);
+  $("cFeed").onclick = (ev) => {
+    const btn = ev.target.closest("[data-del-feed]");
+    if (btn) deleteClientEntry(Number(btn.dataset.delFeed.split(":")[1]));
+  };
+  $("cPeriodSeg").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || b.dataset.period === state.clients.period) return;
+    state.clients.period = b.dataset.period;
+    document.querySelectorAll("#cPeriodSeg button").forEach((x) => x.classList.toggle("on", x === b));
+    haptic();
+    loadClients();
+  };
   $("mFeedAll").onclick = () => {
     state.entries.type = "";
     state.entries.status = "";
@@ -1322,10 +1667,16 @@ function bind() {
   $("settingsBtn").onclick = settingsSheet;
   $("sheetBackdrop").onclick = closeSheet;
 
-  // O'rtadagi tugma: ilova ichida ovoz yoki matn bilan yozish
-  $("fab").onclick = () => {
+  // O'rtadagi tugma: bosib turish — ovozli xabar, bir marta bosish — matn bilan yozish oynasi
+  bindHoldToTalk($("fab"), () => {
     haptic("ok");
     composeSheet();
+  });
+  $("recSend").onclick = () => finishVoice(false);
+  $("recHint").onclick = () => {
+    if (!compose.locked) return;
+    finishVoice(true);
+    toast("Bekor qilindi");
   };
 
   if (tg && tg.BackButton) tg.BackButton.onClick(closeSheet);
@@ -1361,6 +1712,9 @@ async function init() {
   $("addModelBtn").hidden = !me.is_owner;
   // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
   $("navWallet").hidden = !me.is_owner;
+  // Egada: Asosiy · Mijozlar · 🎤 · Hamyon · Jamoa («Yozuvlar» — bosh sahifadagi «Hammasi →» orqali)
+  $("navEntries").hidden = me.is_owner;
+  $("navClients").hidden = !me.is_owner;
   $("navWorkers").hidden = !me.is_owner;
   $("navModels").hidden = me.is_owner;
   $("navHelp").hidden = me.is_owner;
@@ -1402,6 +1756,7 @@ function startView() {
   const view = new URLSearchParams(location.search).get("view");
   if (view === "entries") return "entries";
   if (!state.me.is_owner) return "home";
+  if (view === "clients") return "clients";
   if (view === "debts" || view === "wallet") {
     state.wallet.tab = view === "debts" ? "debts" : "money";
     return "wallet";

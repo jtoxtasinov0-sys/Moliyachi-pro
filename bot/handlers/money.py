@@ -1,4 +1,4 @@
-"""Egasining shaxsiy hamyoni: xarajat/daromad hisoboti, qarzlar va ularni o'chirish."""
+"""Egasining hamyoni va mijozlari: xarajat/daromad hisoboti, qarzlar, mijozlar bilan oldi-berdi."""
 from collections import defaultdict
 from decimal import Decimal
 from html import escape
@@ -10,8 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import DebtEntry, PersonalEntry, PersonalKind, User
-from bot.drafts import debt_line
+from bot.db.models import (
+    Client,
+    ClientEntry,
+    ClientKind,
+    DebtEntry,
+    PersonalEntry,
+    PersonalKind,
+    PriceUnit,
+    User,
+)
+from bot.drafts import CLIENT_KIND_LABELS, debt_line, qty_text
 from bot.middlewares import IsOwner
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
 
@@ -38,6 +47,41 @@ def debt_text(e: DebtEntry) -> str:
     if e.note:
         text += f"\n<i>{escape(e.note)}</i>"
     return text
+
+
+def client_text(e: ClientEntry) -> str:
+    """«👤 Tohir · 📦 Mol berildi\nMaksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm»"""
+    text = f"👤 <b>{escape(e.client.name)}</b> · {CLIENT_KIND_LABELS.get(e.kind, e.kind)}\n"
+    if e.kind != ClientKind.PAYMENT:
+        if e.product:
+            text += f"{escape(e.product)} — "
+        text += qty_text(e.sets, e.pieces)
+        if e.unit_price is not None:
+            text += f" × {fmt_money(e.unit_price, e.currency)}"
+            if e.price_unit == PriceUnit.PIECE:
+                text += " (dona)"
+        text += " = "
+    text += f"<b>{fmt_money(e.amount or 0, e.currency)}</b>\n📅 {fmt_date(e.entry_date)}"
+    if e.note:
+        text += f"\n<i>{escape(e.note)}</i>"
+    return text
+
+
+def client_balance_text(name: str, balance: dict) -> str:
+    """«📌 Tohir qarzi: 1 400 000 so'm» / «✅ Tohir bilan hisob yopilgan»."""
+    name = escape(name)
+    owes = {c: v for c, v in balance.items() if v > 0}
+    prepaid = {c: -v for c, v in balance.items() if v < 0}
+    parts = []
+    if owes:
+        parts.append(f"📌 {name} qarzi: <b>{fmt_totals(owes)}</b>")
+    if prepaid:
+        parts.append(f"💵 {name} oldindan to'lagan: <b>{fmt_totals(prepaid)}</b>")
+    return "\n".join(parts) or f"✅ {name} bilan hisob yopilgan"
+
+
+async def client_balance_line(session: AsyncSession, owner_id: int, client: Client) -> str:
+    return client_balance_text(client.name, await repo.client_balance(session, owner_id, client.id))
 
 
 def balance_lines(b: repo.DebtBalance) -> list[str]:
@@ -194,17 +238,49 @@ async def on_debts(call: CallbackQuery, callback_data: kbs.DebtsCb, session: Asy
     await call.answer("Yangilandi")
 
 
+# --- Mijozlar ---------------------------------------------------------------
+
+@router.message(F.text == kbs.BTN_CLIENTS)
+async def clients(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    stats = [st for st in await repo.client_stats(session, user.id) if st.count]
+    if not stats:
+        text = (
+            "🛍 <b>Mijozlar</b>\n\nHali mijoz bilan oldi-berdi yozilmagan.\n\n"
+            "Yozish uchun: <i>«Tohirga 10 komplekt maksima berdim, 140 mingdan»</i>, "
+            "<i>«Tohir 2 million to'ladi»</i>."
+        )
+    else:
+        owes: dict[str, Decimal] = defaultdict(Decimal)
+        rows = []
+        for st in stats:
+            rows.append("• " + client_balance_text(st.client.name, {c: v for c, v in st.balance.items() if v}))
+            for currency, value in st.balance.items():
+                if value > 0:
+                    owes[currency] += value
+        text = "🛍 <b>Mijozlar</b>\n\n" + "\n".join(rows[:40])
+        if owes:
+            text += f"\n\nJami mijozlar qarzi: <b>{fmt_totals(dict(owes))}</b>"
+    await message.answer(text, reply_markup=kbs.clients_kb())
+
+
 # --- O'chirish --------------------------------------------------------------
 
-async def _get(session: AsyncSession, owner_id: int, kind: str, entry_id: int) -> PersonalEntry | DebtEntry | None:
+async def _get(
+    session: AsyncSession, owner_id: int, kind: str, entry_id: int
+) -> PersonalEntry | DebtEntry | ClientEntry | None:
     if kind == "p":
         return await repo.get_personal_entry(session, owner_id, entry_id)
     if kind == "d":
         return await repo.get_debt_entry(session, owner_id, entry_id)
+    if kind == "c":
+        return await repo.get_client_entry(session, owner_id, entry_id)
     return None
 
 
-def _text(entry: PersonalEntry | DebtEntry) -> str:
+def _text(entry: PersonalEntry | DebtEntry | ClientEntry) -> str:
+    if isinstance(entry, ClientEntry):
+        return client_text(entry)
     return personal_text(entry) if isinstance(entry, PersonalEntry) else debt_text(entry)
 
 
@@ -228,6 +304,8 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
         if isinstance(entry, DebtEntry):
             lines = await person_balance(session, user.id, entry.person)
             extra = "\n\n" + "\n".join(lines) if lines else ""
+        elif isinstance(entry, ClientEntry):
+            extra = "\n\n" + await client_balance_line(session, user.id, entry.client)
         await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi{extra}")
         await call.answer("O'chirildi")
     else:

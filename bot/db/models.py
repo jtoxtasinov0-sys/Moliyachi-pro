@@ -130,7 +130,7 @@ class WorkEntry(TimestampMixin, Base):
     model: Mapped[ItemModel] = relationship(lazy="joined")
 
 
-# --- 2. Mijozlar (keyingi bosqich) ------------------------------------------
+# --- 2. Mijozlar: optom savdo ---------------------------------------------
 
 class Client(Base):
     __tablename__ = "clients"
@@ -145,24 +145,42 @@ class Client(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ClientKind:
+    SALE = "sale"  # mijozga mol berildi — u qarzdor bo'ladi
+    PAYMENT = "payment"  # mijoz pul to'ladi
+    RETURN = "return"  # mijoz mol qaytardi
+
+
+class PriceUnit:
+    SET = "set"  # bir komplekt narxi
+    PIECE = "piece"  # bir dona narxi
+
+
 class ClientEntry(TimestampMixin, Base):
+    """Mijoz bilan oldi-berdi. Qoldiq = mol (sale) − to'lov (payment) − qaytgan mol (return):
+    musbat — mijoz bizga qarzdor."""
+
     __tablename__ = "client_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
-    direction: Mapped[str] = mapped_column(String(10))  # received | given
+    kind: Mapped[str] = mapped_column("direction", String(10))  # ClientKind
     model_id: Mapped[int | None] = mapped_column(ForeignKey("item_models.id"))
-    quantity: Mapped[int | None]
-    amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    product: Mapped[str | None] = mapped_column(String(100))
+    sets: Mapped[int | None] = mapped_column("quantity")  # komplekt soni
+    pieces: Mapped[int | None]  # jami dona (komplektda — komplekt × razmerlar soni)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    price_unit: Mapped[str | None] = mapped_column(String(5))  # PriceUnit
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))  # jami summa
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    note: Mapped[str | None] = mapped_column(Text)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     client: Mapped[Client] = relationship(lazy="joined")
-    model: Mapped[ItemModel | None] = relationship(lazy="joined")
 
 
 # --- 3. Shaxsiy: xarajat/daromad va qarzlar ---------------------------------

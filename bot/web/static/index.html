@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=6">
+  <link rel="stylesheet" href="static/style.css?v=7">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -58,6 +58,16 @@
           <div class="card">
             <div class="card-head"><h3>🤝 Qarzlar</h3><button class="link-btn" id="mDebtsAll">Hammasi →</button></div>
             <div id="mDebtList"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>🛍 Mijozlar</h3><button class="link-btn" id="mClientsAll">Hammasi →</button></div>
+            <div class="mini-stats">
+              <div><b id="mcOwed">0</b><small>mijozlar qarzi</small></div>
+              <div><b id="mcSold">0</b><small>mol berildi</small></div>
+              <div><b id="mcPaid">0</b><small>to'lov olindi</small></div>
+            </div>
+            <div id="mClientList"></div>
           </div>
 
           <div class="card">
@@ -126,6 +136,7 @@
           <button data-type="" class="on">Hammasi</button>
           <button data-type="expense">💸 Xarajat</button>
           <button data-type="income">💰 Daromad</button>
+          <button data-type="client">🛍 Mijoz</button>
           <button data-type="debt">🤝 Qarz</button>
           <button data-type="work">🧵 Ish</button>
         </div>
@@ -138,6 +149,39 @@
         <select class="select" id="workerFilter" hidden></select>
         <div id="entryList"></div>
         <button class="ghost-btn" id="moreBtn" hidden>Yana yuklash</button>
+      </section>
+
+      <!-- Mijozlar: optom savdo (mol berildi, to'lov olindi) -->
+      <section class="view" id="view-clients" hidden>
+        <div class="seg" id="cPeriodSeg">
+          <button data-period="day">Bugun</button>
+          <button data-period="week">Hafta</button>
+          <button data-period="month" class="on">Oy</button>
+          <button data-period="year">Yil</button>
+        </div>
+        <div class="hero">
+          <div class="hero-circle c1"></div>
+          <div class="hero-circle c2"></div>
+          <div class="hero-label">Mijozlar qarzi · jami</div>
+          <div class="hero-amount" id="cOwed">—</div>
+          <div class="hero-extra" id="cOwedExtra"></div>
+          <div class="hero-row two">
+            <div class="hero-stat"><span id="cSold">0</span><small>📦 mol berildi</small></div>
+            <div class="hero-stat"><span id="cPaid">0</span><small>💵 to'lov olindi</small></div>
+          </div>
+          <div class="hero-range" id="cRange"></div>
+        </div>
+        <div class="page-head">
+          <h2 class="page-title">Mijozlar</h2>
+          <button class="pill-btn" id="addClientBtn">+ Qo'shish</button>
+        </div>
+        <p class="muted small hint">🎤 tugmani bosib turib ayting: «Tohirga 10 komplekt maksima berdim, 140 mingdan», «Tohir 2 million to'ladi».</p>
+        <div id="clientList"></div>
+        <div class="card">
+          <div class="card-head"><h3>Oxirgi oldi-berdi</h3></div>
+          <div id="cFeed"></div>
+          <button class="ghost-btn flat" id="cMoreBtn" hidden>Yana yuklash</button>
+        </div>
       </section>
 
       <!-- Hamyon (egasining shaxsiy xarajatlari va qarzlari) -->
@@ -256,12 +300,16 @@
         <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1v-8.5Z"/></svg>
         <span>Asosiy</span>
       </button>
-      <button data-view="entries">
+      <button data-view="entries" id="navEntries">
         <svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
         <span>Yozuvlar</span>
       </button>
+      <button data-view="clients" id="navClients" hidden>
+        <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
+        <span>Mijozlar</span>
+      </button>
       <div class="nav-center">
-        <button class="fab" id="fab" aria-label="Yangi yozuv: ovoz yoki matn">
+        <button class="fab" id="fab" aria-label="Bosib turing va gapiring. Bir marta bossangiz — matn bilan yozish">
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
       </div>
@@ -290,9 +338,18 @@
       <div id="sheetBody"></div>
     </div>
 
+    <!-- Ovoz yozilmoqda (tugma bosib turilganda) -->
+    <div class="rec-bar" id="recBar" hidden>
+      <span class="rec-dot"></span>
+      <b id="recClock">0:00</b>
+      <span class="rec-hint" id="recHint">‹ Bekor qilish uchun chapga suring</span>
+      <button class="rec-send" id="recSend" hidden>Yuborish ➤</button>
+      <div class="rec-lock" id="recLock">🔒<small>tepaga</small></div>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=6"></script>
+  <script src="static/app.js?v=7"></script>
 </body>
 </html>
