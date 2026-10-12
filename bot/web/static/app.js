@@ -105,19 +105,24 @@ function confirmBox(text) {
   });
 }
 
-// Brauzerda: botning /web buyrug'i bergan shaxsiy kalit (?key=...) saqlab qo'yiladi
+// Brauzerda: botning /web buyrug'i bergan shaxsiy kalit (?key=...) saqlab qo'yiladi.
+// Kalit manzilda ham qoladi: iPhone'da «Ekranga qo'shish» qilingan ilova Safari xotirasini
+// ko'rmaydi va aynan shu manzil bilan ochiladi.
 const WEB_KEY = "moliyachi_web_key";
 function webKey() {
   const params = new URLSearchParams(location.search);
   const fromUrl = params.get("key");
   if (fromUrl) {
     try { localStorage.setItem(WEB_KEY, fromUrl); } catch (_) { /* xotira yopiq */ }
-    params.delete("key");
-    const qs = params.toString();
-    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
     return fromUrl;
   }
-  try { return localStorage.getItem(WEB_KEY) || ""; } catch (_) { return ""; }
+  let saved = "";
+  try { saved = localStorage.getItem(WEB_KEY) || ""; } catch (_) { /* xotira yopiq */ }
+  if (saved) {
+    params.set("key", saved);
+    history.replaceState(null, "", location.pathname + "?" + params.toString() + location.hash);
+  }
+  return saved;
 }
 const inTelegram = Boolean(tg && tg.initData);
 const browserKey = inTelegram ? "" : webKey();

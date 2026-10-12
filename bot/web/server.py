@@ -1,4 +1,5 @@
 """Veb-server: Mini App sahifalari, JSON API va Telegram webhook."""
+import mimetypes
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
@@ -10,6 +11,7 @@ from bot.web.api import routes as api_routes
 
 STATIC_DIR = Path(__file__).parent / "static"
 WEBHOOK_PATH = "/tg/webhook"
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 @web.middleware
