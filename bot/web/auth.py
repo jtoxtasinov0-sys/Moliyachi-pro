@@ -55,6 +55,11 @@ def make_web_token(tg_id: int, bot_token: str, days: int = WEB_TOKEN_DAYS) -> st
     return f"{payload}.{_web_signature(payload, bot_token)}"
 
 
+def web_token_expiry(token: str) -> int:
+    parts = token.split(".")
+    return int(parts[1]) if len(parts) == 3 and parts[1].isdigit() else 0
+
+
 def validate_web_token(token: str, bot_token: str) -> int | None:
     """To'g'ri va muddati o'tmagan bo'lsa Telegram ID qaytaradi."""
     parts = token.split(".")

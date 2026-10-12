@@ -99,7 +99,8 @@ async def web_link(message: Message, user: User) -> None:
         "🌐 <b>Ilovani brauzerda ochish</b>\n\n"
         f"{escape(url)}\n\n"
         "Havolani kompyuter yoki telefon brauzerida oching — ilova sizning kabinetingiz bilan ochiladi. "
-        f"Havola {WEB_TOKEN_DAYS} kun amal qiladi, keyin /web bilan yangisini oling.\n\n"
+        "Ilovani ochib tursangiz, havola o'zi yangilanib turadi. Faqat "
+        f"{WEB_TOKEN_DAYS} kundan ko'p ochmasangiz — /web bilan yangisini oling.\n\n"
         "⚠️ Bu shaxsiy havola — uni hech kimga bermang.",
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )

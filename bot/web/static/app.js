@@ -107,25 +107,27 @@ function confirmBox(text) {
 
 // Brauzerda: botning /web buyrug'i bergan shaxsiy kalit (?key=...) saqlab qo'yiladi.
 // Kalit manzilda ham qoladi: iPhone'da «Ekranga qo'shish» qilingan ilova Safari xotirasini
-// ko'rmaydi va aynan shu manzil bilan ochiladi.
+// ko'rmaydi va aynan shu manzil bilan ochiladi. Server kalitni o'zi uzaytirib turadi.
 const WEB_KEY = "moliyachi_web_key";
-function webKey() {
+const keyExpiry = (k) => Number((k || "").split(".")[1]) || 0;
+function rememberKey(key) {
+  try { localStorage.setItem(WEB_KEY, key); } catch (_) { /* xotira yopiq */ }
   const params = new URLSearchParams(location.search);
-  const fromUrl = params.get("key");
-  if (fromUrl) {
-    try { localStorage.setItem(WEB_KEY, fromUrl); } catch (_) { /* xotira yopiq */ }
-    return fromUrl;
-  }
+  if (params.get("key") === key) return;
+  params.set("key", key);
+  history.replaceState(null, "", location.pathname + "?" + params.toString() + location.hash);
+}
+function webKey() {
+  const fromUrl = new URLSearchParams(location.search).get("key") || "";
   let saved = "";
   try { saved = localStorage.getItem(WEB_KEY) || ""; } catch (_) { /* xotira yopiq */ }
-  if (saved) {
-    params.set("key", saved);
-    history.replaceState(null, "", location.pathname + "?" + params.toString() + location.hash);
-  }
-  return saved;
+  // Ikkalasidan qaysi biri kechroq tugasa — o'shani olamiz
+  const key = keyExpiry(saved) > keyExpiry(fromUrl) ? saved : fromUrl;
+  if (key) rememberKey(key);
+  return key;
 }
 const inTelegram = Boolean(tg && tg.initData);
-const browserKey = inTelegram ? "" : webKey();
+let browserKey = inTelegram ? "" : webKey();
 
 function authHeaders() {
   const headers = { "X-Telegram-Init-Data": (tg && tg.initData) || "" };
@@ -144,6 +146,8 @@ async function api(path, opts = {}) {
     body = JSON.stringify(opts.body);
   }
   const res = await fetch(path, { method: opts.method || "GET", headers, body });
+  const renewed = res.headers.get("X-Web-Token-New");
+  if (renewed && browserKey) { browserKey = renewed; rememberKey(renewed); }
   let data = null;
   try { data = await res.json(); } catch (_) { /* bo'sh javob */ }
   if (!res.ok) {

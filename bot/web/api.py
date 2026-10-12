@@ -1,6 +1,7 @@
 """Mini App uchun JSON API. Har bir so'rov Telegram initData bilan tasdiqlanadi."""
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -29,7 +30,13 @@ from bot.db.models import (
 )
 from bot.services import stt
 from bot.services.utils import today
-from bot.web.auth import validate_init_data, validate_web_token
+from bot.web.auth import (
+    WEB_TOKEN_DAYS,
+    make_web_token,
+    validate_init_data,
+    validate_web_token,
+    web_token_expiry,
+)
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +66,8 @@ def endpoint(owner_only: bool = False):
                     raise _forbidden()
                 response = await fn(request, session, user)
                 await session.commit()
+                if "new_web_token" in request:
+                    response.headers["X-Web-Token-New"] = request["new_web_token"]
                 return response
 
         return inner
@@ -75,6 +84,9 @@ async def _auth(request: web.Request, session: AsyncSession) -> User:
         tg_id = validate_web_token(web_token, settings.bot_token) if web_token else None
         if tg_id is not None:
             tg_user = {"id": tg_id}
+            # Ilova ishlatib turilsa kalit o'zi uzayadi (kuniga ko'pi bilan bir marta)
+            if web_token_expiry(web_token) - time.time() < (WEB_TOKEN_DAYS - 1) * 24 * 3600:
+                request["new_web_token"] = make_web_token(tg_id, settings.bot_token)
     if tg_user is None and settings.webapp_dev:
         tg_user = {"id": settings.owner_ids[0], "first_name": "Egasi"}
     if tg_user is None:
