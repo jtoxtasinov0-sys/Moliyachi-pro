@@ -62,6 +62,10 @@ class DebtItem(BaseModel):
         "out — men unga pul berdim yoki u menga qarzdor (qarz berdim, qarzimni qaytardim, "
         "\"undan haqqim bor\", \"undan olishim kerak\")"
     )
+    stated: bool = Field(
+        description="true — pul hozir berilmadi/olinmadi, faqat kim kimga qarzdorligi aytildi "
+        "(\"haqqim bor\", \"qarzim bor\", \"mendan qarzi bor\"); false — pul berildi yoki olindi"
+    )
     amount: float | None
     currency: Currency | None
     note: str | None = Field(
@@ -125,6 +129,7 @@ so'rama, faqat ismini yoz. "undan oldim" -> in, "unga berdim"/"qaytardim" -> out
   * U menga qarzdor -> out: "Hayrulloda 65 million haqqim bor", "Valida 100 dollar pulim bor", "Vali mendan 50 ming qarz", "Validan 2 million olishim kerak", "Valining menga qarzi bor".
   * Men unga qarzdorman -> in: "Validan 50 ming qarzim bor", "Valiga 2 million qarzman", "Valiga berishim kerak", "Valining mendan haqqi bor".
   * "haqqim bor" — men pul olishim kerak (u menga qarzdor), "haqqi bor" — u pul olishi kerak (men qarzdorman).
+  * Bunday qarz holatida stated=true. Pul haqiqatan berilgan/olingan bo'lsa stated=false.
 - debt note: odatda null. Yozsang — egasi tilidan, ma'noni o'zgartirmay ("u menga qarzdor" yoki "men qarzdorman"), "haqqim"ni "haqqi"ga almashtirma.
 - Do'kon, bozor, benzin, kafe, to'lov kabi narsaga pul sarflash — personal (expense), debt emas.
 - personal kategoriyasi: avval "Kategoriyalar" ro'yxatidan mosini tanla, bo'lmasa quyidagilardan: \

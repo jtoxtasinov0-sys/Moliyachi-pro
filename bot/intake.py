@@ -244,6 +244,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             owner_id=user.id,
             person=d["person"],
             direction=d["direction"],
+            stated=d.get("stated", False),
             amount=Decimal(d["amount"]),
             currency=d["currency"],
             note=d["note"],

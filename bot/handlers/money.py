@@ -42,7 +42,7 @@ def personal_text(e: PersonalEntry) -> str:
 
 
 def debt_text(e: DebtEntry) -> str:
-    text = debt_line(e.person, e.direction, f"<b>{fmt_money(e.amount, e.currency)}</b>")
+    text = debt_line(e.person, e.direction, f"<b>{fmt_money(e.amount, e.currency)}</b>", stated=e.stated)
     text += f"\n📅 {fmt_date(e.entry_date)}"
     if e.note:
         text += f"\n<i>{escape(e.note)}</i>"

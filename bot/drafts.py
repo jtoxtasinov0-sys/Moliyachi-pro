@@ -166,6 +166,7 @@ def from_extraction(
             {
                 "person": (item.person or "").strip()[:100] or None,
                 "direction": item.direction,
+                "stated": item.stated,
                 "amount": _amount(item.amount),
                 "currency": item.currency or default_currency,
                 "note": (item.note or "").strip()[:200] or None,
@@ -411,13 +412,15 @@ def _money_amount(amount: str | None, currency: str) -> str:
     return f"<b>{fmt_money(Decimal(amount), currency)}</b>" if amount is not None else "<b>?</b>"
 
 
-def debt_line(person: str | None, direction: str | None, amount: str, note: str | None = None) -> str:
-    """«📥 Abbosdan olindi — 100 000 won»"""
+def debt_line(
+    person: str | None, direction: str | None, amount: str, note: str | None = None, stated: bool = False
+) -> str:
+    """«📥 Abbosdan olindi — 100 000 won», qarz holati bo'lsa «📤 Abbos sizga qarzdor — 100 000 won»"""
     who = escape(person) if person else "?"
     if direction == DebtDirection.IN:
-        text = f"📥 {who}dan olindi"
+        text = f"📥 Siz {who}ga qarzdorsiz" if stated else f"📥 {who}dan olindi"
     elif direction == DebtDirection.OUT:
-        text = f"📤 {who}ga berildi"
+        text = f"📤 {who} sizga qarzdor" if stated else f"📤 {who}ga berildi"
     else:
         text = f"❔ {who}"
     text += f" — {amount}"
@@ -446,7 +449,9 @@ def _render_money(draft: dict) -> str:
 
     if draft["debt"]:
         rows = [
-            "• " + debt_line(d["person"], d["direction"], _money_amount(d["amount"], d["currency"]), d["note"])
+            "• " + debt_line(
+                d["person"], d["direction"], _money_amount(d["amount"], d["currency"]), d["note"], d.get("stated", False)
+            )
             for d in draft["debt"]
         ]
         parts.append("🤝 <b>Qarz</b>\n" + "\n".join(rows))

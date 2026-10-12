@@ -36,6 +36,9 @@ _NEW_COLUMNS = {
         "price_unit": "VARCHAR(5)",
         "note": "TEXT",
     },
+    "debt_entries": {
+        "stated": "BOOLEAN NOT NULL DEFAULT FALSE",
+    },
 }
 
 

@@ -549,6 +549,7 @@ async def create_debt_entry(
     note: str | None,
     entry_date: date,
     raw_text: str | None,
+    stated: bool = False,
 ) -> DebtEntry:
     person = person.strip()[:100]
     entry = DebtEntry(
@@ -556,6 +557,7 @@ async def create_debt_entry(
         person=person,
         person_key=person_key(person),
         direction=direction,
+        stated=stated,
         amount=amount,
         currency=currency,
         note=note,

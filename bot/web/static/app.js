@@ -356,7 +356,9 @@ function feedRow(e, opts = {}) {
     const took = e.direction === "in";
     icon = took ? "📥" : "📤";
     iconCls = took ? "in" : "out";
-    title = took ? `${e.person}dan olindi` : `${e.person}ga berildi`;
+    title = e.stated
+      ? (took ? `Siz ${e.person}ga qarzdorsiz` : `${e.person} sizga qarzdor`)
+      : (took ? `${e.person}dan olindi` : `${e.person}ga berildi`);
     amt = money(e.amount, e.currency);
     sub.push("Qarz");
     if (e.note) sub.push(e.note);
@@ -754,7 +756,7 @@ function debtRow(e) {
   return `
     <div class="mini-entry">
       <div class="mini-icon ${took ? "in" : "out"}">${took ? "📥" : "📤"}</div>
-      <div class="info"><b>${took ? "Olindi" : "Berildi"}</b><small>${esc(sub)}</small></div>
+      <div class="info"><b>${e.stated ? (took ? "Siz qarzdorsiz" : "Sizga qarzdor") : took ? "Olindi" : "Berildi"}</b><small>${esc(sub)}</small></div>
       <div class="amt">${esc(money(e.amount, e.currency))}</div>
       <button class="mini-del" data-del-debt="${e.id}" aria-label="O'chirish">🗑</button>
     </div>`;

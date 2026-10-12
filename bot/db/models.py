@@ -222,6 +222,8 @@ class DebtEntry(TimestampMixin, Base):
     # Bir odamning turli yozilishlarini ("Abbos", "аббос") birlashtirish uchun
     person_key: Mapped[str] = mapped_column(String(100), index=True)
     direction: Mapped[str] = mapped_column(String(3))
+    # Pul berilmagan/olinmagan, faqat qarz holati aytilgan: «Hayrulloda 65 million haqqim bor»
+    stated: Mapped[bool] = mapped_column(default=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     note: Mapped[str | None] = mapped_column(Text)

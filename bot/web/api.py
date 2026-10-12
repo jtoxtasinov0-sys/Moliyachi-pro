@@ -684,6 +684,7 @@ def _debt_json(e: DebtEntry) -> dict:
         "person": e.person,
         "key": e.person_key,
         "direction": e.direction,
+        "stated": e.stated,
         "amount": float(e.amount),
         "currency": e.currency,
         "note": e.note,
