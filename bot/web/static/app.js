@@ -1168,15 +1168,17 @@ function composeSheet(voice, images) {
     <h3>Yangi yozuv</h3>
     <div id="cOut"></div>
     <button class="rec-btn" id="cMic"><span id="cMicText">🎤 Bosib turing va gapiring</span></button>
-    <button class="img-btn" id="cImg">🖼 ${owner ? "Skrinshot yoki chek rasmi" : "Daftar rasmi"}</button>
-    <input type="file" id="cFile" accept="image/*" multiple hidden>
+    <div class="img-row">
+      <button class="img-btn" id="cCam">📷 Suratga olish</button>
+      <button class="img-btn" id="cGal">🖼 ${owner ? "Skrinshot" : "Galereya"}</button>
+    </div>
     <div class="compose">
       <textarea class="input" id="cText" rows="1" maxlength="2000" placeholder="${esc(example)}"></textarea>
       <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
     </div>
     <p class="muted small compose-hint">${owner
-      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>🖼 Bank ilovasidan skrinshot yoki chek rasmini yuklang — o'zi o'qib, kategoriyalarga ajratib hisobga qo'shadi."
-      : "Model va sonini ayting: «kecha B-5 dan 30 ta»."}</p>
+      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratib hisobga qo'shadi."
+      : "Model va sonini ayting: «kecha B-5 dan 30 ta».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
   input.oninput = () => {
@@ -1194,12 +1196,8 @@ function composeSheet(voice, images) {
     sendImages(files);
   };
   $("cSend").onclick = sendText;
-  $("cImg").onclick = () => !compose.busy && $("cFile").click();
-  $("cFile").onchange = (ev) => {
-    const files = imageFiles(ev.target.files);
-    ev.target.value = "";
-    if (files.length) sendImages(files);
-  };
+  $("cCam").onclick = () => !compose.busy && $("camInput").click();
+  $("cGal").onclick = () => !compose.busy && $("galInput").click();
   bindHoldToTalk($("cMic"), () => toast("🎤 Tugmani bosib turing, gapiring va qo'yib yuboring"));
   $("cOut").onclick = (ev) => {
     const b = ev.target.closest("[data-cb]");
@@ -1253,6 +1251,14 @@ async function prepareImage(file) {
   throw new Error("Rasm juda katta");
 }
 
+// Kameradan, galereyadan yoki sudrab tashlangan rasm: yozish oynasi ochiq bo'lsa — shu yerda o'qiladi
+function takeImages(files) {
+  if (!state.me) return;
+  if (!files.length) return toast("Rasm tanlang: skrinshot, chek yoki daftar", true);
+  if ($("cOut") && !$("sheet").hidden) sendImages(files);
+  else composeSheet(null, files);
+}
+
 async function sendImages(files) {
   if (compose.busy) return;
   if (files.length > MAX_IMAGES) toast(`Bir martada ${MAX_IMAGES} tagacha rasm o'qiladi — birinchi ${MAX_IMAGES} tasi olindi`);
@@ -1278,7 +1284,7 @@ async function sendImages(files) {
 
 function setBusy(on, label) {
   compose.busy = on;
-  ["cSend", "cMic", "cImg", "cText"].forEach((id) => $(id) && ($(id).disabled = on));
+  ["cSend", "cMic", "cCam", "cGal", "cText"].forEach((id) => $(id) && ($(id).disabled = on));
   document.querySelectorAll("#cOut [data-cb]").forEach((b) => (b.disabled = on));
   if (on && label && $("cOut")) $("cOut").insertAdjacentHTML("afterbegin", `<div class="c-note busy" id="cBusy">${esc(label)}</div>`);
   if (!on && $("cBusy")) $("cBusy").remove();
@@ -1773,12 +1779,20 @@ function bind() {
   document.addEventListener("drop", (ev) => {
     if (!hasFiles(ev)) return;
     ev.preventDefault();
-    const files = imageFiles(ev.dataTransfer.files);
-    if (!state.me) return;
-    if (!files.length) return toast("Rasm tashlang: skrinshot yoki chek", true);
-    if ($("cOut") && !$("sheet").hidden) sendImages(files);
-    else composeSheet(null, files);
+    takeImages(imageFiles(ev.dataTransfer.files));
   });
+  // 📷 tugma — telefonda darhol kamera ochiladi (kompyuterda — rasm tanlash)
+  $("cameraBtn").onclick = () => {
+    haptic();
+    if (!compose.busy) $("camInput").click();
+  };
+  const onPicked = (ev) => {
+    const files = imageFiles(ev.target.files);
+    ev.target.value = "";
+    if (files.length) takeImages(files);
+  };
+  $("camInput").onchange = onPicked;
+  $("galInput").onchange = onPicked;
   $("recSend").onclick = () => finishVoice(false);
   $("recHint").onclick = () => {
     if (!compose.locked) return;
@@ -1816,6 +1830,7 @@ async function init() {
   $("hello").textContent = `Salom, ${me.name.split(" ")[0]}!`;
   loadAvatar();
   $("settingsBtn").hidden = !me.is_owner;
+  $("cameraBtn").hidden = false;
   $("addModelBtn").hidden = !me.is_owner;
   // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
   $("navWallet").hidden = !me.is_owner;

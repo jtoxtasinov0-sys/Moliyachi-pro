@@ -30,9 +30,10 @@ OWNER_HELP = """\
 Bot yozuvni tushunib, «To'g'rimi?» deb so'raydi. Xato bo'lsa — shunchaki
 tuzatishni ayting: <i>«soni 45 ta»</i>, <i>«kecha edi»</i>.
 
-🖼 Bank ilovasidan skrinshot, chek yoki daftar rasmini yuboring — bot o'zi o'qib,
-xarajat va daromadlarni kategoriyalarga ajratib hisobga qo'shadi. Bir nechta skrinshotni
-birga (albom) yuborsangiz ham bo'ladi, avval kiritilganlari qayta qo'shilmaydi.
+🖼 Bank ilovasidan skrinshot, chek yoki daftar rasmini yuboring — bot o'zi o'qib
+(koreyscha, lotin va kirill yozuvi ham), xarajat va daromadlarni kategoriyalarga ajratib
+hisobga qo'shadi. Bir nechta skrinshotni birga (albom) yuborsangiz ham bo'ladi, avval
+kiritilganlari qayta qo'shilmaydi. Ilovada — 📷 tugma.
 
 Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 

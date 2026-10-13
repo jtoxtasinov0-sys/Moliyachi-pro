@@ -240,25 +240,41 @@ async def correct(
 
 IMAGE_RULES = """\
 Senga rasm(lar) beriladi: bank ilovasi skrinshoti (to'lovlar tarixi, chek, o'tkazma), bank SMS xabari, \
-do'kon cheki yoki qo'lda yozilgan daftar sahifasi. Rasmdagi har bir moliyaviy yozuvni ajrat.
+do'kon cheki yoki qo'lda yozilgan daftar sahifasi (telefon kamerasida qiyshiq yoki xira tushgan bo'lishi \
+mumkin). Rasmdagi har bir moliyaviy yozuvni ajrat.
 
-Bank ilovasi, SMS va chek (Payme, Click, Uzum, bank ilovalari, Koreya banklari):
+Yozuv va til: rasmdagi matn o'zbekcha (lotin yoki kirill), ruscha, koreyscha (한글) yoki inglizcha bo'lishi, \
+qo'lda yozilgan bo'lishi mumkin — hammasini diqqat bilan o'qi.
+- Javobdagi hamma matn lotin yozuvidagi o'zbek tilida. Kirill yozuvidagi ism, joy va izohni lotinga o'gir \
+(Алишер — Alisher, Тошкент — Toshkent, Ҳамидулло — Hamidullo).
+- Koreyscha nom: asl yozuvini qoldir va qavsda o'zbekcha qisqa ma'nosini qo'sh — "이마트 (supermarket)", \
+"김밥천국 (kafe)", "택시 (taksi)". Lotin harfli brend nomini (GS25, CU, Coupang) o'zgartirma.
+- category — har doim o'zbekcha, kategoriyalar ro'yxatidan.
+- Sana: Koreya ilovalari, SMS va cheklarida oy.kun (10.13, 10/13, 10월 13일 — 13-oktabr; 2026.10.13); O'zbekiston va \
+Rossiya ilovalarida kun.oy (13.10, 13 окт, 13-okt).
+- Summa: bo'shliq, vergul yoki nuqta — minglik ajratgich yoki tiyin. 1 250 000,00 so'm = 1250000; \
+86,500원 = 86500; ₩1,550 = 1550; "50 минг" / "50 ming" = 50000.
+
+Bank ilovasi, SMS va chek (Payme, Click, Uzum, O'zbekiston banklari; KB국민, 신한, 우리, 하나, 토스, \
+카카오뱅크 va boshqa Koreya banklari):
 - Har bir tranzaksiya — personal ro'yxatida alohida element, section=personal.
-- Chiqim (minus belgisi, "To'lov", "Xarid", "Списание", "Оплата", "Перевод", 출금, 결제, 이체, 송금) — expense. \
-Kirim (plus belgisi, "Kirim", "Tushum", "Пополнение", "Зачисление", 입금, oylik) — income.
+- Chiqim (minus belgisi, "To'lov", "Chiqim", "Xarid", "Тўлов", "Чиқим", "Списание", "Оплата", "Перевод", \
+출금, 결제, 승인, 이체, 송금, 지출) — expense. Kirim (plus belgisi, "Kirim", "Tushum", "Кирим", "Пополнение", \
+"Зачисление", 입금, 수입, 급여, oylik) — income.
 - Kategoriyani do'kon yoki xizmat nomidan aniqla: supermarket, bozor, oziq-ovqat do'koni, 편의점 \
 (Korzinka, Makro, Havas, CU, GS25, 이마트) — Oziq-ovqat; kafe, restoran, ovqat yetkazish (Evos, Wolt, \
 Yandex Eats, 배달의민족) — Kafe; AYOQSH, benzin, metan, propan, 주유소 — Mashina; taksi, metro, avtobus, \
 poyezd, aviabilet (Yandex Go, 교통, 택시) — Transport; telefon, internet (Beeline, Ucell, Uzmobile, Mobiuz, \
 KT, SKT, LG U+) — Aloqa; gaz, svet, suv, kommunal, 관리비 — Kommunal; dorixona, klinika, 약국, 병원 — \
 Sog'liq; boshqa odamning kartasiga o'tkazma — Pul o'tkazma.
-- note — do'kon yoki qabul qiluvchi/jo'natuvchi nomi, rasmda qanday yozilgan bo'lsa (qisqa).
+- note — do'kon yoki qabul qiluvchi/jo'natuvchi nomi, qisqa (yuqoridagi yozuv qoidasi bilan).
 - amount — hisobdan yechilgan yoki hisobga tushgan summa (musbat son). Komissiya alohida ko'rsatilgan \
 bo'lsa — summaga qo'sh.
 - Har bir tranzaksiyaning sanasi rasmda ko'rinsa — date maydoniga yoz. Yil ko'rsatilmagan bo'lsa — \
 bugungi kundan oldingi eng yaqin shunday sana.
-- Yozuv emas, tashlab ket: karta qoldig'i/balans, keshbek va bonus ballar, bekor qilingan, rad etilgan \
-yoki o'tmagan to'lovlar, o'z kartalari yoki hisoblari orasidagi o'tkazma.
+- Yozuv emas, tashlab ket: karta qoldig'i/balans ("Qoldiq", "Қолдиқ", "Остаток", "Баланс", 잔액), keshbek \
+va bonus ballar, bekor qilingan, rad etilgan yoki o'tmagan to'lovlar ("Bekor qilindi", "Отменено", 취소, \
+거절, 실패), o'z kartalari yoki hisoblari orasidagi o'tkazma.
 - Valyuta rasmdan: so'm, сум, UZS — UZS; $, USD — USD; 원, ₩, KRW — KRW. Ko'rinmasa null.
 - Bitta tranzaksiyani ikki marta yozma, u bir nechta rasmda takrorlansa ham.
 - Odamga o'tkazma — qarz emas, Pul o'tkazma xarajati. Foydalanuvchi izohida qarz deyilgan bo'lsa — debt.
