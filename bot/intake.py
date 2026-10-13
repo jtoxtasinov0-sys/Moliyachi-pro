@@ -113,7 +113,7 @@ async def _build(
 
 
 async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
-    """Rasmdan o'qilgan xarajat/daromad va qarz to'liq bo'lsa — «To'g'rimi?» deb so'ramasdan saqlanadimi."""
+    """Rasmdan o'qilgan xarajat/daromad va qarz to'liq bo'lsa — «✅ Tasdiqlash» bosilmasdan saqlanadimi."""
     return (
         user.is_owner
         and draft.get("source") == "image"

@@ -39,8 +39,8 @@ DEFAULT_SETTINGS = {
     "main_currency": ALL_CURRENCIES[0],
     # Bir komplektdagi dona (razmerlar) soni
     "set_size": "5",
-    # Bank skrinshoti / chek rasmidan o'qilgan xarajatlar «To'g'rimi?» deb so'ramasdan saqlanadi
-    "auto_save_images": "1",
+    # Bank skrinshoti / chek rasmidan o'qilgan xarajatlar «✅ Tasdiqlash» bosilmasdan saqlanadi
+    "auto_save_images": "0",
 }
 
 

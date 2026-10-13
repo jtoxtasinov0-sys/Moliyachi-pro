@@ -10,8 +10,9 @@ berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobo
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi
 bilan xarajat/daromad kategoriyalariga ajratadi. Bir martada 5 tagacha rasm (albom). Avval kiritilgan yozuv (shu kun,
-shu summa) qayta qo'shilmaydi. «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash» yoqilgan bo'lsa (odatiy),
-o'qilgani «To'g'rimi?» deb so'ramasdan hisobga qo'shiladi; o'chirilsa — avval tasdiq so'raladi.
+shu summa) qayta qo'shilmaydi. O'qilgani avval ro'yxat bo'lib ko'rsatiladi va «✅ Tasdiqlash» bosilgach hisobga
+qo'shiladi (xato bo'lsa — «✏️ Tuzatish» yoki «❌ Bekor»). «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash»
+yoqilsa — tasdiqlamasdan darhol qo'shiladi.
 
 Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
 xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.

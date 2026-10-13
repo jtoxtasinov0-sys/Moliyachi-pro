@@ -298,7 +298,9 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
         )
     kb.adjust(1, 1, 3, 3)
     images_mode = (
-        "«To'g'rimi?» deb so'ramasdan hisobga qo'shiladi" if auto_images else "avval «To'g'rimi?» deb so'raladi"
+        "tasdiqlamasdan darhol hisobga qo'shiladi"
+        if auto_images
+        else "o'qilgani ko'rsatiladi, «✅ Tasdiqlash» bosilgach hisobga qo'shiladi"
     )
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"

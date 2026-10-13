@@ -1177,7 +1177,7 @@ function composeSheet(voice, images) {
       <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
     </div>
     <p class="muted small compose-hint">${owner
-      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratib hisobga qo'shadi."
+      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
       : "Model va sonini ayting: «kecha B-5 dan 30 ta».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
@@ -1260,7 +1260,7 @@ function pickImageSheet() {
       <button class="pick-btn" id="pCam"><span>📷</span>Suratga olish<small>${owner ? "chek yoki daftar" : "daftar sahifasi"}</small></button>
       <button class="pick-btn" id="pGal"><span>🖼</span>Galereyadan<small>${owner ? "bank skrinshoti, bir nechta" : "bir nechta rasm"}</small></button>
     </div>
-    <p class="muted small compose-hint">Koreyscha, lotin va kirill yozuvini o'qib, ${owner ? "kategoriyalarga ajratib hisobga qo'shadi" : "ish yozuviga aylantiradi"}. Bir martada ${MAX_IMAGES} tagacha rasm.</p>
+    <p class="muted small compose-hint">Koreyscha, lotin va kirill yozuvini o'qib, ${owner ? "kategoriyalarga ajratadi — tasdiqlaganingizdan keyin hisobga qo'shiladi" : "ish yozuviga aylantiradi"}. Bir martada ${MAX_IMAGES} tagacha rasm.</p>
   `);
   $("pCam").onclick = () => { haptic(); $("camInput").click(); };
   $("pGal").onclick = () => { haptic(); $("galInput").click(); };
@@ -1561,7 +1561,7 @@ function settingsSheet() {
     <h3>Sozlamalar</h3>
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
-    <label class="switch-row"><div>🖼 Rasmdagi xarajatlarni darhol saqlash<small>Bank skrinshoti yoki chek yuborsangiz — o'qilgani «To'g'rimi?» deb so'ramasdan kategoriyalarga ajratib hisobga qo'shiladi. Avval kiritilganlari qayta qo'shilmaydi.</small></div>
+    <label class="switch-row"><div>🖼 Rasmdagi xarajatlarni darhol saqlash<small>O'chiq bo'lsa — rasmdan o'qilgani avval ko'rsatiladi va «✅ Tasdiqlash» ni bosganingizdan keyin hisobga qo'shiladi. Yoqilsa — tasdiqlamasdan darhol qo'shiladi. Avval kiritilganlari qayta qo'shilmaydi.</small></div>
       <span class="switch"><input type="checkbox" id="sAutoImg" ${me.auto_save_images ? "checked" : ""}><i></i></span></label>
     <div class="field"><label>📦 Bir komplektdagi dona (razmerlar) soni</label>
       <input class="input" id="sSetSize" type="number" inputmode="numeric" min="1" max="50" value="${me.set_size}">

@@ -544,6 +544,11 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     text = _render_money(draft)
     missing = next_missing(draft)
     if missing is None:
+        if draft.get("source") == "image":
+            return (
+                text + "\n\n<b>To'g'rimi?</b> «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi.",
+                kbs.draft_kb(with_date_buttons=True, save_text="✅ Tasdiqlash"),
+            )
         return text + "\n\n<b>To'g'rimi?</b>", kbs.draft_kb(with_date_buttons=True)
 
     kind, i = missing

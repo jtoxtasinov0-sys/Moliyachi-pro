@@ -111,9 +111,9 @@ def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
         kb.row(InlineKeyboardButton(text="📱 Ilovani ochish", web_app=WebAppInfo(url=url)))
 
 
-def draft_kb(with_date_buttons: bool = False) -> InlineKeyboardMarkup:
+def draft_kb(with_date_buttons: bool = False, save_text: str = "✅ Saqlash") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Saqlash", callback_data=DraftCb(action="save"))
+    kb.button(text=save_text, callback_data=DraftCb(action="save"))
     kb.button(text="✏️ Tuzatish", callback_data=DraftCb(action="fix"))
     kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
     sizes = [1, 2]
