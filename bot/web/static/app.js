@@ -1251,6 +1251,21 @@ async function prepareImage(file) {
   throw new Error("Rasm juda katta");
 }
 
+// 📷 tugma: kamera yoki galereya tanlanadi (fayl oynasi faqat bosish ichida ochiladi — iPhone talabi)
+function pickImageSheet() {
+  const owner = state.me.is_owner;
+  openSheet(`
+    <h3>Rasm qo'shish</h3>
+    <div class="pick-grid">
+      <button class="pick-btn" id="pCam"><span>📷</span>Suratga olish<small>${owner ? "chek yoki daftar" : "daftar sahifasi"}</small></button>
+      <button class="pick-btn" id="pGal"><span>🖼</span>Galereyadan<small>${owner ? "bank skrinshoti, bir nechta" : "bir nechta rasm"}</small></button>
+    </div>
+    <p class="muted small compose-hint">Koreyscha, lotin va kirill yozuvini o'qib, ${owner ? "kategoriyalarga ajratib hisobga qo'shadi" : "ish yozuviga aylantiradi"}. Bir martada ${MAX_IMAGES} tagacha rasm.</p>
+  `);
+  $("pCam").onclick = () => { haptic(); $("camInput").click(); };
+  $("pGal").onclick = () => { haptic(); $("galInput").click(); };
+}
+
 // Kameradan, galereyadan yoki sudrab tashlangan rasm: yozish oynasi ochiq bo'lsa — shu yerda o'qiladi
 function takeImages(files) {
   if (!state.me) return;
@@ -1781,10 +1796,10 @@ function bind() {
     ev.preventDefault();
     takeImages(imageFiles(ev.dataTransfer.files));
   });
-  // 📷 tugma — telefonda darhol kamera ochiladi (kompyuterda — rasm tanlash)
+  // 📷 tugma — kamera yoki galereya
   $("cameraBtn").onclick = () => {
     haptic();
-    if (!compose.busy) $("camInput").click();
+    if (!compose.busy) pickImageSheet();
   };
   const onPicked = (ev) => {
     const files = imageFiles(ev.target.files);

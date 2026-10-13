@@ -284,6 +284,13 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
   font-weight: 800; font-size: 16px; box-shadow: 0 8px 20px rgba(15, 31, 87, .25);
 }
 .img-row { display: flex; gap: 8px; margin: 0 0 10px; }
+.pick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pick-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 10px;
+  border-radius: 20px; background: var(--blue-soft); color: var(--navy); font-weight: 800; font-size: 15.5px;
+}
+.pick-btn span { font-size: 34px; line-height: 1.1; }
+.pick-btn small { color: var(--muted); font-weight: 600; font-size: 12.5px; text-align: center; }
 .img-btn {
   flex: 1; height: 48px; border-radius: 16px;
   background: var(--blue-soft); color: var(--navy); font-weight: 800; font-size: 15px;

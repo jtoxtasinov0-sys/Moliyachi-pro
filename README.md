@@ -6,8 +6,8 @@ Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini 
 berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
 «Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
-**Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — telefonda darhol kamera, yozish oynasida
-📷 / 🖼 galereya, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
+**Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
+oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi
 bilan xarajat/daromad kategoriyalariga ajratadi. Bir martada 5 tagacha rasm (albom). Avval kiritilgan yozuv (shu kun,
 shu summa) qayta qo'shilmaydi. «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash» yoqilgan bo'lsa (odatiy),
