@@ -1424,7 +1424,8 @@ function pickMime() {
 }
 
 function verticalSwipes(on) {
-  // Yozayotganda barmoq tepaga surilsa ilova yopilib qolmasin
+  // Yozayotganda barmoq tepaga surilsa yoki pastki oyna surilsa ilova yopilib qolmasin
+  if (on && !$("sheet").hidden) return;
   try {
     if (!tg || !tg.isVersionAtLeast || !tg.isVersionAtLeast("7.7")) return;
     if (on) tg.enableVerticalSwipes();
@@ -1607,16 +1608,95 @@ function settingsSheet() {
 // --- Pastki oyna -------------------------------------------------------------
 
 function openSheet(html) {
+  resetSheetDrag();
   $("sheetBody").innerHTML = html;
+  $("sheetBody").scrollTop = 0;
   $("sheet").hidden = false;
   $("sheetBackdrop").hidden = false;
+  verticalSwipes(false); // oynani pastga surganda Telegram ilovani yopib qo'ymasin
   if (tg && tg.BackButton) tg.BackButton.show();
 }
 function closeSheet() {
   stopRecording(true);
+  resetSheetDrag();
   $("sheet").hidden = true;
   $("sheetBackdrop").hidden = true;
+  verticalSwipes(true);
   if (tg && tg.BackButton) tg.BackButton.hide();
+}
+
+// Oynani pastga surib yopish: tutqichdan yoki ichi eng tepada turganda istalgan joyidan
+const SHEET_CLOSE_DY = 110;
+const drag = { x: 0, y: 0, t: 0, dy: 0, v: 0, head: false, ok: false, on: false, timer: null };
+
+function resetSheetDrag() {
+  clearTimeout(drag.timer);
+  drag.on = false;
+  for (const el of [$("sheet"), $("sheetBackdrop")]) {
+    el.style.transition = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  }
+}
+
+function bindSheetDrag() {
+  const sheet = $("sheet");
+  const backdrop = $("sheetBackdrop");
+  sheet.addEventListener("touchstart", (ev) => {
+    if (drag.on) return;
+    const t = ev.touches[0];
+    const head = $("sheetHead").contains(ev.target);
+    const busy = compose.recorder || ev.target.closest(".rec-btn, textarea, input, select");
+    Object.assign(drag, {
+      x: t.clientX, y: t.clientY, dy: 0, head,
+      ok: ev.touches.length === 1 && !busy && (head || $("sheetBody").scrollTop <= 0),
+    });
+  }, { passive: true });
+  sheet.addEventListener("touchmove", (ev) => {
+    if (!drag.ok || ev.touches.length !== 1) return;
+    const t = ev.touches[0];
+    if (!drag.on) {
+      const dy = t.clientY - drag.y;
+      // Tepaga yoki yonga surilsa — ichidagi ro'yxat odatdagidek aylanadi
+      if (!ev.cancelable || dy < 0 || Math.abs(t.clientX - drag.x) > Math.max(dy, 8)) {
+        drag.ok = drag.head && ev.cancelable;
+        return;
+      }
+      ev.preventDefault(); // ichi eng tepada: brauzer sahifani cho'zmasin
+      if (dy < 8) return;
+      clearTimeout(drag.timer);
+      Object.assign(drag, { on: true, y: t.clientY, t: ev.timeStamp, v: 0 }); // oyna shu nuqtadan suriladi — sakramaydi
+      sheet.style.transition = backdrop.style.transition = "none";
+    }
+    ev.preventDefault();
+    const dy = Math.max(0, t.clientY - drag.y);
+    // Tezlik (px/ms) — oxirgi harakatlar bo'yicha: tez silkitilsa qisqa surishda ham yopiladi
+    const v = (dy - drag.dy) / Math.max(1, ev.timeStamp - drag.t);
+    drag.v = drag.v ? 0.6 * v + 0.4 * drag.v : v;
+    drag.dy = dy;
+    drag.t = ev.timeStamp;
+    sheet.style.transform = `translate(-50%, ${drag.dy}px)`;
+    backdrop.style.opacity = String(Math.max(0, 1 - drag.dy / sheet.offsetHeight));
+  }, { passive: false });
+  const end = (ev) => {
+    if (!drag.on) return;
+    drag.on = false;
+    const fast = drag.dy > 40 && drag.v > 0.5;
+    sheet.style.transition = "transform .22s cubic-bezier(.2, .8, .2, 1)";
+    backdrop.style.transition = "opacity .22s";
+    if (drag.dy > SHEET_CLOSE_DY || fast) {
+      haptic();
+      sheet.style.transform = `translate(-50%, ${sheet.offsetHeight + 20}px)`;
+      backdrop.style.opacity = "0";
+      drag.timer = setTimeout(closeSheet, 220);
+    } else {
+      sheet.style.transform = "";
+      backdrop.style.opacity = "";
+      drag.timer = setTimeout(resetSheetDrag, 220);
+    }
+  };
+  sheet.addEventListener("touchend", end);
+  sheet.addEventListener("touchcancel", end);
 }
 
 function syncChips() {
@@ -1782,6 +1862,7 @@ function bind() {
 
   $("settingsBtn").onclick = settingsSheet;
   $("sheetBackdrop").onclick = closeSheet;
+  bindSheetDrag();
 
   // O'rtadagi tugma: bosib turish — ovozli xabar, bir marta bosish — matn bilan yozish oynasi
   bindHoldToTalk($("fab"), () => {
