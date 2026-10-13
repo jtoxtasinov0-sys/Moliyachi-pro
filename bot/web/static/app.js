@@ -141,6 +141,8 @@ async function api(path, opts = {}) {
   if (opts.blob) {
     headers["Content-Type"] = opts.blob.type.split(";")[0];
     body = opts.blob;
+  } else if (opts.form) {
+    body = opts.form; // multipart: Content-Type ni brauzer o'zi qo'yadi
   } else if (opts.body !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.body);
@@ -1141,7 +1143,7 @@ function modelSheet(m) {
   };
 }
 
-// --- Ilova ichida yozish: ovoz yoki matn -> qoralama -> saqlash -----------------
+// --- Ilova ichida yozish: ovoz, matn yoki rasm -> qoralama -> saqlash ----------
 
 const compose = { busy: false, recorder: null, chunks: [], stream: null, timer: null, started: 0, starting: false, abort: false };
 const MAX_RECORD_SEC = 120;
@@ -1158,19 +1160,22 @@ function tgHtml(html) {
   return t.innerHTML.replace(/\n/g, "<br>");
 }
 
-function composeSheet(voice) {
+// voice — yozilgan ovoz, images — tanlangan yoki tashlangan rasmlar
+function composeSheet(voice, images) {
   const owner = state.me.is_owner;
   const example = owner ? "Masalan: bozorga 50 ming won" : "Masalan: A-12 dan 50 ta topshirdim";
   openSheet(`
     <h3>Yangi yozuv</h3>
     <div id="cOut"></div>
     <button class="rec-btn" id="cMic"><span id="cMicText">🎤 Bosib turing va gapiring</span></button>
+    <button class="img-btn" id="cImg">🖼 ${owner ? "Skrinshot yoki chek rasmi" : "Daftar rasmi"}</button>
+    <input type="file" id="cFile" accept="image/*" multiple hidden>
     <div class="compose">
       <textarea class="input" id="cText" rows="1" maxlength="2000" placeholder="${esc(example)}"></textarea>
       <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
     </div>
     <p class="muted small compose-hint">${owner
-      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim»."
+      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>🖼 Bank ilovasidan skrinshot yoki chek rasmini yuklang — o'zi o'qib, kategoriyalarga ajratib hisobga qo'shadi."
       : "Model va sonini ayting: «kecha B-5 dan 30 ta»."}</p>
   `);
   const input = $("cText");
@@ -1181,13 +1186,27 @@ function composeSheet(voice) {
   input.onkeydown = (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendText(); }
   };
+  // Kompyuterda: nusxalangan skrinshotni Ctrl+V bilan qo'yish
+  input.onpaste = (ev) => {
+    const files = imageFiles(ev.clipboardData && ev.clipboardData.files);
+    if (!files.length) return;
+    ev.preventDefault();
+    sendImages(files);
+  };
   $("cSend").onclick = sendText;
+  $("cImg").onclick = () => !compose.busy && $("cFile").click();
+  $("cFile").onchange = (ev) => {
+    const files = imageFiles(ev.target.files);
+    ev.target.value = "";
+    if (files.length) sendImages(files);
+  };
   bindHoldToTalk($("cMic"), () => toast("🎤 Tugmani bosib turing, gapiring va qo'yib yuboring"));
   $("cOut").onclick = (ev) => {
     const b = ev.target.closest("[data-cb]");
     if (b) draftAction(b.dataset.cb);
   };
   if (voice) sendVoice(voice);
+  else if (images) sendImages(images);
   else composeRequest(api("/api/input"), null);
 }
 
@@ -1195,9 +1214,71 @@ function sendVoice(blob) {
   composeRequest(api("/api/input/voice", { method: "POST", blob }), "🎧 Eshitilmoqda…");
 }
 
+// --- Rasm: bank skrinshoti, chek yoki daftar sahifasi ---------------------------
+
+const MAX_IMAGES = 5;
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const IMAGE_MAX_SIDE = 2576; // Claude shundan kattasini baribir kichraytiradi
+const IMAGE_MAX_BYTES = 3500000;
+
+const imageFiles = (list) => [...(list || [])].filter((f) => !f.type || f.type.startsWith("image/"));
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Rasmni ochib bo'lmadi — skrinshot yoki JPG/PNG rasm tanlang")); };
+    img.src = url;
+  });
+}
+
+// Katta yoki boshqa formatdagi (HEIC va h.k.) rasm — JPEG qilib kichraytiriladi
+async function prepareImage(file) {
+  const img = await loadImage(file);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(w, h));
+  if (scale === 1 && IMAGE_TYPES.includes(file.type) && file.size <= IMAGE_MAX_BYTES) return file;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // shaffof PNG qora bo'lib qolmasin
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  for (const quality of [0.9, 0.8, 0.65]) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= IMAGE_MAX_BYTES) return blob;
+  }
+  throw new Error("Rasm juda katta");
+}
+
+async function sendImages(files) {
+  if (compose.busy) return;
+  if (files.length > MAX_IMAGES) toast(`Bir martada ${MAX_IMAGES} tagacha rasm o'qiladi — birinchi ${MAX_IMAGES} tasi olindi`);
+  haptic();
+  setBusy(true, files.length > 1 ? "🖼 Rasmlar o'qilmoqda…" : "🖼 Rasm o'qilmoqda…");
+  const form = new FormData();
+  try {
+    for (const file of files.slice(0, MAX_IMAGES)) {
+      const img = await prepareImage(file);
+      form.append("image", img, img === file && file.name ? file.name : "rasm.jpg");
+    }
+  } catch (e) {
+    setBusy(false);
+    return fail(e);
+  }
+  // Matn maydoniga yozilgani — rasmga izoh: «kecha edi», «faqat xarajatlar»
+  const caption = $("cText").value.trim();
+  if (caption) form.append("caption", caption);
+  $("cText").value = "";
+  $("cText").style.height = "auto";
+  composeRequest(api("/api/input/image", { method: "POST", form }), null);
+}
+
 function setBusy(on, label) {
   compose.busy = on;
-  ["cSend", "cMic", "cText"].forEach((id) => $(id) && ($(id).disabled = on));
+  ["cSend", "cMic", "cImg", "cText"].forEach((id) => $(id) && ($(id).disabled = on));
   document.querySelectorAll("#cOut [data-cb]").forEach((b) => (b.disabled = on));
   if (on && label && $("cOut")) $("cOut").insertAdjacentHTML("afterbegin", `<div class="c-note busy" id="cBusy">${esc(label)}</div>`);
   if (!on && $("cBusy")) $("cBusy").remove();
@@ -1459,6 +1540,8 @@ function settingsSheet() {
     <h3>Sozlamalar</h3>
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
+    <label class="switch-row"><div>🖼 Rasmdagi xarajatlarni darhol saqlash<small>Bank skrinshoti yoki chek yuborsangiz — o'qilgani «To'g'rimi?» deb so'ramasdan kategoriyalarga ajratib hisobga qo'shiladi. Avval kiritilganlari qayta qo'shilmaydi.</small></div>
+      <span class="switch"><input type="checkbox" id="sAutoImg" ${me.auto_save_images ? "checked" : ""}><i></i></span></label>
     <div class="field"><label>📦 Bir komplektdagi dona (razmerlar) soni</label>
       <input class="input" id="sSetSize" type="number" inputmode="numeric" min="1" max="50" value="${me.set_size}">
     </div>
@@ -1481,6 +1564,7 @@ function settingsSheet() {
   };
   $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
   $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
+  $("sAutoImg").onchange = (ev) => save({ auto_save_images: ev.target.checked }, ev.target);
   $("sSetSize").onchange = (ev) => {
     const n = Number(ev.target.value);
     if (!Number.isInteger(n) || n < 1 || n > 50) {
@@ -1682,6 +1766,18 @@ function bind() {
   bindHoldToTalk($("fab"), () => {
     haptic("ok");
     composeSheet();
+  });
+  // Kompyuterda: skrinshot yoki chekni ilova ustiga sudrab tashlash
+  const hasFiles = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes("Files");
+  document.addEventListener("dragover", (ev) => { if (hasFiles(ev)) ev.preventDefault(); });
+  document.addEventListener("drop", (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    const files = imageFiles(ev.dataTransfer.files);
+    if (!state.me) return;
+    if (!files.length) return toast("Rasm tashlang: skrinshot yoki chek", true);
+    if ($("cOut") && !$("sheet").hidden) sendImages(files);
+    else composeSheet(null, files);
   });
   $("recSend").onclick = () => finishVoice(false);
   $("recHint").onclick = () => {

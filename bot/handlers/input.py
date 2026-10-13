@@ -1,4 +1,5 @@
-"""Ovoz/matn -> LLM -> qoralama -> «To'g'rimi?» -> saqlash (mantiq — bot/intake.py da)."""
+"""Ovoz/matn/rasm -> LLM -> qoralama -> «To'g'rimi?» -> saqlash (mantiq — bot/intake.py da)."""
+import asyncio
 import logging
 
 from aiogram import Bot, F, Router
@@ -26,7 +27,7 @@ class DraftSG(StatesGroup):
     active = State()
 
 
-# --- Kirish: ovoz va matn ---------------------------------------------------
+# --- Kirish: ovoz va matn -------------------------------------------------
 
 @router.message(F.voice | F.audio)
 async def on_voice(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
@@ -56,9 +57,65 @@ async def on_text(message: Message, state: FSMContext, session: AsyncSession, us
     await process_text(status, message.text, state, session, user)
 
 
+# --- Rasm: bank ilovasi skrinshoti, chek yoki daftar sahifasi ----------------
+
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+# Claude rasmni base64 holida 5 MB gacha qabul qiladi
+MAX_IMAGE_BYTES = 3_750_000
+ALBUM_WAIT = 1.5
+
+# Albom (bir nechta rasm birga yuborilgan): media_group_id -> xabarlar
+_albums: dict[str, list[Message]] = {}
+
+
+def _image_of(message: Message):
+    """(fayl, media turi). Fayl ko'rinishida yuborilgan rasmda tur va hajm tekshiriladi."""
+    if message.photo:
+        return message.photo[-1], "image/jpeg"
+    doc = message.document
+    if doc.mime_type not in IMAGE_TYPES:
+        raise intake.IntakeError("Bu rasm formatini o'qib bo'lmaydi. Rasmni fayl emas, oddiy rasm qilib yuboring.")
+    if doc.file_size and doc.file_size > MAX_IMAGE_BYTES:
+        raise intake.IntakeError("Fayl juda katta. Rasmni fayl emas, oddiy rasm qilib yuboring.")
+    return doc, doc.mime_type
+
+
+@router.message(F.photo | F.document.mime_type.startswith("image/"))
+async def on_image(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
+    if message.media_group_id:
+        group = _albums.setdefault(message.media_group_id, [])
+        group.append(message)
+        if len(group) > 1:
+            return  # albomni birinchi rasm qabul qilgan handler o'qiydi
+        await asyncio.sleep(ALBUM_WAIT)
+        messages = sorted(_albums.pop(message.media_group_id), key=lambda m: m.message_id)
+    else:
+        messages = [message]
+
+    status = await message.answer("🖼 Rasm o'qilmoqda…" if len(messages) == 1 else "🖼 Rasmlar o'qilmoqda…")
+    try:
+        images = []
+        for m in messages[: intake.MAX_IMAGES]:
+            file, media_type = _image_of(m)
+            images.append(((await bot.download(file)).read(), media_type))
+        caption = "\n".join(m.caption for m in messages if m.caption)
+        draft = await intake.analyze_images(session, user, images, caption)
+        if len(messages) > intake.MAX_IMAGES:
+            await message.answer(f"ℹ️ Bir martada {intake.MAX_IMAGES} tagacha rasm o'qiladi — qolganini alohida yuboring.")
+        if await intake.autosave(session, user, draft):
+            saved = await intake.save(session, bot, user, draft)
+            await send_saved(status, saved, compact=True)
+            return
+    except intake.IntakeError as e:
+        await status.edit_text(e.message)
+        return
+
+    await show_draft(status, draft, state, session, user)
+
+
 @router.message()
 async def on_other(message: Message) -> None:
-    await message.answer("Ovozli yoki matnli xabar yuboring.")
+    await message.answer("Ovozli, matnli xabar yoki rasm (bank skrinshoti, chek) yuboring.")
 
 
 async def process_text(status: Message, text: str, state: FSMContext, session: AsyncSession, user: User) -> None:
@@ -71,11 +128,42 @@ async def process_text(status: Message, text: str, state: FSMContext, session: A
     except intake.IntakeError as e:
         await status.edit_text(e.message)
         return
+    await show_draft(status, new_draft, state, session, user)
 
+
+async def show_draft(status: Message, draft: dict, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.set_state(DraftSG.active)
-    await state.update_data(draft=new_draft)
-    text_out, kb = await drafts.present(session, new_draft, user)
+    await state.update_data(draft=draft)
+    text_out, kb = await drafts.present(session, draft, user)
     await status.edit_text(text_out, reply_markup=kb)
+
+
+MAX_CARDS = 5
+MESSAGE_LIMIT = 3800
+
+
+async def send_saved(status: Message, saved: intake.Saved, compact: bool = False) -> None:
+    """Saqlangan yozuvlar — har biri o'z tugmasi bilan. compact (rasmdan, bank tarixi) va yozuv ko'p bo'lsa —
+    bitta ro'yxat qilib, xabarlar ko'payib ketmasin."""
+    if not compact or len(saved.cards) <= MAX_CARDS:
+        await status.edit_text(saved.header)
+        for text, kb in saved.cards:
+            await status.answer(text, reply_markup=kb)
+        return
+    chunks = [f"{saved.header}\n\n<b>{len(saved.cards)} ta yozuv:</b>"]
+    for text, _ in saved.cards:
+        if len(chunks[-1]) + len(text) + 2 > MESSAGE_LIMIT:
+            chunks.append(text)
+        else:
+            chunks[-1] += "\n\n" + text
+    chunks[-1] += "\n\n<i>Xatosi bo'lsa — ilovada o'chiring.</i>"
+    kb = kbs.app_kb("wallet")
+    for i, chunk in enumerate(chunks):
+        markup = kb if i == len(chunks) - 1 else None
+        if i == 0:
+            await status.edit_text(chunk, reply_markup=markup)
+        else:
+            await status.answer(chunk, reply_markup=markup)
 
 
 # --- Qoralama tugmalari -----------------------------------------------------
@@ -192,7 +280,5 @@ async def on_save(call: CallbackQuery, state: FSMContext, session: AsyncSession,
         return
 
     await state.clear()
-    await call.message.edit_text(saved.header)
-    for text, kb in saved.cards:
-        await call.message.answer(text, reply_markup=kb)
+    await send_saved(call.message, saved, compact=draft.get("source") == "image")
     await call.answer()

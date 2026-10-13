@@ -1,4 +1,5 @@
-"""Claude: erkin matndan tuzilgan ma'lumot (JSON) ajratib olish."""
+"""Claude: erkin matn yoki rasmdan (bank skrinshoti, chek, daftar) tuzilgan ma'lumot (JSON) ajratib olish."""
+import base64
 import json
 import logging
 from datetime import date
@@ -46,12 +47,19 @@ class ClientItem(BaseModel):
     note: str | None = Field(description="Qisqa izoh, bo'lmasa null")
 
 
+ITEM_DATE = (
+    "Shu yozuvning o'z sanasi YYYY-MM-DD — faqat yozuvlar turli kunlarga tegishli bo'lsa (masalan, bank "
+    "tarixida). Umumiy sana bilan bir xil yoki noma'lum bo'lsa null"
+)
+
+
 class PersonalItem(BaseModel):
     kind: Literal["expense", "income"] | None = Field(description="expense — xarajat, income — daromad/kirim")
     category: str | None = Field(description="Qisqa kategoriya nomi, masalan: Oziq-ovqat, Mashina")
     amount: float | None
     currency: Currency | None
     note: str | None = Field(description="Qisqa izoh (nimaga sarflandi), bo'lmasa null")
+    date: str | None = Field(description=ITEM_DATE)
 
 
 class DebtItem(BaseModel):
@@ -72,6 +80,7 @@ class DebtItem(BaseModel):
         description="Qisqa izoh egasi tilidan (men — egasi), qo'shimcha ma'lumot bo'lmasa null. "
         "Gapni qayta aytma va odamlarni almashtirib yuborma"
     )
+    date: str | None = Field(description=ITEM_DATE)
 
 
 class Extraction(BaseModel):
@@ -161,19 +170,30 @@ def _context_block(today: date, known: dict[str, list[str]], info: str = "") -> 
     return "Ma'lum nomlar:\n" + "\n".join(lines)
 
 
-async def _call(user_content: str, extra_rules: str = "") -> Extraction:
+async def _call(
+    user_content: str | list[dict],
+    extra_rules: str = "",
+    *,
+    effort: str = "low",
+    max_tokens: int = 4000,
+    timeout: float | None = None,
+) -> Extraction:
     system = SYSTEM_PROMPT + (f"\n{extra_rules}" if extra_rules else "")
     try:
         response = await client.messages.parse(
             model=settings.llm_model,
-            max_tokens=4000,
+            max_tokens=max_tokens,
             system=system,
-            output_config={"effort": "low"},
+            output_config={"effort": effort},
             messages=[{"role": "user", "content": user_content}],
             output_format=Extraction,
+            timeout=timeout or anthropic.not_given,
         )
     except anthropic.APIError as e:
         log.exception("Claude API xatosi")
+        raise LlmError(str(e)) from e
+    except ValueError as e:  # javob sxemaga mos kelmadi (masalan, max_tokens da uzilib qoldi)
+        log.exception("Claude javobini o'qib bo'lmadi")
         raise LlmError(str(e)) from e
 
     if response.stop_reason == "refusal" or response.parsed_output is None:
@@ -216,3 +236,59 @@ async def correct(
         f"Foydalanuvchi tuzatishi:\n«{correction}»"
     )
     return await _call(content, extra)
+
+
+IMAGE_RULES = """\
+Senga rasm(lar) beriladi: bank ilovasi skrinshoti (to'lovlar tarixi, chek, o'tkazma), bank SMS xabari, \
+do'kon cheki yoki qo'lda yozilgan daftar sahifasi. Rasmdagi har bir moliyaviy yozuvni ajrat.
+
+Bank ilovasi, SMS va chek (Payme, Click, Uzum, bank ilovalari, Koreya banklari):
+- Har bir tranzaksiya — personal ro'yxatida alohida element, section=personal.
+- Chiqim (minus belgisi, "To'lov", "Xarid", "Списание", "Оплата", "Перевод", 출금, 결제, 이체, 송금) — expense. \
+Kirim (plus belgisi, "Kirim", "Tushum", "Пополнение", "Зачисление", 입금, oylik) — income.
+- Kategoriyani do'kon yoki xizmat nomidan aniqla: supermarket, bozor, oziq-ovqat do'koni, 편의점 \
+(Korzinka, Makro, Havas, CU, GS25, 이마트) — Oziq-ovqat; kafe, restoran, ovqat yetkazish (Evos, Wolt, \
+Yandex Eats, 배달의민족) — Kafe; AYOQSH, benzin, metan, propan, 주유소 — Mashina; taksi, metro, avtobus, \
+poyezd, aviabilet (Yandex Go, 교통, 택시) — Transport; telefon, internet (Beeline, Ucell, Uzmobile, Mobiuz, \
+KT, SKT, LG U+) — Aloqa; gaz, svet, suv, kommunal, 관리비 — Kommunal; dorixona, klinika, 약국, 병원 — \
+Sog'liq; boshqa odamning kartasiga o'tkazma — Pul o'tkazma.
+- note — do'kon yoki qabul qiluvchi/jo'natuvchi nomi, rasmda qanday yozilgan bo'lsa (qisqa).
+- amount — hisobdan yechilgan yoki hisobga tushgan summa (musbat son). Komissiya alohida ko'rsatilgan \
+bo'lsa — summaga qo'sh.
+- Har bir tranzaksiyaning sanasi rasmda ko'rinsa — date maydoniga yoz. Yil ko'rsatilmagan bo'lsa — \
+bugungi kundan oldingi eng yaqin shunday sana.
+- Yozuv emas, tashlab ket: karta qoldig'i/balans, keshbek va bonus ballar, bekor qilingan, rad etilgan \
+yoki o'tmagan to'lovlar, o'z kartalari yoki hisoblari orasidagi o'tkazma.
+- Valyuta rasmdan: so'm, сум, UZS — UZS; $, USD — USD; 원, ₩, KRW — KRW. Ko'rinmasa null.
+- Bitta tranzaksiyani ikki marta yozma, u bir nechta rasmda takrorlansa ham.
+- Odamga o'tkazma — qarz emas, Pul o'tkazma xarajati. Foydalanuvchi izohida qarz deyilgan bo'lsa — debt.
+
+Qo'lda yozilgan daftar yoki boshqa matnli rasm — undagi yozuvlarni oddiy xabar kabi yuqoridagi qoidalar \
+bilan ajrat.
+Rasmda moliyaviy yozuv bo'lmasa — section=unknown, question'da rasmda nima ko'ringanini qisqa ayt.
+Foydalanuvchi izohi berilsa — undagi ko'rsatmaga amal qil (masalan, sana yoki qaysi yozuvlar kerakligi)."""
+
+
+async def extract_images(
+    images: list[tuple[bytes, str]],
+    today: date,
+    known: dict[str, list[str]],
+    worker_name: str | None = None,
+    info: str = "",
+    caption: str = "",
+) -> Extraction:
+    """images — (rasm, media turi) ro'yxati: bitta yoki bir nechta skrinshot bitta qoralamaga."""
+    extra = IMAGE_RULES + ("\n" + _worker_rules(worker_name) if worker_name else "")
+    content: list[dict] = [
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": base64.standard_b64encode(data).decode()},
+        }
+        for data, media_type in images
+    ]
+    text = f"{_context_block(today, known, info)}\n\nRasmlar soni: {len(images)}."
+    if caption:
+        text += f"\nFoydalanuvchi izohi:\n«{caption}»"
+    content.append({"type": "text", "text": text})
+    # Ko'p qatorli bank tarixi: aniq o'qish uchun chuqurroq o'ylaydi va uzunroq javob yozadi
+    return await _call(content, extra, effort="medium", max_tokens=16000, timeout=180)

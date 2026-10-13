@@ -1,4 +1,4 @@
-"""Ovoz/matndan yozuvgacha: tahlil, qoralamani to'ldirish va saqlash.
+"""Ovoz, matn yoki rasmdan yozuvgacha: tahlil, qoralamani to'ldirish va saqlash.
 
 Bot chati (handlers/input.py) ham, Mini App (web/api.py) ham shu funksiyalardan foydalanadi:
 qoralama har ikkisida bir xil dict, faqat saqlanadigan joyi boshqa (FSM yoki xotira).
@@ -32,13 +32,18 @@ class IntakeError(Exception):
         self.drop = drop
 
 
-async def analyze(session: AsyncSession, user: User, text: str, draft: dict | None) -> dict:
-    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None."""
-    correcting = draft is not None and not drafts.is_stale(draft)
+async def _context(session: AsyncSession, user: User) -> tuple[dict[str, list[str]], str | None, int, str]:
     known = await drafts.known_names(session, user)
     worker_name = None if user.is_owner else user.name
     set_size = await repo.set_size(session, user.account_id)
     info = f"Bir komplekt = {set_size} dona (har razmerdan bittadan)." if user.is_owner else ""
+    return known, worker_name, set_size, info
+
+
+async def analyze(session: AsyncSession, user: User, text: str, draft: dict | None) -> dict:
+    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None."""
+    correcting = draft is not None and not drafts.is_stale(draft)
+    known, worker_name, set_size, info = await _context(session, user)
     try:
         if correcting:
             ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
@@ -47,6 +52,41 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
     except llm.LlmError:
         raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
 
+    raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
+    return await _build(
+        session, user, ext, raw, set_size,
+        said=f"🗣 <i>«{escape(text)}»</i>",
+        entry_id=draft["entry_id"] if correcting else None,
+        source=draft.get("source") if correcting else None,
+    )
+
+
+MAX_IMAGES = 5
+
+
+async def analyze_images(session: AsyncSession, user: User, images: list[tuple[bytes, str]], caption: str = "") -> dict:
+    """Bank skrinshoti, chek yoki daftar rasmidan yangi qoralama. images — (rasm, media turi)."""
+    caption = caption.strip()[:500]
+    known, worker_name, set_size, info = await _context(session, user)
+    try:
+        ext = await llm.extract_images(images[:MAX_IMAGES], today(), known, worker_name, info, caption)
+    except llm.LlmError:
+        raise IntakeError("⚠️ Rasmni o'qib bo'lmadi. Birozdan keyin qayta yuboring yoki matn bilan yozing.")
+    label = "🖼 Rasm" if len(images) == 1 else f"🖼 {min(len(images), MAX_IMAGES)} ta rasm"
+    raw = f"{label}: {caption}" if caption else label
+    return await _build(session, user, ext, raw, set_size, said=f"<i>{escape(raw)}</i>", source="image")
+
+
+async def _build(
+    session: AsyncSession,
+    user: User,
+    ext: llm.Extraction,
+    raw: str,
+    set_size: int,
+    said: str,
+    entry_id: int | None = None,
+    source: str | None = None,
+) -> dict:
     special = user.is_owner and (drafts.is_money(ext) or drafts.is_client(ext))
     if not special and (ext.section != "work" or not ext.work):
         example = (
@@ -55,17 +95,32 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
             else "«A-12 modeldan 50 ta topshirdim»"
         )
         hint = ext.question or f"Tushunmadim. Masalan: {example}."
-        raise IntakeError(f"🗣 <i>«{escape(text)}»</i>\n\n🤔 {escape(hint)}")
+        raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
 
-    raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
-    entry_id = draft["entry_id"] if correcting else None
     currency = (await repo.enabled_currencies(session, user.account_id))[0]
     new_draft = drafts.from_extraction(ext, raw, entry_id=entry_id, default_currency=currency, set_size=set_size)
     if entry_id and (new_draft["section"] != "work" or len(new_draft["lines"]) != 1):
         raise IntakeError("Tahrirlashda faqat bitta yozuv bo'lishi kerak. Qaytadan ayting.")
+    if source:
+        new_draft["source"] = source
 
     await drafts.resolve(session, new_draft, user)
+    if source == "image" and new_draft["section"] == "money":
+        await drafts.mark_duplicates(session, new_draft, user.account_id)
+        if not new_draft["debt"] and all(p["dup"] for p in new_draft["personal"]):
+            raise IntakeError(f"{said}\n\n🔁 Bu rasmdagi yozuvlarning hammasi avval kiritilgan — qayta qo'shilmadi.")
     return new_draft
+
+
+async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
+    """Rasmdan o'qilgan xarajat/daromad va qarz to'liq bo'lsa — «To'g'rimi?» deb so'ramasdan saqlanadimi."""
+    return (
+        user.is_owner
+        and draft.get("source") == "image"
+        and draft["section"] == "money"
+        and drafts.next_missing(draft) is None
+        and await repo.auto_save_images(session, user.id)
+    )
 
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
@@ -141,11 +196,14 @@ def set_direction(draft: dict, cb: kbs.DebtDirCb) -> bool:
 
 
 def set_date(draft: dict, action: str) -> bool:
-    """«Bugun» / «Kecha» tugmasi. False — sana o'zgarmadi."""
+    """«Bugun» / «Kecha» tugmasi — hamma yozuvlar shu kunga. False — sana o'zgarmadi."""
     d = today() if action == "today" else today() - timedelta(days=1)
-    if draft["date"] == d.isoformat():
+    items = [*draft.get("personal", []), *draft.get("debt", [])]
+    if draft["date"] == d.isoformat() and not any(item.get("date") for item in items):
         return False
     draft["date"] = d.isoformat()
+    for item in items:
+        item["date"] = None
     return True
 
 
@@ -222,9 +280,10 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
     from bot.handlers.money import debt_text, person_balance, personal_text
 
-    entry_date = date.fromisoformat(draft["date"])
     cards: list[tuple[str, str, int]] = []
     for p in draft["personal"]:
+        if p.get("dup"):
+            continue
         e = await repo.create_personal_entry(
             session,
             owner_id=user.id,
@@ -233,7 +292,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             amount=Decimal(p["amount"]),
             currency=p["currency"],
             note=p["note"],
-            entry_date=entry_date,
+            entry_date=date.fromisoformat(drafts.item_date(draft, p)),
             raw_text=draft["raw_text"],
         )
         cards.append((personal_text(e), "p", e.id))
@@ -248,14 +307,19 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             amount=Decimal(d["amount"]),
             currency=d["currency"],
             note=d["note"],
-            entry_date=entry_date,
+            entry_date=date.fromisoformat(drafts.item_date(draft, d)),
             raw_text=draft["raw_text"],
         )
         cards.append((debt_text(e), "d", e.id))
         if e.person not in people:
             people.append(e.person)
 
+    if not cards:
+        raise IntakeError("🔁 Bu yozuvlarning hammasi avval kiritilgan — qayta qo'shilmadi.", drop=True)
     header = "✅ <b>Saqlandi</b>"
+    skipped = sum(1 for p in draft["personal"] if p.get("dup"))
+    if skipped:
+        header += f"\n🔁 Avval kiritilgan {skipped} ta yozuv qayta qo'shilmadi."
     balance = [line for person in people for line in await person_balance(session, user.id, person)]
     if balance:
         header += "\n\n" + "\n".join(balance)

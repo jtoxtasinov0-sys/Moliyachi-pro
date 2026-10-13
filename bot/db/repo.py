@@ -39,6 +39,8 @@ DEFAULT_SETTINGS = {
     "main_currency": ALL_CURRENCIES[0],
     # Bir komplektdagi dona (razmerlar) soni
     "set_size": "5",
+    # Bank skrinshoti / chek rasmidan o'qilgan xarajatlar «To'g'rimi?» deb so'ramasdan saqlanadi
+    "auto_save_images": "1",
 }
 
 
@@ -58,6 +60,10 @@ async def set_setting(session: AsyncSession, owner_id: int, key: str, value: str
 
 async def require_approval(session: AsyncSession, owner_id: int) -> bool:
     return await get_setting(session, owner_id, "require_approval") == "1"
+
+
+async def auto_save_images(session: AsyncSession, owner_id: int) -> bool:
+    return await get_setting(session, owner_id, "auto_save_images") == "1"
 
 
 async def enabled_currencies(session: AsyncSession, owner_id: int) -> list[str]:
@@ -486,6 +492,18 @@ async def list_personal_entries(
     )
     if kind is not None:
         q = q.where(PersonalEntry.kind == kind)
+    return list(await session.scalars(q))
+
+
+async def personal_entries_between(
+    session: AsyncSession, owner_id: int, start: date, end: date
+) -> list[PersonalEntry]:
+    q = select(PersonalEntry).where(
+        PersonalEntry.owner_id == owner_id,
+        PersonalEntry.deleted_at.is_(None),
+        PersonalEntry.entry_date >= start,
+        PersonalEntry.entry_date <= end,
+    )
     return list(await session.scalars(q))
 
 

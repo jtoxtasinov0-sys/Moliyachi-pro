@@ -6,6 +6,12 @@ Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini 
 berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
 «Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
+**Rasmdan yozish:** botga yoki ilovaga (🖼 tugma, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan
+skrinshot, chek yoki daftar rasmini yuboring — Claude rasmni o'qib, har bir tranzaksiyani sanasi bilan
+xarajat/daromad kategoriyalariga ajratadi. Bir martada 5 tagacha rasm (albom). Avval kiritilgan yozuv (shu kun,
+shu summa) qayta qo'shilmaydi. «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash» yoqilgan bo'lsa (odatiy),
+o'qilgani «To'g'rimi?» deb so'ramasdan hisobga qo'shiladi; o'chirilsa — avval tasdiq so'raladi.
+
 Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
 xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.
 
@@ -62,7 +68,7 @@ bot/
   db/models.py       jadvallar (har bir egada alohida kabinet)
   db/repo.py         bazaga so'rovlar
   services/stt.py    ElevenLabs Scribe
-  services/llm.py    Claude: matn → JSON
+  services/llm.py    Claude: matn yoki rasm → JSON
   services/matcher.py  o'xshash ismlarni topish
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   handlers/          Telegram handlerlar

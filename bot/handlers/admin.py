@@ -275,11 +275,16 @@ async def model_toggle(call: CallbackQuery, callback_data: kbs.ModelCb, session:
 
 async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
     approval = await repo.require_approval(session, owner_id)
+    auto_images = await repo.auto_save_images(session, owner_id)
     enabled = await repo.enabled_currencies(session, owner_id)
     kb = InlineKeyboardBuilder()
     kb.button(
         text=f"{'✅' if approval else '⬜'} Ishchi yozuvlarini tasdiqlash",
         callback_data=kbs.SettingsCb(action="approval"),
+    )
+    kb.button(
+        text=f"{'✅' if auto_images else '⬜'} Rasmdagi xarajatlarni darhol saqlash",
+        callback_data=kbs.SettingsCb(action="autoimg"),
     )
     for code in repo.ALL_CURRENCIES:
         kb.button(
@@ -291,10 +296,14 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
             text=f"{'⭐' if code == enabled[0] else '☆'} {code}",
             callback_data=kbs.SettingsCb(action="main", value=code),
         )
-    kb.adjust(1, 3, 3)
+    kb.adjust(1, 1, 3, 3)
+    images_mode = (
+        "«To'g'rimi?» deb so'ramasdan hisobga qo'shiladi" if auto_images else "avval «To'g'rimi?» deb so'raladi"
+    )
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
+        f"• 🖼 Bank skrinshoti yoki chek rasmi: {images_mode}\n"
         f"• Valyutalar: {', '.join(enabled)}\n"
         f"• ⭐ Asosiy valyuta: <b>{enabled[0]}</b> — summa valyutasiz aytilsa shu olinadi"
     )
@@ -315,6 +324,9 @@ async def settings_toggle(
     if callback_data.action == "approval":
         current = await repo.require_approval(session, user.id)
         await repo.set_setting(session, user.id, "require_approval", "0" if current else "1")
+    elif callback_data.action == "autoimg":
+        current = await repo.auto_save_images(session, user.id)
+        await repo.set_setting(session, user.id, "auto_save_images", "0" if current else "1")
     elif callback_data.action == "cur":
         enabled = await repo.enabled_currencies(session, user.id)
         code = callback_data.value

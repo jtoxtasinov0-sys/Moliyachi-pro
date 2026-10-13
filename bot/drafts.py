@@ -12,9 +12,12 @@ Qoralama FSM holatida oddiy dict sifatida saqlanadi. Ish topshirish:
 }
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
-  ..., "personal": [{kind, category, amount, currency, note}],
-       "debt": [{person, direction, amount, currency, note}],
+  ..., "personal": [{kind, category, amount, currency, note, date, dup}],
+       "debt": [{person, direction, amount, currency, note, date}],
 }
+date — yozuvning o'z sanasi (bank tarixida har xil kunlar), None — umumiy sana.
+dup — rasmdan o'qilgan, lekin avval kiritilgan yozuv: saqlanmaydi.
+Rasmdan olingan qoralamada "source": "image".
 Mijoz bilan savdo — "section": "client":
 {
   ..., "set_size": 5,
@@ -22,6 +25,7 @@ Mijoz bilan savdo — "section": "client":
                    sets, pieces, price, price_unit, total, currency, note}],
 }
 """
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html import escape
@@ -57,6 +61,19 @@ def _parse_date(value: str | None) -> date:
         except ValueError:
             pass
     return today()
+
+
+def _item_date(value: str | None, draft_date: str) -> str | None:
+    """Yozuvning o'z sanasi — faqat umumiy sanadan farq qilsa."""
+    if not value:
+        return None
+    try:
+        d = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if d > today() + timedelta(days=1) or d.isoformat() == draft_date:
+        return None
+    return d.isoformat()
 
 
 def _amount(value: float | None) -> str | None:
@@ -159,6 +176,8 @@ def from_extraction(
                 "amount": _amount(item.amount),
                 "currency": item.currency or default_currency,
                 "note": (item.note or "").strip()[:200] or None,
+                "date": _item_date(item.date, draft["date"]),
+                "dup": False,
             }
             for item in ext.personal
         ]
@@ -170,6 +189,7 @@ def from_extraction(
                 "amount": _amount(item.amount),
                 "currency": item.currency or default_currency,
                 "note": (item.note or "").strip()[:200] or None,
+                "date": _item_date(item.date, draft["date"]),
             }
             for item in ext.debt
         ]
@@ -240,7 +260,9 @@ def for_llm(draft: dict) -> dict:
 
         return {
             "date": draft["date"],
-            "personal": [{**p, "amount": num(p["amount"])} for p in draft["personal"]],
+            "personal": [
+                {**{k: v for k, v in p.items() if k != "dup"}, "amount": num(p["amount"])} for p in draft["personal"]
+            ],
             "debt": [{**d, "amount": num(d["amount"])} for d in draft["debt"]],
         }
     return {
@@ -328,6 +350,32 @@ async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None
             c["client_new"], c["client_name"] = True, c["client_q"]
 
 
+def item_date(draft: dict, item: dict) -> str:
+    return item.get("date") or draft["date"]
+
+
+async def mark_duplicates(session: AsyncSession, draft: dict, owner_id: int) -> None:
+    """Rasmdan o'qilgan xarajat/daromad shu kuni xuddi shu summada avval yozilgan bo'lsa — qayta qo'shilmaydi.
+
+    Bir xil summali ikkita yozuv bo'lsa, bazada nechta bo'lsa shunchasi takror hisoblanadi.
+    """
+    items = [p for p in draft["personal"] if p["amount"] is not None]
+    for p in draft["personal"]:
+        p["dup"] = False
+    if not items:
+        return
+    days = [date.fromisoformat(item_date(draft, p)) for p in items]
+    existing = Counter(
+        (e.entry_date.isoformat(), e.kind, e.amount, e.currency)
+        for e in await repo.personal_entries_between(session, owner_id, min(days), max(days))
+    )
+    for p in items:
+        key = (item_date(draft, p), p["kind"], Decimal(p["amount"]), p["currency"])
+        if existing[key] > 0:
+            existing[key] -= 1
+            p["dup"] = True
+
+
 def next_missing(draft: dict) -> tuple[str, int] | None:
     if draft["section"] == "client":
         for i, c in enumerate(draft["client"]):
@@ -368,6 +416,8 @@ def _short_raw(draft: dict) -> str | None:
     if not raw:
         return None
     short = raw if len(raw) <= 300 else raw[:300] + "…"
+    if draft.get("source") == "image":
+        return f"<i>{escape(short)}</i>"
     return f"🗣 <i>«{escape(short)}»</i>"
 
 
@@ -429,32 +479,64 @@ def debt_line(
     return text
 
 
+def _day_mark(item: dict) -> str:
+    """Yozuvning o'z sanasi bo'lsa: « · 📅 12.10»"""
+    return f" · 📅 {date.fromisoformat(item['date']).strftime('%d.%m')}" if item.get("date") else ""
+
+
+def _personal_row(p: dict) -> str:
+    row = f"• {escape(p['category'])} — {_money_amount(p['amount'], p['currency'])}"
+    if p["note"]:
+        row += f" <i>({escape(p['note'])})</i>"
+    return row + _day_mark(p)
+
+
+# Telegram xabari 4096 belgigacha: bank tarixida yozuv ko'p bo'lsa, ro'yxat qisqartiriladi
+ROWS_BUDGET = 2800
+MAX_DUP_ROWS = 5
+
+
 def _render_money(draft: dict) -> str:
     parts = ["📝 <b>Yangi yozuv</b>"]
     if raw := _short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
 
+    budget = ROWS_BUDGET
     for kind, title in ((PersonalKind.EXPENSE, "💸 <b>Xarajat</b>"), (PersonalKind.INCOME, "💰 <b>Daromad</b>")):
+        items = [p for p in draft["personal"] if p["kind"] == kind and not p.get("dup")]
+        if not items:
+            continue
         rows = []
-        for p in draft["personal"]:
-            if p["kind"] != kind:
-                continue
-            row = f"• {escape(p['category'])} — {_money_amount(p['amount'], p['currency'])}"
-            if p["note"]:
-                row += f" <i>({escape(p['note'])})</i>"
+        for p in items:
+            row = _personal_row(p)
+            if len(row) > budget:
+                break
+            budget -= len(row) + 1
             rows.append(row)
-        if rows:
-            parts.append(title + "\n" + "\n".join(rows))
+        if len(rows) < len(items):
+            rows.append(f"… yana {len(items) - len(rows)} ta")
+        if len(items) > 3 and all(p["amount"] is not None for p in items):
+            totals: dict[str, Decimal] = {}
+            for p in items:
+                totals[p["currency"]] = totals.get(p["currency"], Decimal(0)) + Decimal(p["amount"])
+            rows.append(f"Jami ({len(items)} ta): <b>{fmt_totals(totals)}</b>")
+        parts.append(title + "\n" + "\n".join(rows))
 
     if draft["debt"]:
         rows = [
             "• " + debt_line(
                 d["person"], d["direction"], _money_amount(d["amount"], d["currency"]), d["note"], d.get("stated", False)
-            )
+            ) + _day_mark(d)
             for d in draft["debt"]
         ]
         parts.append("🤝 <b>Qarz</b>\n" + "\n".join(rows))
+
+    dups = [p for p in draft["personal"] if p.get("dup")]
+    if len(dups) > MAX_DUP_ROWS:
+        parts.append(f"🔁 Avval kiritilgan {len(dups)} ta yozuv qayta qo'shilmaydi.")
+    elif dups:
+        parts.append("🔁 <b>Avval kiritilgan — qayta qo'shilmaydi</b>\n" + "\n".join(_personal_row(p) for p in dups))
     return "\n\n".join(parts)
 
 

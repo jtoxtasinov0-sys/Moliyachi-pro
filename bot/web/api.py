@@ -287,6 +287,7 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "currencies": await repo.enabled_currencies(session, user.account_id),
             "require_approval": await repo.require_approval(session, user.account_id),
             "set_size": await repo.set_size(session, user.account_id),
+            "auto_save_images": await repo.auto_save_images(session, user.account_id),
         }
     )
 
@@ -334,6 +335,8 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
     data = await _json(request)
     if "require_approval" in data:
         await repo.set_setting(session, user.id, "require_approval", "1" if data["require_approval"] else "0")
+    if "auto_save_images" in data:
+        await repo.set_setting(session, user.id, "auto_save_images", "1" if data["auto_save_images"] else "0")
     if "currencies" in data:
         cur = [c for c in repo.ALL_CURRENCIES if c in (data["currencies"] or [])]
         if not cur:
@@ -356,6 +359,7 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
             "currencies": await repo.enabled_currencies(session, user.id),
             "require_approval": await repo.require_approval(session, user.id),
             "set_size": await repo.set_size(session, user.id),
+            "auto_save_images": await repo.auto_save_images(session, user.id),
         }
     )
 
@@ -922,13 +926,16 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     return web.json_response({"items": page, "has_more": len(items) > offset + limit})
 
 
-# --- Ilova ichida yozish: ovoz/matn -> qoralama -> «To'g'rimi?» -> saqlash ---
+# --- Ilova ichida yozish: ovoz/matn/rasm -> qoralama -> «To'g'rimi?» -> saqlash ---
 # Qoralama bot chatidagidek ishlaydi (bot/intake.py), faqat server xotirasida saqlanadi.
 
 _drafts: dict[int, dict] = {}
 
 AUDIO_EXT = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/aac": "aac", "audio/mpeg": "mp3", "audio/wav": "wav"}
 MAX_AUDIO_BYTES = 8 * 1024**2
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+# Claude rasmni base64 holida 5 MB gacha qabul qiladi (ilova kattasini o'zi kichraytirib yuboradi)
+MAX_IMAGE_BYTES = 3_750_000
 
 
 def _current_draft(user: User) -> dict | None:
@@ -993,6 +1000,34 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
     if not text:
         return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
     return await _analyze(session, user, text, heard=True)
+
+
+@routes.post("/api/input/image")
+@endpoint()
+async def input_image(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Bank skrinshoti, chek yoki daftar rasmi (bir nechta bo'lishi mumkin) — multipart: image, caption."""
+    form = await request.post()
+    images = []
+    for field in form.getall("image", []):
+        if not isinstance(field, web.FileField) or field.content_type not in IMAGE_TYPES:
+            raise ApiError(400, "Rasm formati qo'llab-quvvatlanmaydi (JPG, PNG yoki WEBP bo'lsin)")
+        data = field.file.read()
+        if not data or len(data) > MAX_IMAGE_BYTES:
+            raise ApiError(400, "Rasm juda katta yoki bo'sh")
+        images.append((data, field.content_type))
+    if not images:
+        raise ApiError(400, "Rasm tanlanmagan")
+    if len(images) > intake.MAX_IMAGES:
+        raise ApiError(400, f"Bir martada {intake.MAX_IMAGES} tagacha rasm yuboring")
+    try:
+        draft = await intake.analyze_images(session, user, images, str(form.get("caption") or ""))
+        if await intake.autosave(session, user, draft):
+            saved = await intake.save(session, request.app["bot"], user, draft)
+            return await _input_state(session, user, saved="\n\n".join([saved.header, *(text for text, _ in saved.cards)]))
+    except intake.IntakeError as e:
+        return await _input_state(session, user, notice=e.message)
+    _drafts[user.id] = draft
+    return await _input_state(session, user)
 
 
 @routes.post("/api/input/action")

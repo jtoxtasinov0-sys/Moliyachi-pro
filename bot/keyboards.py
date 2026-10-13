@@ -38,7 +38,7 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
         kb.button(text=BTN_SETTINGS)
     kb.button(text=BTN_HELP)
     kb.adjust(2)
-    return kb.as_markup(resize_keyboard=True, input_field_placeholder="Ovozli yoki matnli xabar yuboring")
+    return kb.as_markup(resize_keyboard=True, input_field_placeholder="Ovoz, matn yoki rasm yuboring")
 
 
 # --- Callback ma'lumotlari --------------------------------------------------
@@ -87,7 +87,7 @@ class ReportCb(CallbackData, prefix="rep"):
 
 
 class SettingsCb(CallbackData, prefix="s"):
-    action: str  # approval | cur
+    action: str  # approval | cur | main | autoimg
     value: str = ""
 
 
@@ -197,6 +197,15 @@ def money_entry_kb(kind: str, entry_id: int, app: bool = False) -> InlineKeyboar
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
     if app:
         add_app_button(kb, {"d": "debts", "c": "clients"}.get(kind, "wallet"))
+    return kb.as_markup()
+
+
+def app_kb(view: str = "") -> InlineKeyboardMarkup | None:
+    """Faqat «Ilovani ochish» tugmasi (ilova manzili bo'lmasa — tugmasiz)."""
+    if not settings.webapp_url:
+        return None
+    kb = InlineKeyboardBuilder()
+    add_app_button(kb, view)
     return kb.as_markup()
 
 

@@ -36,7 +36,8 @@ async def _root(request: web.Request) -> web.Response:
 
 
 def build_app(bot: Bot, dp: Dispatcher, with_webhook: bool) -> web.Application:
-    app = web.Application(middlewares=[no_cache_html], client_max_size=10 * 1024**2)  # ilovadan ovoz yuborish uchun
+    # Ilovadan ovoz va rasm (5 tagacha skrinshot) yuborish uchun
+    app = web.Application(middlewares=[no_cache_html], client_max_size=20 * 1024**2)
     app["bot"] = bot
     app.router.add_get("/", _root)
     app.router.add_get("/health", _health)

@@ -30,6 +30,10 @@ OWNER_HELP = """\
 Bot yozuvni tushunib, «To'g'rimi?» deb so'raydi. Xato bo'lsa — shunchaki
 tuzatishni ayting: <i>«soni 45 ta»</i>, <i>«kecha edi»</i>.
 
+🖼 Bank ilovasidan skrinshot, chek yoki daftar rasmini yuboring — bot o'zi o'qib,
+xarajat va daromadlarni kategoriyalarga ajratib hisobga qo'shadi. Bir nechta skrinshotni
+birga (albom) yuborsangiz ham bo'ladi, avval kiritilganlari qayta qo'shilmaydi.
+
 Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 
 <b>Menyu</b>
@@ -41,7 +45,7 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
 👷 Ishchilar — qo'shish, taklif havolasi
 🧵 Modellar — qo'shish, narx belgilash
-⚙️ Sozlamalar — tasdiqlash tartibi, valyutalar
+⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar
 """
 
 WORKER_HELP = """\
@@ -50,6 +54,7 @@ WORKER_HELP = """\
 🎙 Topshirgan ishingizni ovoz yoki matn bilan yuboring:
 • <i>A-12 modeldan 50 ta topshirdim</i>
 • <i>Kecha B-5 dan 30 ta</i>
+🖼 Daftaringiz rasmini yuborsangiz ham bo'ladi.
 
 Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 
