@@ -40,16 +40,36 @@ async def _context(session: AsyncSession, user: User) -> tuple[dict[str, list[st
     return known, worker_name, set_size, info
 
 
-async def analyze(session: AsyncSession, user: User, text: str, draft: dict | None) -> dict:
-    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None."""
+# Ovozda tez-tez uchraydigan so'zlar: ElevenLabs ularni aniqroq eshitadi (stt.transcribe keyterms)
+VOICE_WORDS = (
+    "komplekt", "dona", "ming", "million", "so'm", "dollar", "won", "razmer", "model",
+    "topshirdi", "tikdim", "qaytardi", "to'ladi", "qarz", "haqqim bor", "kecha", "bugun",
+)
+
+
+async def voice_keyterms(session: AsyncSession, user: User) -> list[str]:
+    """Kabinetdagi ism va nomlar (ishchi, model, mijoz, qarz bo'yicha odamlar) va umumiy so'zlar."""
+    known = await drafts.known_names(session, user)
+    names = [
+        *known.get("workers", []), *known.get("models", []), *known.get("clients", []),
+        *known.get("people", []), *known.get("categories", []),
+    ]
+    if not user.is_owner:
+        names.insert(0, user.name)
+    return [*names, *VOICE_WORDS]
+
+
+async def analyze(session: AsyncSession, user: User, text: str, draft: dict | None, voice: bool = False) -> dict:
+    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None.
+    voice — matn ovozdan o'girilgan (Claude eshitish xatolarini hisobga oladi)."""
     correcting = draft is not None and not drafts.is_stale(draft)
     known, worker_name, set_size, info = await _context(session, user)
     try:
         async with billing.metered(session, user, requests=1):
             if correcting:
-                ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
+                ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info, voice)
             else:
-                ext = await llm.extract(text, today(), known, worker_name, info)
+                ext = await llm.extract(text, today(), known, worker_name, info, voice)
     except billing.QuotaError as e:
         raise IntakeError(e.message)
     except llm.LlmError:

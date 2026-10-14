@@ -1016,7 +1016,7 @@ async def _analyze(session: AsyncSession, user: User, text: str, heard: bool = F
         raise ApiError(400, "Matn bo'sh")
     extra = {"heard": text} if heard else {}
     try:
-        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user))
+        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user), voice=heard)
     except intake.IntakeError as e:
         return await _input_state(session, user, notice=e.message, **extra)
     return await _input_state(session, user, **extra)
@@ -1048,7 +1048,9 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
     except billing.QuotaError as e:
         return await _input_state(session, user, notice=e.message)
     try:
-        text = await stt.transcribe(audio, f"voice.{ext}", request.content_type)
+        text = await stt.transcribe(
+            audio, f"voice.{ext}", request.content_type, keyterms=await intake.voice_keyterms(session, user)
+        )
     except stt.SttError:
         return await _input_state(session, user, notice="⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta ayting yoki yozing.")
     # Brauzer ovozi (Opus) — taxminan 4 KB/soniya

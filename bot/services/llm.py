@@ -176,6 +176,14 @@ bo'lmasa, eshitilgancha lotin yozuvida, bosh harf bilan yoz. O'zingdan ism yoki 
 - Sonlarni raqamga aylantir: "ellik" -> 50, "bir yarim million" -> 1500000, "200 ming" -> 200000.
 - Valyuta: so'm -> UZS, dollar/$ -> USD, von/won/₩ -> KRW. Aytilmasa null.
 - Sanani bugungi sanaga nisbatan hisobla: "kecha", "o'tgan juma", "5-oktabr". Aytilmasa null.
+
+Ovozli xabar ("Xabar (ovozdan matnga o'girilgan)" deb belgilanadi) — so'zlar eshitilgancha yozilgan, shuning uchun eshitish xatolari bo'ladi. Har bir so'zni gap mazmuni va "Ma'lum nomlar"ga qarab tikla:
+- Ism va model nomi buzilgan, qo'shilib yoki bo'linib ketgan bo'lishi mumkin: "alishir", "ali sher" — Alisher; "a o'n ikki", "ey 12", "a12" — A-12. Ro'yxatda tovushi yaqin nom bo'lsa — o'shani ol.
+- Son so'z, raqam yoki aralash bo'lishi mumkin: "ellik ming", "50 ming", "50 000", "besh yuz ming" — 500000. "min", "mink" — ming; "milyon", "mln", "lyon" — million; "yarim" — 0.5 ("bir yarim million" — 1500000). "ta"/"dona" oldidagi son — miqdor, "ming"/"million"/valyuta oldidagi son — summa.
+- Valyuta: "von", "van", "vom", "bon", "uon" — won (KRW); "dollor", "dolar", "bucks" — USD; "sum", "so'mlik" — UZS.
+- Kirill yoki rus harflaridagi so'zni ham o'zbekcha o'qi ("тикдим" — tikdim, "миллион" — million).
+- Ma'noga aloqasi yo'q so'z (shovqin, "eshityapsizmi", "xullas") — tashlab ket.
+- Son yoki ismni mazmundan ham tiklab bo'lmasa — to'qima: section=unknown, question'da aynan nima eshitilmaganini qisqa so'ra (masalan: "Nechta topshirdi — 15 mi yoki 50 mi?").
 """
 
 _LABELS = {
@@ -237,12 +245,20 @@ def _worker_rules(worker_name: str) -> str:
     )
 
 
+VOICE_LABEL = "Xabar (ovozdan matnga o'girilgan)"
+
+
 async def extract(
-    text: str, today: date, known: dict[str, list[str]], worker_name: str | None = None, info: str = ""
+    text: str,
+    today: date,
+    known: dict[str, list[str]],
+    worker_name: str | None = None,
+    info: str = "",
+    voice: bool = False,
 ) -> Extraction:
     """worker_name berilsa — yozuvchi ishchi, bo'lim har doim "work" va ishchi o'zi."""
     extra = _worker_rules(worker_name) if worker_name else ""
-    content = f"{_context_block(today, known, info)}\n\nXabar:\n«{text}»"
+    content = f"{_context_block(today, known, info)}\n\n{VOICE_LABEL if voice else 'Xabar'}:\n«{text}»"
     return await _call(content, extra)
 
 
@@ -253,15 +269,17 @@ async def correct(
     known: dict[str, list[str]],
     worker_name: str | None = None,
     info: str = "",
+    voice: bool = False,
 ) -> Extraction:
     """Mavjud qoralamaga foydalanuvchi tuzatishini qo'llaydi."""
     extra = "Senga joriy qoralama va tuzatish beriladi. Tuzatishni qo'llab, TO'LIQ yangilangan natijani qaytar."
     if worker_name:
         extra += " " + _worker_rules(worker_name)
+    label = "Foydalanuvchi tuzatishi (ovozdan matnga o'girilgan)" if voice else "Foydalanuvchi tuzatishi"
     content = (
         f"{_context_block(today, known, info)}\n\n"
         f"Joriy qoralama:\n{json.dumps(draft, ensure_ascii=False)}\n\n"
-        f"Foydalanuvchi tuzatishi:\n«{correction}»"
+        f"{label}:\n«{correction}»"
     )
     return await _call(content, extra)
 

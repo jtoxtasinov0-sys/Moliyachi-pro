@@ -41,8 +41,8 @@ PLANS = {
     )
 }
 PERIOD_DAYS = 30
-# ElevenLabs Scribe: dollar / soat ovoz
-STT_USD_PER_HOUR = 0.22
+# ElevenLabs Scribe: dollar / soat ovoz ($0.22) + keyterms uchun 20% qo'shimcha
+STT_USD_PER_HOUR = 0.22 * 1.2
 
 
 class QuotaError(Exception):

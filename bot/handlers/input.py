@@ -45,7 +45,7 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
     status = await message.answer("🎧 Eshitilmoqda…")
     try:
         buf = await bot.download(media)
-        text = await stt.transcribe(buf.read())
+        text = await stt.transcribe(buf.read(), keyterms=await intake.voice_keyterms(session, user))
     except stt.SttError:
         await status.edit_text("⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta yuboring yoki matn bilan yozing.")
         return
@@ -55,7 +55,7 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
         await status.edit_text("🤷 Ovozda gap eshitilmadi. Qayta yuboring.")
         return
 
-    await process_text(status, text, state, session, user)
+    await process_text(status, text, state, session, user, voice=True)
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -125,13 +125,15 @@ async def on_other(message: Message) -> None:
     await message.answer("Ovozli, matnli xabar yoki rasm (bank skrinshoti, chek) yuboring.")
 
 
-async def process_text(status: Message, text: str, state: FSMContext, session: AsyncSession, user: User) -> None:
-    """status — «Eshitilmoqda…» xabari, natija shu xabarga yoziladi."""
+async def process_text(
+    status: Message, text: str, state: FSMContext, session: AsyncSession, user: User, voice: bool = False
+) -> None:
+    """status — «Eshitilmoqda…» xabari, natija shu xabarga yoziladi. voice — matn ovozdan o'girilgan."""
     draft = None
     if await state.get_state() == DraftSG.active.state:
         draft = (await state.get_data()).get("draft")
     try:
-        new_draft = await intake.analyze(session, user, text, draft)
+        new_draft = await intake.analyze(session, user, text, draft, voice=voice)
     except intake.IntakeError as e:
         await status.edit_text(e.message)
         return
