@@ -1434,6 +1434,30 @@ function verticalSwipes(on) {
   } catch (_) { /* eski Telegram */ }
 }
 
+// Mikrofon bir marta ochiladi va ilova yopilguncha qayta ishlatiladi. Har yozuvda getUserMedia chaqirilib,
+// keyin yopilsa, Telegram ichidagi brauzer (ayniqsa iPhone'da) har gal qaytadan ruxsat so'raydi.
+let micStream = null;
+
+async function getMic() {
+  const tracks = micStream ? micStream.getAudioTracks() : [];
+  if (tracks.length && tracks.every((t) => t.readyState === "live")) {
+    tracks.forEach((t) => { t.enabled = true; });
+    return micStream;
+  }
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  return micStream;
+}
+
+// Yozmayotganda ovoz olinmaydi, lekin ruxsat saqlanib qoladi
+function pauseMic() {
+  if (micStream) micStream.getAudioTracks().forEach((t) => { t.enabled = false; });
+}
+
+function releaseMic() {
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  micStream = null;
+}
+
 async function startRecording() {
   const mime = pickMime();
   if (mime === null || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1447,7 +1471,7 @@ async function startRecording() {
   setRecUI(true);
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await getMic();
   } catch (_) {
     compose.starting = false;
     setRecUI(false);
@@ -1458,7 +1482,7 @@ async function startRecording() {
   compose.starting = false;
   if (compose.abort) {
     // Ruxsat so'ralayotganda barmoq qo'yib yuborildi — endi qayta bosib turish kifoya
-    stream.getTracks().forEach((t) => t.stop());
+    pauseMic();
     setRecUI(false);
     toast("🎤 Tayyor — endi tugmani bosib turib gapiring");
     return;
@@ -1525,12 +1549,13 @@ function stopRecording(cancel) {
   compose.cancel = cancel || tooShort;
   compose.recorder = null;
   if (rec.state !== "inactive") rec.stop();
-  if (compose.stream) compose.stream.getTracks().forEach((t) => t.stop());
+  else pauseMic();
   compose.stream = null;
   setRecUI(false);
 }
 
 function onRecorded(ev) {
+  pauseMic(); // yozuv to'liq yig'ilgandan keyin
   const type = (ev.target.mimeType || compose.chunks[0]?.type || "audio/webm");
   const blob = new Blob(compose.chunks, { type });
   compose.chunks = [];
@@ -1989,6 +2014,7 @@ function bind() {
     if (b) personSheet(b.dataset.person);
   };
 
+  window.addEventListener("pagehide", releaseMic);
   $("settingsBtn").onclick = settingsSheet;
   // Summa kartasini bosganda — maslahat va reja
   for (const id of ["wHero", "mHero"]) {
