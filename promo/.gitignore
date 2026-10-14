@@ -1,3 +1,5 @@
 cache/
 renders/
 assets/music/*.wav
+assets/vo/*.wav
+src/bgtest.html

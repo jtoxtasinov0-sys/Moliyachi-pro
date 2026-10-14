@@ -17,7 +17,7 @@ const out = opt('out'), video = opt('video'), cues = opt('cues');
   const browser = await chromium.launch({ args: ['--disable-gpu-vsync', '--force-color-profile=srgb', '--font-render-hinting=none'] });
   const page = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: scale });
   page.on('pageerror', e => { console.error('PAGE ERROR', e.message); process.exitCode = 1; });
-  await page.goto('file://' + path.resolve(__dirname, 'index.html'));
+  await page.goto('file://' + path.resolve(__dirname, opt('page', 'index.html')));
   await page.waitForFunction(() => window.READY === true, null, { timeout: 20000 });
   const dur = await page.evaluate(() => window.DURATION);
   if (cues) {
