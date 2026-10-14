@@ -1,29 +1,44 @@
-## VO script – Moliyachi Pro qo'llanma (v1, ixtiyoriy)
-Target: 86 s · ≈ 150 so'z ≈ 70 s (video kadrlariga mos bo'laklar)
-Model: Eleven v3 (Multilingual)   Voice: iliq, ishonchli erkak yoki ayol ovozi, o'zbekcha talaffuz
-Settings: Stability 45 % · Similarity 75 % · Style 10 % · Speed 1.0 · Speaker boost on
-Export: MP3 44.1 kHz 192 kbps · bitta fayl → `assets/vo/vo_v1.mp3`
+# Ovozli matn — Moliyachi qo'llanma (v2)
 
---- ELEVENLABS'GA KO'CHIRING ---
-[confident] Daftar... kalkulyator... Endi faqat gapiring.
+Ovozni foydalanuvchi o'zi yozadi. Video shu ovozga moslab yig'iladi: interfeys haqiqiy Telegram chati
+(yashil fon, menyu tugmalari) va «📊 Ilova» (to'q ko'k Mini App) bilan bir xil bo'ladi. Musiqa yo'q, faqat ovoz effektlari.
+Taxminiy uzunlik: ~300 so'z ≈ 2 daqiqa.
 
-[warmly] Moliyachi — tikuv sexi hisobi, ish haqi va shaxsiy moliya, bitta Telegram botda.
+## Matn (bo'limlar orasida 2 soniya pauza)
 
-Kim necha dona tikdi, kimga qancha ish haqi — hammasi daftarda edi. Moliyachi esa gapni o'zi tushunadi va o'zi hisoblaydi.
+**1. Kirish** — ekranda: Telegram, «Moliyachi Bot», pastda menyu tugmalari
+> Ishchilaringiz hisobini hali ham daftarda yuritasizmi? Endi bunga hojat yo'q. Moliyachi — Telegram'dagi hisobchingiz. Siz shunchaki gapirasiz, u o'zi yozib, o'zi hisoblab beradi.
 
-Birinchi qadam: har bir modelga bir dona uchun ish haqini yozing.
+**2. Modellar** — ekranda: «🧵 Modellar» → «➕ Model qo'shish»
+> Birinchi qadam — modellar. Menyudan «Modellar»ni bosing, «Model qo'shish»ni tanlang, modelning nomini va bir dona uchun ish haqini yozing. Masalan: A-o'n ikki — besh ming so'm.
 
-Ikkinchi qadam: ishchini qo'shing va unga bir martalik havola yuboring.
+**3. Ishchilar** — ekranda: «👷 Ishchilar» → «➕ Ishchi qo'shish» → havola
+> Ikkinchi qadam — ishchilar. «Ishchilar» bo'limida «Ishchi qo'shish»ni bosing va ismini yozing. Bot bir martalik havola beradi. Shu havolani ishchingizga yuboring — u bosishi bilan botga ulanadi.
 
-Uchinchi qadam: bosib turing va ayting — Alisher A-o'n ikki modeldan ellik ta topshirdi. Bot «to'g'rimi?» deb so'raydi. Xato bo'lsa, shunchaki tuzatishni ayting.
+**4. Ishni kiritish** — ekranda: ovozli xabar → «To'g'rimi?» kartochkasi → «✅ Saqlash»
+> Uchinchi qadam — kunlik ishni kiritish. Mikrofonni bosib turing va ayting: «Alisher A-o'n ikki modeldan ellik ta, Be-besh modeldan o'ttiz ta topshirdi». Bot gapingizni tushunib, kartochka chiqaradi va «To'g'rimi?» deb so'raydi. Hammasi to'g'ri bo'lsa — «Saqlash»ni bosing. Xato bo'lsa — shunchaki ayting: «soni qirq besh ta». Daftaringiz rasmini yuborsangiz ham bo'ladi.
 
-To'rtinchi qadam: ishchi o'zi yozadi, siz tasdiqlaysiz. Faqat tasdiqlangan ish hisobotga kiradi.
+**5. Tasdiqlash** — ekranda: ishchi telefoni va ega telefoni, «🔔 Yangi yozuv tasdiq kutmoqda»
+> Ishchilar o'z ishini o'zlari ham yozishi mumkin. Ishchi yuborgan yozuv sizga «tasdiq kutmoqda» bo'lib keladi. «Tasdiqlash»ni bossangiz — hisobga qo'shiladi. Esda tuting: faqat tasdiqlangan ish hisobotga kiradi.
 
-[thoughtful] Ish haqi oddiy: soni karra bir dona narxi. Ellik karra besh ming — ikki yuz ellik ming so'm.
+**6. Ish haqi qanday hisoblanadi** — ekranda: formula va sanovchi raqamlar
+> Ish haqi qanday hisoblanadi? Juda oddiy: topshirilgan dona soni bir dona narxiga ko'paytiriladi. Ellik ta karra besh ming — ikki yuz ellik ming. O'ttiz ta karra to'rt ming — bir yuz yigirma ming. Jami — uch yuz yetmish ming so'm. Model narxi keyin o'zgarsa ham, eski yozuvlar o'sha paytdagi narxda qoladi.
 
-Hisobot bir bosishda: bugun, shu hafta, shu oy.
+**7. Hisobot** — ekranda: «📊 Hisobot» → «Shu oy»
+> Hisobotni ko'rish uchun «Hisobot»ni bosing va davrni tanlang: bugun, shu hafta yoki shu oy. Bot har bir ishchi nechta tikkanini, qancha ish haqi olishini va umumiy ish haqi fondini ko'rsatadi. Ishchi esa faqat o'z hisobini ko'radi.
 
-[excited] Siz gapiring — Moliyachi hisoblaydi.
---- END ---
+**8. Ilova** — ekranda: «📊 Ilova» → Mini App (Asosiy, grafiklar, Jamoa)
+> Hammasini grafiklar bilan ko'rmoqchi bo'lsangiz — «Ilova» tugmasini bosing. Bu yerda ish haqi fondi, modellar bo'yicha diagramma va ishchilar reytingi bor. O'rtadagi mikrofon orqali ilovadan ham yozish mumkin.
 
-Pronunciation: «A-12» → «A-o'n ikki», «B-5» → «Be-besh».
+**9. Qo'shimcha** — ekranda: Mijozlar, Hamyon, Qarzlar, Maslahat
+> Bundan tashqari, Moliyachi mijozlar bilan savdo, xarajatlar va qarzlar hisobini ham yuritadi, har kuni kechqurun esa eslatib turadi.
+
+**10. Yakun** — ekranda: logo
+> Siz gapiring — Moliyachi hisoblaydi.
+
+## Yozish bo'yicha maslahatlar
+- Telefon diktofoni yetadi (iPhone «Диктофон»). Tinch xonada, telefonni og'izdan ~20 sm uzoqlikda tuting.
+- Hammasini **bitta faylga** yozing, bo'limlar orasida **2 soniya** jim turing — o'sha joylardan kesaman.
+- Xato qilsangiz to'xtamang: 2 soniya pauza qiling va gapni boshidan qaytaring, xatoni o'zim kesib tashlayman.
+- Shoshilmang, oddiy suhbatdagidek tabiiy gapiring.
+- Format farqi yo'q (m4a, mp3, wav) — chatga yuboring.
