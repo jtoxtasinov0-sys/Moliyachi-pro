@@ -13,7 +13,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts, intake
+from bot import advisor, drafts, intake
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
@@ -28,7 +28,7 @@ from bot.db.models import (
     User,
     WorkEntry,
 )
-from bot.services import stt
+from bot.services import llm, stt
 from bot.services.utils import today
 from bot.web.auth import (
     WEB_TOKEN_DAYS,
@@ -288,6 +288,8 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "require_approval": await repo.require_approval(session, user.account_id),
             "set_size": await repo.set_size(session, user.account_id),
             "auto_save_images": await repo.auto_save_images(session, user.account_id),
+            "savings_pct": await repo.savings_pct(session, user.account_id),
+            "reminder_hour": await repo.reminder_hour(session, user.account_id),
         }
     )
 
@@ -354,14 +356,43 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
         if not 1 <= size <= repo.MAX_SET_SIZE:
             raise ApiError(400, f"Komplektdagi dona soni 1 dan {repo.MAX_SET_SIZE} gacha bo'lsin")
         await repo.set_setting(session, user.id, "set_size", str(size))
+    if "savings_pct" in data:
+        if data["savings_pct"] not in repo.SAVINGS_CHOICES:
+            raise ApiError(400, "Jamg'arma ulushi noto'g'ri")
+        await repo.set_setting(session, user.id, "savings_pct", str(data["savings_pct"]))
+    if "reminder_hour" in data:
+        hour = data["reminder_hour"]
+        if hour is not None and hour not in repo.REMINDER_HOURS:
+            raise ApiError(400, "Eslatma vaqti noto'g'ri")
+        await repo.set_setting(session, user.id, "reminder_hour", "off" if hour is None else str(hour))
     return web.json_response(
         {
             "currencies": await repo.enabled_currencies(session, user.id),
             "require_approval": await repo.require_approval(session, user.id),
             "set_size": await repo.set_size(session, user.id),
             "auto_save_images": await repo.auto_save_images(session, user.id),
+            "savings_pct": await repo.savings_pct(session, user.id),
+            "reminder_hour": await repo.reminder_hour(session, user.id),
         }
     )
+
+
+# --- Moliyaviy maslahat ---------------------------------------------------
+
+@routes.get("/api/advice")
+@endpoint(owner_only=True)
+async def advice(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    return web.json_response(await advisor.advice_data(session, user.id))
+
+
+@routes.post("/api/advice/ai")
+@endpoint(owner_only=True)
+async def advice_ai(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    try:
+        text = await llm.advise(await advisor.advice_context(session, user.id))
+    except llm.LlmError:
+        raise ApiError(502, "Hozir maslahat tayyorlab bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
+    return web.json_response({"text": text})
 
 
 # --- Yozuvlar ---------------------------------------------------------------

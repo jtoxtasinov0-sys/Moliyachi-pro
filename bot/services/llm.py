@@ -328,8 +328,12 @@ Qoidalar:
 - 4–7 ta qisqa band, har biri yangi qatordan "• " bilan boshlansin. Oxirida bitta qisqa rag'batlantiruvchi gap.
 - Aniq summalar bilan yoz. Faqat berilgan raqamlarga tayan, raqam to'qima. Valyutalarni bir-biriga aylantirma.
 - Ma'lumot kam bo'lsa (masalan, daromad yozilmagan) — shuni ayt va nimani yozib borish kerakligini tushuntir.
-- Aniq aksiya, kriptovalyuta yoki moliyaviy mahsulot tavsiya qilma — umumiy tamoyillarni ayt (zaxira fond, \
-bank omonati, qarzni yopish).
+- Foydalanuvchi halol moliyaga amal qiladi: foizli bank omonati, foizli kredit yoki foiz (ribo) keltiradigan \
+narsani hech qachon tavsiya qilma. Jamg'armani o'stirish uchun halol investitsiyani tavsiya qil: kichik summa bilan \
+ham biznesga sherik bo'lish mumkin bo'lgan tashkilotlar (foyda va zarar sheriklikda bo'linadi — mushoraka, \
+mudoraba), oltin. Investitsiyadan oldin zaxira fond yig'ilsin.
+- Aniq kompaniya, aksiya yoki kriptovalyuta nomini aytma. Tashkilot tanlashda tekshirishni eslat: shariat \
+kengashi yoki fatvo, litsenziya, shaffof hisobot; "kafolatlangan foyda" va'dasi — firibgarlik belgisi.
 - Markdown, jadval, sarlavha va ** belgilarini ishlatma — oddiy matn. Javob 1200 belgidan oshmasin."""
 
 

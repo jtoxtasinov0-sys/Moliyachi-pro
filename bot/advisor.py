@@ -46,8 +46,8 @@ LESSONS = [
     "Bugun kam sarflasangiz, ertangi limit ko'payadi.",
     "<b>Mayda xarajatlar yig'iladi.</b> Kuniga 30 ming so'mlik kofe va gazak — oyiga 900 ming, "
     "yiliga 10 million so'mdan ortiq.",
-    "<b>Qarz — salbiy jamg'arma.</b> Avval qimmat (foizli) qarzlarni yoping. Qarzni yopish ham — "
-    "o'zingizga qilingan jamg'arma.",
+    "<b>Qarz — salbiy jamg'arma.</b> Foizli kreditdan uzoq turing, bor bo'lsa — birinchi navbatda shuni "
+    "yoping. Qarzni yopish ham — o'zingizga qilingan jamg'arma.",
     "<b>Maqsad qo'ying.</b> «Pul yig'aman» emas, «6 oyda 12 million — mashina uchun boshlang'ich to'lov». "
     "Aniq maqsad va muddat bo'lsa, oyiga qancha ajratish kerakligi ham aniq bo'ladi.",
     "<b>Ro'yxat bilan bozorga boring.</b> Ro'yxatsiz xarid odatda 20–30% qimmatga tushadi. "
@@ -57,11 +57,21 @@ LESSONS = [
     "<b>Daromad oshsa — xarajat emas, jamg'arma oshsin.</b> Oylik ko'tarilsa, qo'shimcha pulning "
     "kamida yarmini jamg'armaga qo'shing.",
     "<b>Jamg'armani ko'rinmas joyda saqlang.</b> Har kuni ishlatiladigan kartada turgan pul tez tugaydi. "
-    "Alohida omonat yoki alohida karta oching.",
-    "<b>Bank omonati.</b> Zaxira fondni oddiy kartada emas, foizli omonatda saqlang — pul inflyatsiyadan "
-    "biroz himoyalanadi. Omonat muddati va pulni erta olish shartlarini o'qing.",
+    "Jamg'arma uchun alohida karta yoki hisob oching.",
+    "<b>Halol investitsiya.</b> Jamg'armani foizli bank omonatiga qo'ymang — foiz (ribo) halol emas. "
+    "Ortiqcha pulni halol investitsiyaga yo'naltiring: kichik summa bilan ham biznesga sherik bo'lish "
+    "mumkin bo'lgan tashkilotlar bor — foyda va zarar sheriklar o'rtasida bo'linadi (mushoraka, mudoraba).",
     "<b>Inflyatsiya.</b> Narxlar har yili oshadi: yostiq ostidagi pul yildan-yilga kamroq narsaga yetadi. "
-    "Uzoq muddatli jamg'armani foiz beradigan joyda saqlang.",
+    "Uzoq muddatli jamg'armani ishlating: halol biznesga sheriklik, oltin — qiymatini saqlaydigan narsalar.",
+    "<b>Avval zaxira, keyin investitsiya.</b> Investitsiyaga faqat zaxira fond yig'ilgandan keyin va 1–2 yil "
+    "tegmasa bo'ladigan pulni qo'ying. Ertaga kerak bo'ladigan pul bilan sheriklikka kirmang.",
+    "<b>Halol investitsiyani qanday tanlash.</b> Tekshiring: shariat kengashi yoki fatvosi bormi; faoliyati "
+    "halolmi (alkogol, qimor, foizli kredit yo'q); foyda va zarar sheriklikda bo'linadimi; davlat ro'yxatidan "
+    "o'tgan, litsenziyasi bormi; muntazam hisobot beradimi.",
+    "<b>Firibgarlikdan saqlaning.</b> «Oyiga 10–20% kafolatlangan foyda» va'da qilsa — ehtiyot bo'ling: "
+    "halol sheriklikda foyda kafolatlanmaydi, kafolatlangan daromad esa ko'pincha piramida yoki yashirin foiz.",
+    "<b>Bo'lib qo'ying.</b> Bor jamg'armani bitta loyihaga tikmang. Bir nechta biznes yoki tashkilotga "
+    "bo'lib qo'ysangiz, bittasi zarar qilsa ham qolgani saqlanadi.",
     "<b>Haftalik ko'rib chiqish.</b> Haftada bir marta 5 daqiqa ajratib, «💸 Xarajatlar → Shu hafta»ni "
     "ko'ring. Rejadan chiqqan bo'lsangiz, keyingi haftada tuzatasiz.",
     "<b>Katta xaridni rejalang.</b> Telefon, mebel, sovg'a — narxini oylarga bo'ling va har oy shuncha "
@@ -90,8 +100,9 @@ LESSONS = [
     "Muhimi — har oy, to'xtamasdan.",
     "<b>Oy yakuni.</b> Oy oxirida 3 savolga javob bering: qancha topdim, qancha sarfladim, qancha "
     "jamg'ardim? «💡 Maslahat» bo'limi buni siz uchun hisoblaydi.",
-    "<b>Murakkab foiz.</b> Har oy 1 million jamg'arib, yiliga 20% foiz olsangiz, 5 yilda ~100 million "
-    "bo'ladi — shundan 40 milliondan ortig'i foizdan. Qancha erta boshlasangiz, shuncha ko'p.",
+    "<b>Sarmoya o'sadi.</b> Har oy 1 million jamg'arib, halol biznesga sheriklikka qo'ysangiz va u yiliga "
+    "o'rtacha 15–20% foyda bersa, 5 yilda ~85–95 million bo'ladi (60 millionini o'zingiz qo'ygansiz). "
+    "Foyda kafolatlanmaydi, lekin qancha erta boshlasangiz, shuncha ko'p.",
 ]
 
 
@@ -280,8 +291,8 @@ def _tips(b: Budget, i_owe: Decimal) -> list[str]:
         )
     if b.from_avg:
         tips.append(
-            f"Daromad tushgan kuni darhol jamg'arma ulushini (<b>{b.money(b.savings_budget)}</b>) alohida karta "
-            "yoki omonatga o'tkazing — avval o'zingizga to'lang."
+            f"Daromad tushgan kuni darhol jamg'arma ulushini (<b>{b.money(b.savings_budget)}</b>) alohida "
+            "kartaga o'tkazing — avval o'zingizga to'lang."
         )
     elif b.saved >= b.savings_budget > 0:
         tips.append(
@@ -301,7 +312,8 @@ def _tips(b: Budget, i_owe: Decimal) -> list[str]:
     if b.expense_avg > 0:
         tips.append(
             f"🛟 Zaxira fond maqsadi: kamida 3 oylik xarajat — <b>{b.money(b.expense_avg * 3)}</b> "
-            f"(yaxshisi 6 oylik — {b.money(b.expense_avg * 6)}). Ish yoki daromad to'xtasa, qarzsiz yashaysiz."
+            f"(yaxshisi 6 oylik — {b.money(b.expense_avg * 6)}). Zaxira yig'ilgach — ortig'ini foizli omonatga emas, "
+            "halol investitsiyaga yo'naltiring: kichik summa bilan ham biznesga sherik bo'lish mumkin."
         )
     return tips
 
@@ -418,6 +430,46 @@ async def saved_hint(session: AsyncSession, owner_id: int, entries: list[Persona
             if b.currency in expense_currencies and b.base > 0:
                 lines.append(_limit_line(b))
     return "\n\n".join(lines)
+
+
+# --- Mini App uchun ---------------------------------------------------------
+
+async def advice_data(session: AsyncSession, owner_id: int) -> dict:
+    """Ilovadagi «Maslahat» oynasi uchun: har valyuta bo'yicha reja, maslahatlar va saboqlar."""
+    t = today()
+    i_owe = await _i_owe(session, owner_id)
+    num = float
+    items = []
+    for b in await budgets(session, owner_id):
+        item = {
+            "currency": b.currency,
+            "base": num(b.base),
+            "from_avg": b.from_avg,
+            "spent": num(b.spent),
+            "today_spent": num(b.today_spent),
+            "days_left": b.days_left,
+        }
+        if b.base > 0:
+            item.update(
+                needs={"pct": NEEDS_PCT, "budget": num(b.needs_budget), "spent": num(b.needs_spent)},
+                wants={"pct": b.wants_pct, "budget": num(b.wants_budget), "spent": num(b.wants_spent)},
+                savings={"pct": b.savings_pct, "budget": num(b.savings_budget), "saved": num(max(b.saved, Decimal(0)))},
+                spend_left=num(b.spend_left),
+                daily_limit=num(b.daily_limit),
+                reserve=[num(b.expense_avg * 3), num(b.expense_avg * 6)] if b.expense_avg > 0 else None,
+                tips=[tip for tip in _tips(b, i_owe.get(b.currency, Decimal(0))) if not tip.startswith("🛟")],
+            )
+        items.append(item)
+    return {
+        "month": MONTHS[t.month - 1],
+        "savings_pct": await repo.savings_pct(session, owner_id),
+        "savings_choices": list(repo.SAVINGS_CHOICES),
+        "reminder_hour": await repo.reminder_hour(session, owner_id),
+        "reminder_hours": list(repo.REMINDER_HOURS),
+        "budgets": items,
+        "lessons": LESSONS,
+        "lesson": lesson_of_day(),
+    }
 
 
 # --- Claude uchun ma'lumot -------------------------------------------------

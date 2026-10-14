@@ -13,6 +13,7 @@ const state = {
   workers: [],
   models: [],
   wallet: { tab: "money", period: "month", data: null, entries: { offset: 0, items: [] }, debts: null },
+  advice: null,
   // home — bosh sahifadagi qisqa ko'rinish, data — «Mijozlar» bo'limi
   clients: { period: "month", data: null, home: null, byId: {}, feed: { offset: 0, items: [] } },
 };
@@ -1572,6 +1573,9 @@ function settingsSheet() {
     <div class="field"><label>⭐ Asosiy valyuta — summa valyutasiz aytilsa shu olinadi</label>
       <select class="select" id="sMain">${["UZS", "USD", "KRW"].map((c) => `<option value="${c}" ${c === me.currencies[0] ? "selected" : ""}>${c} (${CUR[c]})</option>`).join("")}</select>
     </div>
+    <div class="field"><label>🔔 Kundalik eslatma: «bugungi pulingizni kiriting»</label>
+      <select class="select" id="sRemind"><option value="">🔕 O'chiq</option>${[19, 20, 21, 22].map((h) => `<option value="${h}" ${h === me.reminder_hour ? "selected" : ""}>har kuni ${h}:00</option>`).join("")}</select>
+    </div>
   `);
   const save = async (body, input) => {
     try {
@@ -1585,6 +1589,7 @@ function settingsSheet() {
     }
   };
   $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
+  $("sRemind").onchange = (ev) => save({ reminder_hour: ev.target.value === "" ? null : Number(ev.target.value) }, ev.target);
   $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
   $("sAutoImg").onchange = (ev) => save({ auto_save_images: ev.target.checked }, ev.target);
   $("sSetSize").onchange = (ev) => {
@@ -1603,6 +1608,130 @@ function settingsSheet() {
       });
     };
   });
+}
+
+// --- Maslahat: daromadni taqsimlash, kunlik limit, saboqlar -------------------
+
+function planRow(icon, title, part, cur, savings) {
+  const used = savings ? part.saved : part.spent;
+  const pct = part.budget > 0 ? Math.min(100, Math.round((used / part.budget) * 100)) : 0;
+  const over = !savings && used > part.budget;
+  let note;
+  if (savings) note = used >= part.budget ? "✅ shu oy ortib turibdi" : `shu oy ortib turgani: ${money(used, cur)}`;
+  else note = `sarflandi ${money(used, cur)} · ` + (over ? `⚠️ ${money(used - part.budget, cur)} oshdi` : `qoldi ${money(part.budget - used, cur)}`);
+  return `
+    <div class="plan-row">
+      <div class="plan-head"><b>${icon} ${title} <span class="muted">${part.pct}%</span></b><b>${money(part.budget, cur)}</b></div>
+      <div class="bar ${over ? "over" : savings ? "save" : ""}"><i style="width:${pct}%"></i></div>
+      <small>${note}</small>
+    </div>`;
+}
+
+function budgetBlock(b, multi) {
+  const cur = b.currency;
+  const title = multi ? `<div class="advice-cur">${esc(CUR[cur] || cur)}</div>` : "";
+  if (!b.needs) {
+    return `${title}<div class="advice-card"><b>💸 Bu oy xarajat: ${money(b.spent, cur)}</b>
+      <p class="muted">Daromad hali yozilmagan. Taqsimot uchun topgan pulingizni ham yozing: «oylik tushdi 5 million», «bugun 300 ming ishladim».</p></div>`;
+  }
+  const limit = b.spend_left > 0
+    ? `<div><b>${money(b.daily_limit, cur)}</b><small>kunlik limit · ${b.days_left} kun qoldi</small></div>`
+    : `<div><b class="amt neg">${money(-b.spend_left, cur)}</b><small>oylik rejadan oshdi</small></div>`;
+  return `${title}
+    <div class="advice-card">
+      <div class="muted">${b.from_avg ? "O'rtacha oylik daromad (bu oy hali yozilmagan)" : "Bu oy daromad"}</div>
+      <div class="advice-income">${money(b.base, cur)}</div>
+      <div class="muted" style="margin-top:10px">Shu puldan ajrating:</div>
+      ${planRow("🏠", "Zarur xarajatlar", b.needs, cur)}
+      ${planRow("🎉", "Boshqa xarajatlar", b.wants, cur)}
+      ${planRow("🏦", "Jamg'arma", b.savings, cur, true)}
+    </div>
+    <div class="stat-pair">${limit}<div><b>${money(b.today_spent, cur)}</b><small>bugun sarflandi</small></div></div>
+    ${b.reserve ? `<div class="advice-note">🛟 <b>Zaxira fond maqsadi:</b> kamida ${money(b.reserve[0], cur)} (3 oylik xarajat), yaxshisi ${money(b.reserve[1], cur)} (6 oylik). Zaxira yig'ilgach — ortig'ini foizli omonatga emas, halol investitsiyaga yo'naltiring.</div>` : ""}
+    ${b.tips.length ? `<div class="advice-tips">${b.tips.map((t) => `<p>${tgHtml(t)}</p>`).join("")}</div>` : ""}`;
+}
+
+async function adviceSheet() {
+  haptic();
+  openSheet(`<h3 id="advTitle">💡 Maslahat</h3><div id="advBody">${SKELETONS}</div>`);
+  try {
+    state.advice = await api("/api/advice");
+    renderAdvice();
+  } catch (e) { fail(e); }
+}
+
+function renderAdvice() {
+  const d = state.advice;
+  if (!d || !$("advBody")) return;
+  $("advTitle").textContent = `💡 Maslahat — ${d.month}`;
+  const wantsPct = 100 - 50 - d.savings_pct;
+  const blocks = d.budgets.length
+    ? d.budgets.map((b) => budgetBlock(b, d.budgets.length > 1)).join("")
+    : `<div class="advice-card"><b>Hali daromad yoki xarajat yozilmagan.</b>
+        <p class="muted">Avval topgan pulingizni yozing: «oylik tushdi 5 million» — bot uni qanday taqsimlashni ko'rsatadi. Keyin har kuni xarajatlaringizni yozib boring: «bozorga 80 ming, taksiga 20 ming».</p></div>`;
+  const hourOpts = [`<option value="">🔕 O'chiq</option>`]
+    .concat(d.reminder_hours.map((h) => `<option value="${h}" ${h === d.reminder_hour ? "selected" : ""}>🔔 har kuni ${h}:00</option>`)).join("");
+  $("advBody").innerHTML = `
+    <div class="field"><label>🏦 Daromadning qancha qismi jamg'armaga</label>
+      <div class="seg three" id="advPct">${d.savings_choices.map((p) => `<button data-pct="${p}" class="${p === d.savings_pct ? "on" : ""}">${p}%</button>`).join("")}</div>
+    </div>
+    ${blocks}
+    <button class="primary" id="advAi">🤖 Shaxsiy maslahat olish</button>
+    <div id="advAiOut"></div>
+    <div class="advice-lesson" id="advLesson"></div>
+    <div class="field" style="margin-top:14px"><label>Kundalik eslatma: «bugungi pulingizni kiriting»</label>
+      <select class="select" id="advRemind">${hourOpts}</select>
+    </div>
+    <p class="muted">Qoida: daromadning 50% — zarur xarajatlar (ovqat, uy, kommunal, yo'l), ${wantsPct}% — boshqa xarajatlar (kafe, kiyim, dam olish), ${d.savings_pct}% — jamg'arma.</p>`;
+  renderLesson(d.lesson);
+
+  $("advPct").onclick = async (ev) => {
+    const b = ev.target.closest("[data-pct]");
+    if (!b || Number(b.dataset.pct) === d.savings_pct) return;
+    try {
+      const res = await api("/api/settings", { method: "PATCH", body: { savings_pct: Number(b.dataset.pct) } });
+      Object.assign(state.me, res);
+      haptic();
+      state.advice = await api("/api/advice");
+      renderAdvice();
+    } catch (e) { fail(e); }
+  };
+  $("advRemind").onchange = async (ev) => {
+    const v = ev.target.value;
+    try {
+      const res = await api("/api/settings", { method: "PATCH", body: { reminder_hour: v === "" ? null : Number(v) } });
+      Object.assign(state.me, res);
+      d.reminder_hour = res.reminder_hour;
+      haptic();
+      toast(v === "" ? "Eslatma o'chirildi" : `Har kuni ${v}:00 da eslatiladi`);
+    } catch (e) { fail(e); }
+  };
+  $("advAi").onclick = async () => {
+    const btn = $("advAi");
+    btn.disabled = true;
+    btn.textContent = "🤖 Tahlil qilinmoqda…";
+    try {
+      const res = await api("/api/advice/ai", { method: "POST" });
+      if (!$("advAiOut")) return;
+      $("advAiOut").innerHTML = `<div class="advice-ai">${esc(res.text).replace(/\n/g, "<br>")}</div>`;
+      btn.hidden = true;
+      haptic("ok");
+    } catch (e) {
+      fail(e);
+      btn.disabled = false;
+      btn.textContent = "🤖 Shaxsiy maslahat olish";
+    }
+  };
+}
+
+function renderLesson(index) {
+  const lessons = state.advice.lessons;
+  const i = ((index % lessons.length) + lessons.length) % lessons.length;
+  const box = $("advLesson");
+  if (!box) return;
+  box.innerHTML = `<span class="muted">📚 Saboq ${i + 1}/${lessons.length}</span>${tgHtml(lessons[i])}
+    <button class="secondary" id="advNextLesson">Keyingi saboq ›</button>`;
+  $("advNextLesson").onclick = () => { haptic(); renderLesson(i + 1); };
 }
 
 // --- Pastki oyna -------------------------------------------------------------
@@ -1861,6 +1990,11 @@ function bind() {
   };
 
   $("settingsBtn").onclick = settingsSheet;
+  // Summa kartasini bosganda — maslahat va reja
+  for (const id of ["wHero", "mHero"]) {
+    $(id).onclick = adviceSheet;
+    $(id).onkeydown = (ev) => { if (ev.key === "Enter") adviceSheet(); };
+  }
   $("sheetBackdrop").onclick = closeSheet;
   bindSheetDrag();
 

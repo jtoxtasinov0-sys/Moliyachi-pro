@@ -111,6 +111,37 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .delta.down b { color: #ff9aa7; }
 .hero-range { font-size: 12px; opacity: .6; margin-top: 10px; font-weight: 600; position: relative; }
 
+.hero.tap { cursor: pointer; transition: transform .15s; }
+.hero.tap:active { transform: scale(.985); }
+.hero-tip {
+  position: relative; display: inline-block; margin-top: 12px; padding: 7px 12px; border-radius: 999px;
+  background: rgba(255, 255, 255, .16); font-size: 12.5px; font-weight: 700;
+}
+
+/* --- Maslahat oynasi ------------------------------------------------------ */
+.seg.three { grid-template-columns: repeat(3, 1fr); box-shadow: none; background: var(--bg); margin: 0; }
+.advice-cur { font-size: 13px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 18px 0 8px 4px; }
+.advice-card { background: var(--bg); border-radius: 20px; padding: 14px; margin-bottom: 10px; }
+.advice-card p { margin: 6px 0 0; }
+.advice-income { font-size: 24px; font-weight: 800; letter-spacing: -.01em; margin-top: 2px; }
+.plan-row { background: #fff; border-radius: 16px; padding: 11px 12px; margin-top: 8px; }
+.plan-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14.5px; }
+.plan-head .muted { font-size: 12.5px; }
+.plan-row small { display: block; color: var(--muted); font-weight: 600; font-size: 12.5px; margin-top: 5px; }
+.plan-row .bar { background: var(--bg); }
+.bar.over i { background: linear-gradient(90deg, var(--amber), var(--red)); }
+.bar.save i { background: linear-gradient(90deg, var(--green), #35c98d); }
+.advice-note { background: var(--blue-soft); color: var(--navy); border-radius: 16px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; margin-bottom: 10px; line-height: 1.45; }
+.advice-tips { margin-bottom: 12px; }
+.advice-tips p {
+  margin: 0 0 8px; padding: 11px 13px; border-radius: 16px; background: var(--amber-soft);
+  font-size: 13.5px; font-weight: 600; line-height: 1.45;
+}
+.advice-ai { background: var(--green-soft); border-radius: 18px; padding: 14px; margin-top: 10px; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.advice-lesson { background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 14px; margin-top: 14px; font-size: 14px; line-height: 1.5; }
+.advice-lesson .muted { display: block; margin-bottom: 6px; }
+.advice-lesson .secondary { margin-top: 12px; }
+
 /* --- Kartochkalar --------------------------------------------------------- */
 .card {
   background: var(--card); border-radius: var(--radius); padding: 18px;

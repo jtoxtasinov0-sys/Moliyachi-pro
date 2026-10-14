@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=13">
+  <link rel="stylesheet" href="static/style.css?v=14">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -55,7 +55,7 @@
 
         <!-- Egasining pullari: daromad, xarajat, qarzlar va oxirgi harakatlar -->
         <div id="moneySection" hidden>
-          <div class="hero">
+          <div class="hero tap" id="mHero" role="button" tabindex="0">
             <div class="hero-circle c1"></div>
             <div class="hero-circle c2"></div>
             <div class="hero-label">Pullarim holati · qoldiq</div>
@@ -68,6 +68,7 @@
               <div class="hero-stat"><span id="mOwe">0</span><small>📥 sizning qarzingiz</small></div>
             </div>
             <div class="hero-range" id="mRange"></div>
+            <div class="hero-tip">💡 Maslahat: xarajatga va jamg'armaga qancha ajratish ›</div>
           </div>
 
           <div class="card">
@@ -213,7 +214,7 @@
             <button data-period="month" class="on">Oy</button>
             <button data-period="year">Yil</button>
           </div>
-          <div class="hero">
+          <div class="hero tap" id="wHero" role="button" tabindex="0">
             <div class="hero-circle c1"></div>
             <div class="hero-circle c2"></div>
             <div class="hero-label">Xarajatlar</div>
@@ -225,6 +226,7 @@
             </div>
             <div class="delta" id="wDelta"></div>
             <div class="hero-range" id="wRange"></div>
+            <div class="hero-tip">💡 Maslahat: xarajatga va jamg'armaga qancha ajratish ›</div>
           </div>
 
           <div class="card">
@@ -369,6 +371,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=13"></script>
+  <script src="static/app.js?v=14"></script>
 </body>
 </html>
