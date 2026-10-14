@@ -1,9 +1,12 @@
+import logging
 from html import escape
+from pathlib import Path
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import LinkPreviewOptions, Message
+from aiogram.types import FSInputFile, LinkPreviewOptions, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards as kbs
@@ -14,7 +17,15 @@ from bot.handlers.entries import notify_owner
 from bot.middlewares import Guest, Registered
 from bot.web.auth import WEB_TOKEN_DAYS, make_web_token
 
+log = logging.getLogger(__name__)
+
 router = Router(name="common")
+
+GUIDE_DIR = Path(__file__).resolve().parent.parent / "assets"
+GUIDE_VIDEO = GUIDE_DIR / "qollanma.mp4"
+GUIDE_THUMB = GUIDE_DIR / "qollanma_thumb.jpg"
+# Telegram file_id: bir marta yuklangach, keyingi safar fayl qayta yuborilmaydi
+_guide_file_id: str | None = None
 
 OWNER_HELP = """\
 <b>Qanday ishlatiladi</b>
@@ -86,9 +97,48 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
     await notify_owner(message.bot, session, user.owner_id, f"👷 {escape(user.name)} botga ulandi.")
 
 
+async def send_guide(message: Message, session: AsyncSession, user: User) -> bool:
+    """Egaga qo'llanma videosi. Yuborib bo'lmasa — False (o'rniga matn yuboriladi)."""
+    global _guide_file_id
+    file_id = _guide_file_id or await repo.get_setting(session, user.id, "guide_video_id") or None
+    caption = (
+        f"Assalomu alaykum, <b>{escape(user.name)}</b>! 👋\n\n"
+        "🎬 <b>Moliyachi qo'llanmasi</b> — 2 daqiqada: modellar, ishchilar, ishni kiritish, "
+        "tasdiqlash, ish haqi hisobi va hisobot.\n\n"
+        "Boshlash uchun 🎙 ovozli xabar yuboring. Batafsil yozma qo'llanma — «❓ Yordam»."
+    )
+    attempts = ([file_id] if file_id else []) + ([None] if GUIDE_VIDEO.exists() else [])
+    for attempt in attempts:
+        if attempt is None:
+            await message.bot.send_chat_action(message.chat.id, "upload_video")
+        video = attempt or FSInputFile(GUIDE_VIDEO, filename="moliyachi-qollanma.mp4")
+        try:
+            sent = await message.answer_video(
+                video,
+                caption=caption,
+                width=720,
+                height=1280,
+                duration=133,
+                supports_streaming=True,
+                thumbnail=FSInputFile(GUIDE_THUMB) if attempt is None and GUIDE_THUMB.exists() else None,
+                reply_markup=kbs.main_menu(user),
+            )
+        except TelegramAPIError:
+            # Eskirgan file_id bo'lsa — faylni qayta yuklab ko'ramiz
+            log.warning("Qo'llanma videosi yuborilmadi (file_id=%s)", bool(attempt), exc_info=True)
+            continue
+        if sent.video and sent.video.file_id != file_id:
+            _guide_file_id = sent.video.file_id
+            await repo.set_setting(session, user.id, "guide_video_id", _guide_file_id)
+        return True
+    return False
+
+
 @router.message(CommandStart(), Registered())
-async def start(message: Message, state: FSMContext, user: User) -> None:
+async def start(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
+    if user.is_owner and await send_guide(message, session, user):
+        return
     help_text = OWNER_HELP if user.is_owner else WORKER_HELP
     await message.answer(f"Assalomu alaykum, <b>{escape(user.name)}</b>!\n\n{help_text}", reply_markup=kbs.main_menu(user))
 

@@ -47,6 +47,8 @@ DEFAULT_SETTINGS = {
     "reminder_hour": "21",
     # Eslatma oxirgi marta yuborilgan sana (YYYY-MM-DD) — bir kunda ikki marta yubormaslik uchun
     "reminder_sent": "",
+    # Qo'llanma videosining Telegram file_id si — har safar qayta yuklamaslik uchun
+    "guide_video_id": "",
 }
 
 
