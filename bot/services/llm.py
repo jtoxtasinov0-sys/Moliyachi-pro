@@ -2,6 +2,7 @@
 import base64
 import json
 import logging
+from contextvars import ContextVar
 from datetime import date
 from typing import Literal
 
@@ -18,6 +19,32 @@ client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retrie
 
 class LlmError(Exception):
     pass
+
+
+# --- Xarajat hisobi ---------------------------------------------------------
+
+# Dollar / 1 million token: (kirish, chiqish). Ro'yxatda yo'q model — Sonnet narxi bilan hisoblanadi
+PRICES = {
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+# Joriy so'rovda Claude'ga ketgan pul (dollarning milliondan bir ulushi) — bot/billing.py o'qiydi
+spent_micro: ContextVar[int] = ContextVar("llm_spent_micro", default=0)
+
+
+def _track(model: str, usage) -> None:
+    price_in, price_out = PRICES.get(model, PRICES["claude-sonnet-5-5"])
+    tokens_in = (
+        usage.input_tokens
+        + (usage.cache_creation_input_tokens or 0) * 1.25
+        + (usage.cache_read_input_tokens or 0) * 0.1
+    )
+    # $ / 1M token × token = mikrodollar
+    spent_micro.set(spent_micro.get() + int(tokens_in * price_in + usage.output_tokens * price_out))
 
 
 # --- Javob sxemasi ----------------------------------------------------------
@@ -196,6 +223,7 @@ async def _call(
         log.exception("Claude javobini o'qib bo'lmadi")
         raise LlmError(str(e)) from e
 
+    _track(settings.llm_model, response.usage)
     if response.stop_reason == "refusal" or response.parsed_output is None:
         log.warning("Claude javob bermadi: stop_reason=%s", response.stop_reason)
         raise LlmError(f"stop_reason={response.stop_reason}")
@@ -351,6 +379,7 @@ async def advise(context: str) -> str:
     except anthropic.APIError as e:
         log.exception("Claude API xatosi (maslahat)")
         raise LlmError(str(e)) from e
+    _track(settings.llm_advice_model, response.usage)
     text = "".join(block.text for block in response.content if block.type == "text").strip()
     if response.stop_reason == "refusal" or not text:
         log.warning("Claude maslahat bermadi: stop_reason=%s", response.stop_reason)

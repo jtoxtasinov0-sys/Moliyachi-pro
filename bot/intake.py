@@ -12,7 +12,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import advisor, drafts
+from bot import advisor, billing, drafts
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ClientKind, EntryStatus, User
@@ -45,10 +45,13 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
     correcting = draft is not None and not drafts.is_stale(draft)
     known, worker_name, set_size, info = await _context(session, user)
     try:
-        if correcting:
-            ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
-        else:
-            ext = await llm.extract(text, today(), known, worker_name, info)
+        async with billing.metered(session, user, requests=1):
+            if correcting:
+                ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
+            else:
+                ext = await llm.extract(text, today(), known, worker_name, info)
+    except billing.QuotaError as e:
+        raise IntakeError(e.message)
     except llm.LlmError:
         raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
 
@@ -68,11 +71,15 @@ async def analyze_images(session: AsyncSession, user: User, images: list[tuple[b
     """Bank skrinshoti, chek yoki daftar rasmidan yangi qoralama. images — (rasm, media turi)."""
     caption = caption.strip()[:500]
     known, worker_name, set_size, info = await _context(session, user)
+    images = images[:MAX_IMAGES]
     try:
-        ext = await llm.extract_images(images[:MAX_IMAGES], today(), known, worker_name, info, caption)
+        async with billing.metered(session, user, images=len(images)):
+            ext = await llm.extract_images(images, today(), known, worker_name, info, caption)
+    except billing.QuotaError as e:
+        raise IntakeError(e.message)
     except llm.LlmError:
         raise IntakeError("⚠️ Rasmni o'qib bo'lmadi. Birozdan keyin qayta yuboring yoki matn bilan yozing.")
-    label = "🖼 Rasm" if len(images) == 1 else f"🖼 {min(len(images), MAX_IMAGES)} ta rasm"
+    label = "🖼 Rasm" if len(images) == 1 else f"🖼 {len(images)} ta rasm"
     raw = f"{label}: {caption}" if caption else label
     return await _build(session, user, ext, raw, set_size, said=f"<i>{escape(raw)}</i>", source="image")
 

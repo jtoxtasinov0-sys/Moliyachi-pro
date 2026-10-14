@@ -17,7 +17,9 @@ services:
       # Quyidagilar Render saytida qo'lda kiritiladi (GitHub ga tushmaydi)
       - key: BOT_TOKEN
         sync: false
-      - key: OWNER_TG_ID
+      - key: OWNER_TG_ID  # bosh admin
+        sync: false
+      - key: ADMIN_CONTACT  # ixtiyoriy: @username yoki telefon
         sync: false
       - key: DATABASE_URL
         sync: false

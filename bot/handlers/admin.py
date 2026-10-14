@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot import billing
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ItemModel, User
@@ -66,7 +67,12 @@ async def workers(message: Message, state: FSMContext, session: AsyncSession, us
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "add"))
-async def worker_add(call: CallbackQuery, state: FSMContext) -> None:
+async def worker_add(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
+    limit = await billing.worker_limit_error(session, user)
+    if limit:
+        await call.message.answer(f"⛔ {limit}")
+        await call.answer()
+        return
     await state.set_state(AdminSG.worker_name)
     await call.message.answer("Yangi ishchining ismini yozing (masalan: <i>Alisher</i>):")
     await call.answer()
@@ -77,6 +83,11 @@ async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session
     name = message.text.strip()[:100]
     if not name or name.startswith("/"):
         await message.answer("Ism bo'sh bo'lmasin. Qaytadan yozing:")
+        return
+    limit = await billing.worker_limit_error(session, user)
+    if limit:
+        await state.clear()
+        await message.answer(f"⛔ {limit}")
         return
     worker = await repo.create_worker(session, user.id, name)
     await state.clear()
@@ -108,6 +119,11 @@ async def worker_toggle(call: CallbackQuery, callback_data: kbs.WorkerCb, sessio
     if worker is None:
         await call.answer()
         return
+    if not worker.is_active:
+        limit = await billing.worker_limit_error(session, user)
+        if limit:
+            await call.answer(re.sub(r"<[^>]+>", "", limit)[:200], show_alert=True)
+            return
     worker.is_active = not worker.is_active
     await session.flush()
     text, kb = await _workers_view(session, user.id)

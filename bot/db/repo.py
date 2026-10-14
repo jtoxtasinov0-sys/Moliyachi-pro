@@ -23,6 +23,7 @@ from bot.db.models import (
     PersonalEntry,
     Role,
     Setting,
+    Usage,
     User,
     WorkEntry,
 )
@@ -49,6 +50,8 @@ DEFAULT_SETTINGS = {
     "reminder_sent": "",
     # Qo'llanma videosining Telegram file_id si — har safar qayta yuklamaslik uchun
     "guide_video_id": "",
+    # Obuna tugashi haqidagi oxirgi ogohlantirish ("2026-11-14:soon") — qayta yubormaslik uchun
+    "sub_notice": "",
 }
 
 
@@ -173,6 +176,47 @@ async def link_invite(session: AsyncSession, token: str, tg_id: int) -> User | N
     user.invite_token = None
     await session.flush()
     return user
+
+
+async def create_owner(session: AsyncSession, name: str, plan: str | None) -> User:
+    """Bosh admin qo'shgan ega: taklif havolasi orqali ulanadi, muddat ulangan kundan boshlanadi."""
+    user = User(name=name, role=Role.OWNER, plan=plan, invite_token=secrets.token_urlsafe(12))
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def list_owners(session: AsyncSession) -> list[User]:
+    return list(await session.scalars(select(User).where(User.role == Role.OWNER).order_by(User.id)))
+
+
+async def count_workers(session: AsyncSession, owner_id: int) -> int:
+    return await session.scalar(
+        select(func.count()).select_from(User).where(
+            User.role == Role.WORKER, User.owner_id == owner_id, User.is_active.is_(True)
+        )
+    )
+
+
+async def get_usage(session: AsyncSession, owner_id: int, month: str) -> Usage:
+    """Oylik sarf; yozuv bo'lmasa — bazaga qo'shilmagan bo'sh Usage."""
+    row = await session.get(Usage, (owner_id, month))
+    return row or Usage(owner_id=owner_id, month=month, requests=0, images=0, voice_sec=0, cost_micro=0)
+
+
+async def add_usage(
+    session: AsyncSession, owner_id: int, month: str, *, requests: int = 0, images: int = 0,
+    voice_sec: int = 0, cost_micro: int = 0,
+) -> None:
+    row = await session.get(Usage, (owner_id, month))
+    if row is None:
+        row = Usage(owner_id=owner_id, month=month, requests=0, images=0, voice_sec=0, cost_micro=0)
+        session.add(row)
+    row.requests += requests
+    row.images += images
+    row.voice_sec += voice_sec
+    row.cost_micro += cost_micro
+    await session.flush()
 
 
 async def list_workers(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[User]:

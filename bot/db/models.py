@@ -49,8 +49,12 @@ class User(Base):
     # Ishchi qaysi egaga tegishli (egada — bo'sh)
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    # Ishchi taklif havolasi orqali ulanmaguncha shu token saqlanadi
+    # Ishchi (yoki bosh admin qo'shgan ega) taklif havolasi orqali ulanmaguncha shu token saqlanadi
     invite_token: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # Faqat egada (bosh admin qo'shgan): tarif (bot/billing.py PLANS) va to'langan oxirgi kun.
+    # Bo'sh — cheklovsiz / muddatsiz
+    plan: Mapped[str | None] = mapped_column(String(20))
+    paid_until: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property
@@ -97,6 +101,20 @@ class Setting(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class Usage(Base):
+    """Kabinetning oylik sarfi: AI so'rovlar, rasmlar, ovoz va API xarajati."""
+
+    __tablename__ = "usage"
+
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    month: Mapped[str] = mapped_column(String(7), primary_key=True)  # YYYY-MM
+    requests: Mapped[int] = mapped_column(default=0)
+    images: Mapped[int] = mapped_column(default=0)
+    voice_sec: Mapped[int] = mapped_column(default=0)
+    # Claude va ElevenLabs xarajati, dollarning milliondan bir ulushida
+    cost_micro: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 # --- 1. Ishchilar -----------------------------------------------------------

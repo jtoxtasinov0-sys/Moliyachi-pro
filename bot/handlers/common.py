@@ -9,11 +9,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile, LinkPreviewOptions, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot import billing
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.models import User
 from bot.handlers.entries import notify_owner
+from bot.handlers.owners import tell
 from bot.middlewares import Guest, Registered
 from bot.web.auth import WEB_TOKEN_DAYS, make_web_token
 
@@ -89,6 +91,19 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
     user = await repo.link_invite(session, args.removeprefix("inv_"), message.from_user.id)
     if user is None:
         await message.answer("Bu havola eskirgan yoki allaqachon ishlatilgan. Egasidan yangisini so'rang.")
+        return
+    if user.is_owner:
+        billing.start_on_link(user)
+        until = f" Obuna {user.paid_until.strftime('%d.%m.%Y')} gacha." if user.paid_until else ""
+        await message.answer(
+            f"Xush kelibsiz, <b>{escape(user.name)}</b>! Sizning alohida kabinetingiz ochildi.{until}\n"
+            "Ishchilaringizni «👷 Ishchilar» bo'limidan o'zingiz qo'shasiz. Tarif va limitlar: /obuna",
+            reply_markup=kbs.main_menu(user),
+        )
+        if not await send_guide(message, session, user):
+            await message.answer(OWNER_HELP, reply_markup=kbs.main_menu(user))
+        for admin_id in settings.owner_ids:
+            await tell(message.bot, admin_id, f"👤 {escape(user.name)} botga ulandi.{until}")
         return
     await message.answer(
         f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{WORKER_HELP}",

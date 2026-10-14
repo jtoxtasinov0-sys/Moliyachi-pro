@@ -19,10 +19,11 @@ BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
 BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
+BTN_OWNERS = "👑 Egalar"
 
 MENU_TEXTS = {
     BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
-    BTN_MODELS, BTN_SETTINGS, BTN_HELP,
+    BTN_MODELS, BTN_SETTINGS, BTN_HELP, BTN_OWNERS,
 }
 
 
@@ -39,6 +40,8 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
         kb.button(text=BTN_WORKERS)
         kb.button(text=BTN_MODELS)
         kb.button(text=BTN_SETTINGS)
+    if settings.is_admin(user.tg_id):
+        kb.button(text=BTN_OWNERS)
     kb.button(text=BTN_HELP)
     kb.adjust(2)
     return kb.as_markup(resize_keyboard=True, input_field_placeholder="Ovoz, matn yoki rasm yuboring")
@@ -102,6 +105,12 @@ class SettingsCb(CallbackData, prefix="s"):
 class WorkerCb(CallbackData, prefix="wk"):
     action: str  # add | link | toggle
     user_id: int = 0
+
+
+class OwnerCb(CallbackData, prefix="ow"):
+    action: str  # list | view | new | newplan | extend | plans | plan | toggle | unlimited | link
+    owner_id: int = 0
+    value: str = ""
 
 
 class ModelCb(CallbackData, prefix="md"):

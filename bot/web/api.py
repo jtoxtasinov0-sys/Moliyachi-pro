@@ -1,11 +1,12 @@
 """Mini App uchun JSON API. Har bir so'rov Telegram initData bilan tasdiqlanadi."""
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-from html import escape
+from html import escape, unescape
 from typing import Awaitable, Callable
 
 from aiogram import Bot
@@ -13,7 +14,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import advisor, drafts, intake
+from bot import advisor, billing, drafts, intake
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
@@ -49,6 +50,11 @@ class ApiError(web.HTTPException):
     def __init__(self, status: int, message: str):
         self.status_code = status
         super().__init__(text=web.json_response({"error": message}).text, content_type="application/json")
+
+
+def _plain(text: str) -> str:
+    """Bot xabaridagi HTML ni oddiy matnga."""
+    return unescape(re.sub(r"<[^>]+>", "", text))
 
 
 def _forbidden() -> ApiError:
@@ -97,6 +103,9 @@ async def _auth(request: web.Request, session: AsyncSession) -> User:
         name = " ".join(filter(None, [tg_user.get("first_name"), tg_user.get("last_name")])) or "Egasi"
         return await repo.ensure_owner(session, tg_id, name)
     user = await repo.get_user_by_tg(session, tg_id)
+    blocked = await billing.access_error(session, user) if user and (user.is_active or user.is_owner) else None
+    if blocked:
+        raise ApiError(403, _plain(blocked))
     if user is None or not user.is_active:
         raise ApiError(403, "Siz ro'yxatda yo'qsiz. Egasidan taklif havolasini so'rang.")
     return user
@@ -389,7 +398,10 @@ async def advice(request: web.Request, session: AsyncSession, user: User) -> web
 @endpoint(owner_only=True)
 async def advice_ai(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     try:
-        text = await llm.advise(await advisor.advice_context(session, user.id))
+        async with billing.metered(session, user, requests=1):
+            text = await llm.advise(await advisor.advice_context(session, user.id))
+    except billing.QuotaError as e:
+        raise ApiError(402, e.message)
     except llm.LlmError:
         raise ApiError(502, "Hozir maslahat tayyorlab bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
     return web.json_response({"text": text})
@@ -506,6 +518,9 @@ async def add_worker(request: web.Request, session: AsyncSession, user: User) ->
     name = str((await _json(request)).get("name") or "").strip()[:100]
     if not name:
         raise ApiError(400, "Ism bo'sh bo'lmasin")
+    limit = await billing.worker_limit_error(session, user)
+    if limit:
+        raise ApiError(402, _plain(limit))
     worker = await repo.create_worker(session, user.id, name)
     return web.json_response(await _worker_json(request, worker, {}))
 
@@ -521,6 +536,10 @@ async def _get_worker(request: web.Request, session: AsyncSession, user: User) -
 @endpoint(owner_only=True)
 async def toggle_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     worker = await _get_worker(request, session, user)
+    if not worker.is_active:
+        limit = await billing.worker_limit_error(session, user)
+        if limit:
+            raise ApiError(402, _plain(limit))
     worker.is_active = not worker.is_active
     await session.flush()
     return web.json_response(await _worker_json(request, worker, await _month_stats(session, user.id)))
@@ -1025,9 +1044,15 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
     if not audio or len(audio) > MAX_AUDIO_BYTES:
         raise ApiError(400, "Ovoz juda uzun yoki bo'sh")
     try:
+        await billing.check(session, user, requests=1)
+    except billing.QuotaError as e:
+        return await _input_state(session, user, notice=e.message)
+    try:
         text = await stt.transcribe(audio, f"voice.{ext}", request.content_type)
     except stt.SttError:
         return await _input_state(session, user, notice="⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta ayting yoki yozing.")
+    # Brauzer ovozi (Opus) — taxminan 4 KB/soniya
+    await billing.record_voice(session, user, max(len(audio) // 4000, 1))
     if not text:
         return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
     return await _analyze(session, user, text, heard=True)

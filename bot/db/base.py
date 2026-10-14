@@ -29,6 +29,10 @@ def _drop_single_owner_schema(conn: Connection) -> None:
 
 # Keyin qo'shilgan ustunlar: jadval avvaldan bo'lsa ALTER TABLE bilan qo'shiladi
 _NEW_COLUMNS = {
+    "users": {
+        "plan": "VARCHAR(20)",
+        "paid_until": "DATE",
+    },
     "client_entries": {
         "product": "VARCHAR(100)",
         "pieces": "INTEGER",

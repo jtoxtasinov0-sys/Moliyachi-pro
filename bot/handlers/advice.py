@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import advisor
+from bot import advisor, billing
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import User
@@ -65,7 +65,11 @@ async def advice_ai(call: CallbackQuery, session: AsyncSession, user: User) -> N
     status = await call.message.answer("🤖 Daromad va xarajatlaringiz tahlil qilinmoqda…")
     context = await advisor.advice_context(session, user.id)
     try:
-        text = await llm.advise(context)
+        async with billing.metered(session, user, requests=1):
+            text = await llm.advise(context)
+    except billing.QuotaError as e:
+        await status.edit_text(e.message)
+        return
     except llm.LlmError:
         await status.edit_text("⚠️ Hozir maslahat tayyorlab bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
         return

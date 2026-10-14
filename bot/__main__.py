@@ -54,6 +54,7 @@ async def main() -> None:
             BotCommand(command="oxirgi", description="Oxirgi yozuvlar"),
             BotCommand(command="maslahat", description="Moliyaviy maslahat va reja"),
             BotCommand(command="web", description="Ilovani brauzerda ochish"),
+            BotCommand(command="obuna", description="Tarif, muddat va limitlar"),
             BotCommand(command="yordam", description="Yordam"),
         ]
     )

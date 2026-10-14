@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts, intake
+from bot import billing, drafts, intake
 from bot import keyboards as kbs
 from bot.db.models import User
 from bot.middlewares import Registered
@@ -36,6 +36,12 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
         await message.answer("Ovozli xabar juda uzun (5 daqiqagacha bo'lsin).")
         return
 
+    try:
+        await billing.check(session, user, requests=1)
+    except billing.QuotaError as e:
+        await message.answer(e.message)
+        return
+
     status = await message.answer("🎧 Eshitilmoqda…")
     try:
         buf = await bot.download(media)
@@ -43,6 +49,7 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
     except stt.SttError:
         await status.edit_text("⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta yuboring yoki matn bilan yozing.")
         return
+    await billing.record_voice(session, user, media.duration or 0)
 
     if not text:
         await status.edit_text("🤷 Ovozda gap eshitilmadi. Qayta yuboring.")

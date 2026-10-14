@@ -10,8 +10,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bot_token: str
-    # Bir nechta ega bo'lsa — vergul bilan: 111,222
+    # Bosh admin(lar): boshqa egalarni qo'shadi, obuna va limitlarni boshqaradi. Bir nechta — vergul bilan: 111,222
     owner_tg_id: str
+    # Obuna tugaganda egaga ko'rsatiladigan aloqa: @username yoki telefon
+    admin_contact: str = ""
+    # Xarajatni so'mda ko'rsatish uchun dollar kursi
+    usd_rate: int = 12000
     database_url: str = "sqlite+aiosqlite:///moliyachi.db"
 
     elevenlabs_api_key: str
@@ -40,6 +44,9 @@ class Settings(BaseSettings):
     @property
     def owner_ids(self) -> tuple[int, ...]:
         return tuple(int(part) for part in self.owner_tg_id.split(","))
+
+    def is_admin(self, tg_id: int | None) -> bool:
+        return tg_id is not None and tg_id in self.owner_ids
 
     @property
     def tz(self) -> ZoneInfo:
