@@ -1,0 +1,3 @@
+{"assets":[{"path":"assets/images/icon.png","source":"bot/web/static/icons/icon-512.png (project's own app icon)","license":"own","use":"final"},
+{"path":"fonts: Inter / Inter Display (system)","license":"SIL OFL 1.1","use":"final"},
+{"path":"assets/music/mix.wav","source":"synthesised in scripts/audio.py","license":"own","use":"final"}]}
