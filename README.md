@@ -14,6 +14,19 @@ shu summa) qayta qo'shilmaydi. O'qilgani avval ro'yxat bo'lib ko'rsatiladi va «
 qo'shiladi (xato bo'lsa — «✏️ Tuzatish» yoki «❌ Bekor»). «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash»
 yoqilsa — tasdiqlamasdan darhol qo'shiladi.
 
+**💡 Maslahat (moliyaviy murabbiy):** bot topgan pulingizga qarab uni qanday taqsimlashni ko'rsatadi
+(50/30/20 qoidasi: 50% — zarur xarajatlar, 30% — boshqa xarajatlar, 20% — jamg'arma; jamg'arma ulushi
+10/20/30% tanlanadi), shu oy har bir qism bo'yicha qancha sarflanganini, oy oxirigacha kunlik limitni, zaxira
+fond maqsadini (3–6 oylik xarajat) va qisqa maslahatlarni beradi. Daromad yozilganda — «shu puldan jamg'armaga
+qancha, xarajatga qancha», xarajat yozilganda — qolgan kunlik limit. «📚 Keyingi saboq» — 30 ta qisqa
+moliyaviy saboq, «🤖 Shaxsiy maslahat» — Claude so'nggi oylardagi yozuvlaringizni tahlil qilib maslahat beradi.
+
+**🔔 Kundalik eslatma:** har kuni kechqurun (sukut bo'yicha 21:00, «⚙️ Sozlamalar»da 19–22:00 yoki o'chiq)
+bot «bugun ishlatgan yoki topgan pulingizni kiriting» deb yozadi, bugun nima yozilganini va kunlik limitni
+ko'rsatadi. Render bepul tarifida server uxlab qolmasligi uchun bot har 10 daqiqada o'z `/health` manziliga
+so'rov yuboradi (o'chirish: `KEEP_AWAKE=0`). Bepul tarifda oyiga 750 soat beriladi — bitta doim yoqiq
+xizmatga yetadi (~744 soat).
+
 Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
 xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.
 
@@ -73,6 +86,8 @@ bot/
   services/llm.py    Claude: matn yoki rasm → JSON
   services/matcher.py  o'xshash ismlarni topish
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
+  advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
+  reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)
   handlers/          Telegram handlerlar
   web/server.py      veb-server: Mini App, API, webhook
   web/api.py         Mini App uchun JSON API

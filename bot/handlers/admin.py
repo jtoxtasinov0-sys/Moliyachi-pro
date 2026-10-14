@@ -277,6 +277,7 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
     approval = await repo.require_approval(session, owner_id)
     auto_images = await repo.auto_save_images(session, owner_id)
     enabled = await repo.enabled_currencies(session, owner_id)
+    remind = await repo.reminder_hour(session, owner_id)
     kb = InlineKeyboardBuilder()
     kb.button(
         text=f"{'✅' if approval else '⬜'} Ishchi yozuvlarini tasdiqlash",
@@ -296,7 +297,13 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
             text=f"{'⭐' if code == enabled[0] else '☆'} {code}",
             callback_data=kbs.SettingsCb(action="main", value=code),
         )
-    kb.adjust(1, 1, 3, 3)
+    kb.button(text=f"{'✅ ' if remind is None else ''}🔕 O'chiq", callback_data=kbs.SettingsCb(action="remind", value="off"))
+    for hour in repo.REMINDER_HOURS:
+        kb.button(
+            text=f"{'✅ ' if hour == remind else ''}🔔 {hour}:00",
+            callback_data=kbs.SettingsCb(action="remind", value=str(hour)),
+        )
+    kb.adjust(1, 1, 3, 3, 1 + len(repo.REMINDER_HOURS))
     images_mode = (
         "tasdiqlamasdan darhol hisobga qo'shiladi"
         if auto_images
@@ -307,7 +314,9 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
         f"• 🖼 Bank skrinshoti yoki chek rasmi: {images_mode}\n"
         f"• Valyutalar: {', '.join(enabled)}\n"
-        f"• ⭐ Asosiy valyuta: <b>{enabled[0]}</b> — summa valyutasiz aytilsa shu olinadi"
+        f"• ⭐ Asosiy valyuta: <b>{enabled[0]}</b> — summa valyutasiz aytilsa shu olinadi\n"
+        "• 🔔 Kundalik eslatma («bugungi pulingizni kiriting»): "
+        + (f"har kuni <b>{remind}:00</b> da" if remind is not None else "o'chiq")
     )
     return text, kb.as_markup()
 
@@ -340,6 +349,10 @@ async def settings_toggle(
         else:
             enabled.append(code)
         await repo.set_currencies(session, user.id, enabled)
+    elif callback_data.action == "remind":
+        value = callback_data.value
+        if value == "off" or (value.isdigit() and int(value) in repo.REMINDER_HOURS):
+            await repo.set_setting(session, user.id, "reminder_hour", value)
     elif callback_data.action == "main" and callback_data.value in repo.ALL_CURRENCIES:
         await repo.set_main_currency(session, user.id, callback_data.value)
     text, kb = await _settings_view(session, user.id)

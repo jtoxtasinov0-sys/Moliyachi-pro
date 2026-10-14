@@ -10,6 +10,7 @@ from aiogram.types import BotCommand, ErrorEvent, MenuButtonCommands, MenuButton
 from aiohttp import web
 
 from bot.config import settings
+from bot import reminders
 from bot.db.base import init_db
 from bot.handlers import build_router
 from bot.middlewares import DbUserMiddleware
@@ -51,6 +52,7 @@ async def main() -> None:
             BotCommand(command="start", description="Bosh menyu"),
             BotCommand(command="hisobot", description="Hisobot"),
             BotCommand(command="oxirgi", description="Oxirgi yozuvlar"),
+            BotCommand(command="maslahat", description="Moliyaviy maslahat va reja"),
             BotCommand(command="web", description="Ilovani brauzerda ochish"),
             BotCommand(command="yordam", description="Yordam"),
         ]
@@ -72,6 +74,7 @@ async def main() -> None:
 
     me = await bot.me()
     log.info("Bot ishga tushdi: @%s", me.username)
+    reminder_task = asyncio.create_task(reminders.run(bot))
     try:
         if use_webhook:
             await bot.set_webhook(
@@ -85,6 +88,7 @@ async def main() -> None:
             await bot.delete_webhook()
             await dp.start_polling(bot)
     finally:
+        reminder_task.cancel()
         await runner.cleanup()
         await bot.session.close()
 

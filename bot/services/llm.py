@@ -308,3 +308,47 @@ async def extract_images(
     content.append({"type": "text", "text": text})
     # Ko'p qatorli bank tarixi: aniq o'qish uchun chuqurroq o'ylaydi va uzunroq javob yozadi
     return await _call(content, extra, effort="medium", max_tokens=16000, timeout=180)
+
+
+# --- Shaxsiy moliyaviy maslahat --------------------------------------------
+
+ADVICE_PROMPT = """\
+Sen shaxsiy moliya bo'yicha samimiy va amaliy maslahatchisan. Foydalanuvchiga uning so'nggi oylardagi \
+daromad va xarajatlari (kategoriyalar bo'yicha, [zarur] yoki [boshqa] belgisi bilan), qarzlari va \
+50/30/20 qoidasi bo'yicha joriy oylik reja beriladi (zarur xarajatlar / boshqa xarajatlar / jamg'arma).
+
+Vazifang — shu raqamlarga qarab shaxsiy maslahat berish:
+- qaysi kategoriyada pul ko'p ketyapti va uni oyiga qanchaga kamaytirish mumkin;
+- oyiga qancha jamg'arish kerak, zaxira fond (3–6 oylik xarajat) maqsadi va unga necha oyda yetadi;
+- qarz bo'lsa — uni yopish tartibi;
+- oy oxirigacha kunlik limit.
+
+Qoidalar:
+- O'zbek tilida, lotin yozuvida, sodda va samimiy yoz, "siz" deb murojaat qil.
+- 4–7 ta qisqa band, har biri yangi qatordan "• " bilan boshlansin. Oxirida bitta qisqa rag'batlantiruvchi gap.
+- Aniq summalar bilan yoz. Faqat berilgan raqamlarga tayan, raqam to'qima. Valyutalarni bir-biriga aylantirma.
+- Ma'lumot kam bo'lsa (masalan, daromad yozilmagan) — shuni ayt va nimani yozib borish kerakligini tushuntir.
+- Aniq aksiya, kriptovalyuta yoki moliyaviy mahsulot tavsiya qilma — umumiy tamoyillarni ayt (zaxira fond, \
+bank omonati, qarzni yopish).
+- Markdown, jadval, sarlavha va ** belgilarini ishlatma — oddiy matn. Javob 1200 belgidan oshmasin."""
+
+
+async def advise(context: str) -> str:
+    """Daromad/xarajat ma'lumotiga qarab shaxsiy maslahat (oddiy matn)."""
+    try:
+        response = await client.messages.create(
+            model=settings.llm_advice_model,
+            max_tokens=8000,
+            system=ADVICE_PROMPT,
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": context}],
+            timeout=90,
+        )
+    except anthropic.APIError as e:
+        log.exception("Claude API xatosi (maslahat)")
+        raise LlmError(str(e)) from e
+    text = "".join(block.text for block in response.content if block.type == "text").strip()
+    if response.stop_reason == "refusal" or not text:
+        log.warning("Claude maslahat bermadi: stop_reason=%s", response.stop_reason)
+        raise LlmError(f"stop_reason={response.stop_reason}")
+    return text

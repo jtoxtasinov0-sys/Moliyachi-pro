@@ -12,7 +12,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts
+from bot import advisor, drafts
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ClientKind, EntryStatus, User
@@ -281,6 +281,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
     from bot.handlers.money import debt_text, person_balance, personal_text
 
     cards: list[tuple[str, str, int]] = []
+    personal = []
     for p in draft["personal"]:
         if p.get("dup"):
             continue
@@ -296,6 +297,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             raw_text=draft["raw_text"],
         )
         cards.append((personal_text(e), "p", e.id))
+        personal.append(e)
     people: list[str] = []
     for d in draft["debt"]:
         e = await repo.create_debt_entry(
@@ -323,6 +325,9 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
     balance = [line for person in people for line in await person_balance(session, user.id, person)]
     if balance:
         header += "\n\n" + "\n".join(balance)
+    hint = await advisor.saved_hint(session, user.id, personal)
+    if hint:
+        header += "\n\n" + hint
     last = len(cards) - 1
     return Saved(
         header,

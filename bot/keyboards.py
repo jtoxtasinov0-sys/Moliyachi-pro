@@ -4,6 +4,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 from bot.config import settings
 from bot.db.models import EntryStatus, User, WorkEntry
+from bot.db.repo import SAVINGS_CHOICES
 
 # --- Asosiy menyu -----------------------------------------------------------
 
@@ -12,6 +13,7 @@ BTN_RECENT = "🕘 Oxirgi yozuvlar"
 BTN_EXPENSES = "💸 Xarajatlar"
 BTN_DEBTS = "🤝 Qarzlar"
 BTN_CLIENTS = "🛍 Mijozlar"
+BTN_ADVICE = "💡 Maslahat"
 BTN_PENDING = "⏳ Tasdiq kutayotganlar"
 BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
@@ -19,8 +21,8 @@ BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
-    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_PENDING, BTN_WORKERS, BTN_MODELS,
-    BTN_SETTINGS, BTN_HELP,
+    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
+    BTN_MODELS, BTN_SETTINGS, BTN_HELP,
 }
 
 
@@ -32,6 +34,7 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
         kb.button(text=BTN_CLIENTS)
         kb.button(text=BTN_EXPENSES)
         kb.button(text=BTN_DEBTS)
+        kb.button(text=BTN_ADVICE)
         kb.button(text=BTN_PENDING)
         kb.button(text=BTN_WORKERS)
         kb.button(text=BTN_MODELS)
@@ -86,8 +89,13 @@ class ReportCb(CallbackData, prefix="rep"):
     period: str  # day | week | month
 
 
+class AdviceCb(CallbackData, prefix="adv"):
+    action: str  # show | pct | ai | lesson
+    value: int = 0
+
+
 class SettingsCb(CallbackData, prefix="s"):
-    action: str  # approval | cur | main | autoimg
+    action: str  # approval | cur | main | autoimg | remind
     value: str = ""
 
 
@@ -239,4 +247,32 @@ def debts_kb() -> InlineKeyboardMarkup:
     kb.button(text="🕘 Oxirgi yozuvlar", callback_data=DebtsCb(action="recent"))
     kb.adjust(2)
     add_app_button(kb, "debts")
+    return kb.as_markup()
+
+
+def advice_kb(savings_pct: int, lesson: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for pct in SAVINGS_CHOICES:
+        mark = "✅ " if pct == savings_pct else ""
+        kb.button(text=f"{mark}🏦 {pct}%", callback_data=AdviceCb(action="pct", value=pct))
+    kb.button(text="🤖 Shaxsiy maslahat", callback_data=AdviceCb(action="ai"))
+    kb.button(text="📚 Keyingi saboq", callback_data=AdviceCb(action="lesson", value=lesson + 1))
+    kb.button(text="🔄 Yangilash", callback_data=AdviceCb(action="show"))
+    kb.adjust(len(SAVINGS_CHOICES), 1, 2)
+    add_app_button(kb, "wallet")
+    return kb.as_markup()
+
+
+def lesson_kb(lesson: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📚 Keyingi saboq", callback_data=AdviceCb(action="lesson", value=lesson + 1))
+    kb.button(text="💡 Maslahat", callback_data=AdviceCb(action="show"))
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def reminder_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💡 Maslahat va reja", callback_data=AdviceCb(action="show"))
+    add_app_button(kb, "wallet")
     return kb.as_markup()

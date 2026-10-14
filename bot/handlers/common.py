@@ -43,10 +43,15 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 💸 Xarajatlar — kategoriyalar bo'yicha hisobot
 🛍 Mijozlar — kim qancha mol oldi va qancha qarzi bor
 🤝 Qarzlar — kim kimga qancha qarz
+💡 Maslahat — topgan pulingizdan xarajatga va jamg'armaga qancha ajratish,
+     kunlik limit, moliyaviy saboqlar va shaxsiy maslahat
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
 👷 Ishchilar — qo'shish, taklif havolasi
 🧵 Modellar — qo'shish, narx belgilash
-⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar
+⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
+
+🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
+kiriting» deb eslatadi.
 """
 
 WORKER_HELP = """\

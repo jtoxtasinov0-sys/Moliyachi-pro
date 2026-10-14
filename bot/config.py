@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     # Veb-server (Mini App + webhook). Render PORT va RENDER_EXTERNAL_URL ni o'zi beradi.
     port: int = 8080
     public_url: str | None = Field(default=None, validation_alias=AliasChoices("PUBLIC_URL", "RENDER_EXTERNAL_URL"))
+    # Serverda o'zini uyg'oq ushlab turish (Render bepul tarifi uxlab qolsa, kundalik eslatma kechikadi)
+    keep_awake: bool = True
     # Faqat kompyuterda sinash uchun: Telegramsiz brauzerda ilovani egasi sifatida ochish
     webapp_dev: bool = False
 

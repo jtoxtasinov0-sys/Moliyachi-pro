@@ -41,6 +41,12 @@ DEFAULT_SETTINGS = {
     "set_size": "5",
     # Bank skrinshoti / chek rasmidan o'qilgan xarajatlar «✅ Tasdiqlash» bosilmasdan saqlanadi
     "auto_save_images": "0",
+    # Daromadning necha foizi jamg'armaga ajratiladi (maslahat va byudjet uchun)
+    "savings_pct": "20",
+    # Kundalik eslatma soati (mahalliy vaqt), "off" — o'chiq
+    "reminder_hour": "21",
+    # Eslatma oxirgi marta yuborilgan sana (YYYY-MM-DD) — bir kunda ikki marta yubormaslik uchun
+    "reminder_sent": "",
 }
 
 
@@ -64,6 +70,21 @@ async def require_approval(session: AsyncSession, owner_id: int) -> bool:
 
 async def auto_save_images(session: AsyncSession, owner_id: int) -> bool:
     return await get_setting(session, owner_id, "auto_save_images") == "1"
+
+
+SAVINGS_CHOICES = (10, 20, 30)
+REMINDER_HOURS = (19, 20, 21, 22)
+
+
+async def savings_pct(session: AsyncSession, owner_id: int) -> int:
+    value = await get_setting(session, owner_id, "savings_pct")
+    return int(value) if value.isdigit() and int(value) in SAVINGS_CHOICES else int(DEFAULT_SETTINGS["savings_pct"])
+
+
+async def reminder_hour(session: AsyncSession, owner_id: int) -> int | None:
+    """Kundalik eslatma soati yoki None (o'chiq)."""
+    value = await get_setting(session, owner_id, "reminder_hour")
+    return int(value) if value.isdigit() and 0 <= int(value) <= 23 else None
 
 
 async def enabled_currencies(session: AsyncSession, owner_id: int) -> list[str]:
