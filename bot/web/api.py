@@ -28,6 +28,7 @@ from bot.db.models import (
     User,
     WorkEntry,
 )
+from bot.monitor import report_error, track_api
 from bot.services import llm, stt
 from bot.services.utils import today
 from bot.web.auth import (
@@ -64,8 +65,15 @@ def endpoint(owner_only: bool = False):
                 user = await _auth(request, session)
                 if owner_only and not user.is_owner:
                     raise _forbidden()
-                response = await fn(request, session, user)
+                try:
+                    response = await fn(request, session, user)
+                except web.HTTPException:
+                    raise
+                except Exception as e:
+                    report_error(user.tg_id, e, f"Ilovada ({request.method} {request.path}): ")
+                    raise
                 await session.commit()
+                await track_api(request, user, response)
                 if "new_web_token" in request:
                     response.headers["X-Web-Token-New"] = request["new_web_token"]
                 return response

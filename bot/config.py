@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Faqat kompyuterda sinash uchun: Telegramsiz brauzerda ilovani egasi sifatida ochish
     webapp_dev: bool = False
 
+    # Kuzatuv boti (ixtiyoriy): @BotFather dan alohida bot tokeni. Bo'lsa — foydalanuvchilar nima yozgani,
+    # bot nima javob bergani, ilovada nima qilgani va xatolar shu botga keladi.
+    monitor_bot_token: str | None = None
+    # Kuzatuv botini kim ishlata oladi. Yozilmasa — OWNER_TG_ID dagi birinchi ID
+    admin_tg_id: str | None = None
+
     @field_validator("owner_tg_id")
     @classmethod
     def _check_owner_ids(cls, value: str) -> str:
@@ -37,9 +43,28 @@ class Settings(BaseSettings):
             raise ValueError("OWNER_TG_ID — Telegram ID raqamlari, bir nechta bo'lsa vergul bilan: 111,222")
         return ",".join(ids)
 
+    @field_validator("monitor_bot_token")
+    @classmethod
+    def _empty_token(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
+
+    @field_validator("admin_tg_id")
+    @classmethod
+    def _check_admin_ids(cls, value: str | None) -> str | None:
+        ids = [part.strip() for part in (value or "").split(",") if part.strip()]
+        if not all(part.isdigit() for part in ids):
+            raise ValueError("ADMIN_TG_ID — Telegram ID raqamlari, bir nechta bo'lsa vergul bilan: 111,222")
+        return ",".join(ids) or None
+
     @property
     def owner_ids(self) -> tuple[int, ...]:
         return tuple(int(part) for part in self.owner_tg_id.split(","))
+
+    @property
+    def admin_ids(self) -> tuple[int, ...]:
+        if self.admin_tg_id:
+            return tuple(int(part) for part in self.admin_tg_id.split(","))
+        return self.owner_ids[:1]
 
     @property
     def tz(self) -> ZoneInfo:

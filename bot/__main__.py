@@ -14,6 +14,8 @@ from bot import reminders
 from bot.db.base import init_db
 from bot.handlers import build_router
 from bot.middlewares import DbUserMiddleware
+from bot.monitor import report_error
+from bot.monitor import setup as setup_monitor
 from bot.web.server import WEBHOOK_PATH, build_app
 
 log = logging.getLogger("bot")
@@ -22,13 +24,14 @@ log = logging.getLogger("bot")
 async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     if isinstance(event.exception, TelegramBadRequest) and "message is not modified" in str(event.exception):
         return True  # bir xil tugma ikki marta bosilgan — e'tibor bermaymiz
-    log.exception("Kutilmagan xato", exc_info=event.exception)
     update = event.update
     chat_id = None
     if update.message:
         chat_id = update.message.chat.id
     elif update.callback_query and update.callback_query.message:
         chat_id = update.callback_query.message.chat.id
+    report_error(chat_id, event.exception, "Botda: ")
+    log.exception("Kutilmagan xato", exc_info=event.exception)
     if chat_id:
         try:
             await bot.send_message(chat_id, "⚠️ Xatolik yuz berdi. Qayta urinib ko'ring.")
@@ -66,7 +69,10 @@ async def main() -> None:
 
     # Serverda (HTTPS manzil bor) — webhook; kompyuterda — polling
     use_webhook = bool(settings.webapp_url)
+    monitor = setup_monitor(bot, dp, use_webhook)
     app = build_app(bot, dp, with_webhook=use_webhook)
+    if monitor:
+        monitor.register(app)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", settings.port).start()
@@ -74,6 +80,14 @@ async def main() -> None:
 
     me = await bot.me()
     log.info("Bot ishga tushdi: @%s", me.username)
+    if monitor:
+        try:
+            await monitor.start()
+        except Exception:
+            # Kuzatuv boti ishlamasa ham asosiy bot ishlayversin
+            log.warning("Kuzatuv boti ishga tushmadi — MONITOR_BOT_TOKEN ni tekshiring", exc_info=True)
+            await monitor.stop()
+            monitor = None
     reminder_task = asyncio.create_task(reminders.run(bot))
     try:
         if use_webhook:
@@ -89,6 +103,8 @@ async def main() -> None:
             await dp.start_polling(bot)
     finally:
         reminder_task.cancel()
+        if monitor:
+            await monitor.stop()
         await runner.cleanup()
         await bot.session.close()
 

@@ -29,6 +29,26 @@ ko'rsatadi. Render bepul tarifida server uxlab qolmasligi uchun bot har 10 daqiq
 so'rov yuboradi (o'chirish: `KEEP_AWAKE=0`). Bepul tarifda oyiga 750 soat beriladi — bitta doim yoqiq
 xizmatga yetadi (~744 soat).
 
+**👁 Kuzatuv boti (admin uchun):** botni kimlar qanday ishlatayotganini ko'rish uchun alohida Telegram bot.
+Har bir foydalanuvchi nima yozgani yoki aytgani (ovoz matni bilan), qaysi tugmani bosgani, bot nima deb javob
+bergani, ilovada nima qilgani (ochdi, qaysi bo'limni ko'rdi, nima yozdi/o'chirdi) va xatolar keladi:
+
+- **🔔 Jonli lenta** — bitta odamning suhbati (u yozgani + bot javoblari) ~25 soniya jimlikdan keyin bitta xabar
+  bo'lib keladi; xatolar (Claude/ElevenLabs ishlamay qolgani, bot qulagani, foydalanuvchi botni bloklagani) —
+  darhol. Rejim: «Hammasi» / «Faqat xatolar» / «O'chiq». Har kuni 23:00 da kunlik hisobot.
+- **👥 Foydalanuvchilar** — kim qachon oxirgi marta ishlatgan; har birining profili (harakatlar soni, kiritgan
+  yozuvlari), 💬 suhbat tarixi, 🧾 oxirgi yozuvlari (o'chirganlari ham) va ✉️ unga bot nomidan xabar yozish.
+- **📈 Statistika** — bugun / 7 kun / 30 kun: kim nechta harakat qildi, nechta yozuv saqladi, nechta xato.
+- **⚠️ Xatolar** — oxirgi xatolar.
+
+Tarix bazada (`activity_log`) 90 kun saqlanadi. Sozlash:
+1. @BotFather → `/newbot` — yangi bot oching (masalan «Moliyachi Kuzatuv»), tokenini oling.
+2. Render → xizmat → **Environment** ga qo'shing: `MONITOR_BOT_TOKEN` = shu token, `ADMIN_TG_ID` = sizning
+   Telegram ID (Moliyachi botiga `/id` yozib bilasiz). `ADMIN_TG_ID` yozilmasa — `OWNER_TG_ID` dagi birinchi ID.
+3. Saqlang (Render qayta ishga tushiradi), so'ng yangi botni Telegramda oching va **/start** bosing.
+
+`MONITOR_BOT_TOKEN` bo'lmasa kuzatuv o'chiq — hech narsa yozilmaydi.
+
 Har bir ega (`OWNER_TG_ID` dagi har bir ID) — alohida kabinet: o'z ishchilari, modellari, sozlamalari,
 xarajatlari va qarzlari. Bir ega boshqasining ma'lumotini ko'rmaydi.
 
@@ -90,6 +110,7 @@ bot/
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
   reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)
+  monitor/           kuzatuv boti: harakatlarni yozish (hooks, tracker), statistika, admin boti
   handlers/          Telegram handlerlar
   web/server.py      veb-server: Mini App, API, webhook
   web/api.py         Mini App uchun JSON API

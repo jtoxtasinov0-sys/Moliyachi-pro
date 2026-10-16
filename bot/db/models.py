@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -230,3 +231,46 @@ class DebtEntry(TimestampMixin, Base):
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --- Kuzatuv boti -----------------------------------------------------------
+
+class ActivityKind:
+    # Foydalanuvchidan
+    TEXT = "text"
+    VOICE = "voice"
+    PHOTO = "photo"
+    BUTTON = "button"
+    COMMAND = "command"
+    OTHER = "other"
+    OPEN = "open"  # ilovani ochdi
+    VIEW = "view"  # ilovada bo'limni ko'rdi
+    ACTION = "action"  # ilovada o'zgartirdi/o'chirdi
+    # Botdan
+    REPLY = "reply"
+    ERROR = "error"
+
+
+class ActivityLog(Base):
+    """Kuzatuv boti uchun tarix: kim nima yozdi, bot nima javob berdi, ilovada nima qildi, qanday xato bo'ldi."""
+
+    __tablename__ = "activity_log"
+    __table_args__ = (Index("ix_activity_log_tg_msg", "tg_id", "msg_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    tg_id: Mapped[int | None] = mapped_column(BigInteger)  # tizim xatosida — bo'sh
+    source: Mapped[str] = mapped_column(String(5))  # bot | app
+    kind: Mapped[str] = mapped_column(String(10))  # ActivityKind
+    text: Mapped[str] = mapped_column(Text)
+    # Telegram xabar raqami: bot xabarni tahrirlasa («⏳ Tahlil qilinmoqda…» → qoralama) shu yozuv yangilanadi
+    msg_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class MonitorPref(Base):
+    """Kuzatuv boti sozlamalari (jonli lenta rejimi va h.k.)."""
+
+    __tablename__ = "monitor_prefs"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)

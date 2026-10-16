@@ -12,6 +12,7 @@ from bot import drafts, intake
 from bot import keyboards as kbs
 from bot.db.models import User
 from bot.middlewares import Registered
+from bot.monitor import heard
 from bot.services import stt
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
         await status.edit_text("🤷 Ovozda gap eshitilmadi. Qayta yuboring.")
         return
 
+    heard(message, text)
     await process_text(status, text, state, session, user)
 
 
