@@ -1,4 +1,5 @@
 import hashlib
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///moliyachi.db"
 
     elevenlabs_api_key: str
+    # Ovozni matnga: aisha (VoiceLab, o'zbekchaga ixtisoslashgan) yoki elevenlabs.
+    # Aisha kaliti bo'lmasa yoki u ishlamasa — ElevenLabs.
+    stt_provider: Literal["aisha", "elevenlabs"] = "aisha"
+    aisha_api_key: str | None = None
     anthropic_api_key: str
     llm_model: str = "claude-sonnet-5-5"
     llm_advice_model: str = "claude-sonnet-5-5"
