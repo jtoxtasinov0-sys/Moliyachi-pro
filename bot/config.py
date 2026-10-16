@@ -14,8 +14,10 @@ class Settings(BaseSettings):
     owner_tg_id: str
     database_url: str = "sqlite+aiosqlite:///moliyachi.db"
 
-    # Aisha / VoiceLab: ovozni matnga. Bo'lmasa — bot ishlaydi, faqat ovozli kiritish ishlamaydi
+    # Ovozni matnga: Aisha / VoiceLab (asosiy), ishlamasa — ElevenLabs (zaxira).
+    # Ikkalasi ham bo'lmasa — bot ishlaydi, faqat ovozli kiritish ishlamaydi
     aisha_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
     anthropic_api_key: str
     llm_model: str = "claude-sonnet-5-5"
     llm_advice_model: str = "claude-sonnet-5-5"

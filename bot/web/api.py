@@ -1034,8 +1034,9 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
         raise ApiError(400, "Ovoz juda uzun yoki bo'sh")
     try:
         text = await stt.transcribe(audio, f"voice.{ext}", request.content_type)
-    except stt.SttError:
-        return await _input_state(session, user, notice="⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta ayting yoki yozing.")
+    except stt.SttError as e:
+        notice = e.notice or "⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta ayting yoki yozing."
+        return await _input_state(session, user, notice=notice)
     if not text:
         return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
     return await _analyze(session, user, text, heard=True)

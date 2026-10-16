@@ -43,8 +43,8 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
     try:
         buf = await bot.download(media)
         text = await stt.transcribe(buf.read())
-    except stt.SttError:
-        await status.edit_text("⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta yuboring yoki matn bilan yozing.")
+    except stt.SttError as e:
+        await status.edit_text(e.notice or "⚠️ Ovozni matnga aylantirib bo'lmadi. Qayta yuboring yoki matn bilan yozing.")
         return
 
     if not text:
