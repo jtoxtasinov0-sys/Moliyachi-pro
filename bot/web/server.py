@@ -23,8 +23,11 @@ async def no_cache_html(request: web.Request, handler):
     return response
 
 
-async def _index(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(STATIC_DIR / "index.html")
+async def _index(request: web.Request) -> web.Response:
+    # Havola ulashilganda rasm chiqishi uchun og:image to'liq manzil bo'lishi kerak
+    base = settings.base_url or f"{request.scheme}://{request.host}"
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("{{BASE_URL}}", base)
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _health(request: web.Request) -> web.Response:

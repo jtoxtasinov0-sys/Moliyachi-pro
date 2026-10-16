@@ -40,6 +40,25 @@ async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     return True
 
 
+async def set_profile_texts(bot: Bot) -> None:
+    """Bot havolasi ulashilganda chiqadigan matn (profil "About") va bo'sh chatdagi tavsif."""
+    site = f"\n🌐 {settings.webapp_url}" if settings.webapp_url else ""
+    short = "💰 Shaxsiy moliya yordamchisi: kirim, chiqim, qarzlar va hisobotlar." + site
+    description = (
+        "💰 Moliyachi — shaxsiy moliya yordamchisi.\n\n"
+        "• Kirim va chiqimlarni ovoz yoki matn bilan yozing\n"
+        "• Qarzlarni kuzating\n"
+        "• Grafikli hisobotlarni ilovada ko'ring" + site
+    )
+    try:
+        if (await bot.get_my_short_description()).short_description != short:
+            await bot.set_my_short_description(short_description=short)
+        if (await bot.get_my_description()).description != description:
+            await bot.set_my_description(description=description)
+    except TelegramBadRequest:
+        log.exception("Bot tavsifini o'rnatib bo'lmadi")
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     await init_db()
@@ -60,6 +79,7 @@ async def main() -> None:
             BotCommand(command="yordam", description="Yordam"),
         ]
     )
+    await set_profile_texts(bot)
     if settings.webapp_url:
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(text="📊 Ilova", web_app=WebAppInfo(url=settings.webapp_url))
