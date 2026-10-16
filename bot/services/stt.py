@@ -1,6 +1,7 @@
 """Aisha (VoiceLab): ovozli xabarni matnga aylantirish."""
 import asyncio
 import logging
+import time
 import uuid
 
 import aiohttp
@@ -9,12 +10,12 @@ from bot.config import settings
 
 log = logging.getLogger(__name__)
 
-# Aisha o'zbek tiliga ixtisoslashgan. Javob darhol kelmasa, navbatga qo'yiladi
-# va tayyor bo'lguncha so'rab turiladi.
+# Aisha o'zbek tiliga ixtisoslashgan. Ovoz navbatga qo'yiladi va tayyor bo'lguncha
+# har yarim soniyada so'rab turiladi (ko'pi bilan ~1 daqiqa).
 AISHA_URL = "https://api.voicelab.uz/v1/stt"
 AISHA_TRANSCRIPTIONS_URL = "https://api.voicelab.uz/v1/stt/transcriptions"
-AISHA_POLL_SECONDS = 1.0
-AISHA_MAX_POLLS = 60
+AISHA_POLL_SECONDS = 0.5
+AISHA_MAX_POLLS = 120
 
 
 class SttError(Exception):
@@ -40,16 +41,23 @@ async def _aisha(audio: bytes, filename: str, content_type: str) -> str:
 
     headers = {"Authorization": f"Bearer {settings.aisha_api_key}", "Accept": "application/json"}
     timeout = aiohttp.ClientTimeout(total=90)
+    started = time.monotonic()
     try:
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as http:
             # Bir xil kalit bilan qayta yuborilsa, Aisha ovozni ikkinchi marta hisoblamaydi
             data = await _aisha_json(http.post(AISHA_URL, data=form, headers={"Idempotency-Key": str(uuid.uuid4())}))
-            for _ in range(AISHA_MAX_POLLS):
+            uploaded = time.monotonic()
+            for polls in range(AISHA_MAX_POLLS):
                 status = data.get("status")
                 if status == "failed":
                     error = data.get("error") or {}
                     raise SttError(f"{error.get('code') or 'failed'} {error.get('message') or ''}".strip())
                 if data.get("transcript") is not None and status in (None, "completed"):
+                    done = time.monotonic()
+                    log.info(
+                        "Aisha: %.1f s (yuborish %.1f s, kutish %.1f s, %d marta so'raldi)",
+                        done - started, uploaded - started, done - uploaded, polls,
+                    )
                     return data["transcript"].strip()
                 await asyncio.sleep(AISHA_POLL_SECONDS)
                 data = await _aisha_json(http.get(f"{AISHA_TRANSCRIPTIONS_URL}/{data['id']}"))

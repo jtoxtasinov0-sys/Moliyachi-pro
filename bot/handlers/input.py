@@ -1,6 +1,7 @@
 """Ovoz/matn/rasm -> LLM -> qoralama -> «To'g'rimi?» -> saqlash (mantiq — bot/intake.py da)."""
 import asyncio
 import logging
+from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -22,6 +23,7 @@ router.message.filter(Registered())
 router.callback_query.filter(Registered())
 
 MAX_VOICE_SECONDS = 300
+HEARD_PREVIEW = 300
 
 
 class DraftSG(StatesGroup):
@@ -50,6 +52,9 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
         return
 
     heard(message, text)
+    # Eshitilgani darhol ko'rinsin: tahlil (Claude) bir necha soniya oladi
+    shown = text if len(text) <= HEARD_PREVIEW else text[:HEARD_PREVIEW] + "…"
+    await status.edit_text(f"🎧 «{escape(shown)}»\n\n⏳ Tahlil qilinmoqda…")
     await process_text(status, text, state, session, user)
 
 
