@@ -174,7 +174,7 @@ def report_error(tg_id: int | None, exc: BaseException, where: str = "") -> None
 
 
 class ErrorLogHandler(logging.Handler):
-    """Logdagi har bir xato (ERROR) — kuzatuv botiga: Claude/ElevenLabs xatolari, eslatma yuborilmagani va h.k."""
+    """Logdagi har bir xato (ERROR) — kuzatuv botiga: Claude/Aisha xatolari, eslatma yuborilmagani va h.k."""
 
     def __init__(self) -> None:
         super().__init__(logging.ERROR)

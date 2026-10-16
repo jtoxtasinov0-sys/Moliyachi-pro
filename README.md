@@ -34,7 +34,7 @@ Har bir foydalanuvchi nima yozgani yoki aytgani (ovoz matni bilan), qaysi tugman
 bergani, ilovada nima qilgani (ochdi, qaysi bo'limni ko'rdi, nima yozdi/o'chirdi) va xatolar keladi:
 
 - **🔔 Jonli lenta** — bitta odamning suhbati (u yozgani + bot javoblari) ~25 soniya jimlikdan keyin bitta xabar
-  bo'lib keladi; xatolar (Claude/ElevenLabs ishlamay qolgani, bot qulagani, foydalanuvchi botni bloklagani) —
+  bo'lib keladi; xatolar (Claude/Aisha ishlamay qolgani, bot qulagani, foydalanuvchi botni bloklagani) —
   darhol. Rejim: «Hammasi» / «Faqat xatolar» / «O'chiq». Har kuni 23:00 da kunlik hisobot.
 - **👥 Foydalanuvchilar** — kim qachon oxirgi marta ishlatgan; har birining profili (harakatlar soni, kiritgan
   yozuvlari), 💬 suhbat tarixi, 🧾 oxirgi yozuvlari (o'chirganlari ham) va ✉️ unga bot nomidan xabar yozish.
@@ -66,7 +66,7 @@ pip install -r requirements.txt
 3. `.env.example` faylini `.env` nomi bilan nusxalang va to'ldiring:
    - `BOT_TOKEN` — @BotFather → /newbot
    - `OWNER_TG_ID` — botni ishga tushirib `/id` yozing (yoki @userinfobot). Bir nechta ega bo'lsa — vergul bilan: `111,222`
-   - `ELEVENLABS_API_KEY` — elevenlabs.io → Profile → API Keys (**Speech to Text** ruxsati yoqilgan bo'lsin)
+   - `AISHA_API_KEY` — voicelab.uz → API kalitlari (**Nutqdan matnga** ruxsati yoqilgan bo'lsin)
    - `ANTHROPIC_API_KEY` — console.anthropic.com → API Keys (balansga pul tashlash kerak)
    - `DATABASE_URL` — sinash uchun SQLite qoldiring; serverda PostgreSQL (Neon)
 
@@ -88,7 +88,7 @@ Telegramsiz brauzerda sinash uchun `.env` ga `WEBAPP_DEV=1` qo'shing (serverda h
 - **Render** — bot va Mini App. GitHub repodan avtomatik o'rnatiladi (`render.yaml`).
 
 1. render.com → **New → Blueprint** → GitHub repo ni tanlang.
-2. So'ralgan maxfiy qiymatlarni kiriting: `BOT_TOKEN`, `OWNER_TG_ID`, `DATABASE_URL`, `ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`.
+2. So'ralgan maxfiy qiymatlarni kiriting: `BOT_TOKEN`, `OWNER_TG_ID`, `DATABASE_URL`, `AISHA_API_KEY`, `ANTHROPIC_API_KEY`.
 3. Deploy tugagach bot o'zi webhook va «📊 Ilova» menyu tugmasini sozlaydi.
 
 Render `RENDER_EXTERNAL_URL` ni o'zi beradi. O'z domeningizga o'tsangiz — `PUBLIC_URL=https://sizning-domen.uz` qo'shing.
@@ -104,7 +104,7 @@ bot/
   config.py          .env sozlamalari
   db/models.py       jadvallar (har bir egada alohida kabinet)
   db/repo.py         bazaga so'rovlar
-  services/stt.py    ElevenLabs Scribe
+  services/stt.py    Aisha (VoiceLab): ovoz → matn
   services/llm.py    Claude: matn yoki rasm → JSON
   services/matcher.py  o'xshash ismlarni topish
   drafts.py          qoralama: «To'g'rimi?» kartochkasi

@@ -1,7 +1,7 @@
 """Ovozdan chiqqan ismni bazadagi ism bilan solishtirish.
 
-Scribe ba'zan kirill, ba'zan lotin yozuvida qaytaradi va ismlarni
-biroz buzib yozadi ("Alishir"). Shuning uchun ikkala tomonni bir xil
+Ovoz matni ba'zan kirill, ba'zan lotin yozuvida keladi, ismlar esa
+biroz buzilib yoziladi ("Alishir"). Shuning uchun ikkala tomonni bir xil
 ko'rinishga keltirib, so'ng noaniq (fuzzy) solishtiramiz.
 """
 import re
