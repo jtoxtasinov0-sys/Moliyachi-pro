@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import advisor, drafts
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ClientKind, DebtDirection, EntryStatus, PayKind, User, WorkerPayment
-from bot.services import llm
+from bot.db.models import ClientKind, DebtDirection, EntryStatus, PayKind, User, WorkEntry, WorkerPayment
+from bot.services import llm, matcher
 from bot.services.utils import fmt_money, today
 
 
@@ -125,6 +125,61 @@ def _understood(user: User, ext: llm.Extraction) -> bool:
     return special or (ext.section in ("work", "pay") and bool(ext.work or ext.pays))
 
 
+async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction) -> None:
+    """Qarz deb ajratilgan odam aslida ishchi yoki mijoz bo'lsa (ovozda ism buzilib, Claude tanimay qolgan:
+    «Rabiyaga 500 ming berdim») — ishchi bilan hisob-kitobga yoki mijoz to'loviga o'tkaziladi. Faqat hamma
+    odamlar bitta turga aniq mos kelsa; aks holda qarz bo'lib qoladi."""
+    if not user.is_owner or ext.section not in ("personal", "debt") or ext.personal or not ext.debt:
+        return
+    acc = user.account_id
+    workers = [(w.id, w.name) for w in await repo.list_workers(session, acc)]
+    clients = [(c.id, c.name) for c in await repo.list_clients(session, acc)]
+    if not workers and not clients:
+        return
+    worker_aliases = await repo.get_aliases(session, acc, "worker")
+    client_aliases = await repo.get_aliases(session, acc, "client")
+    found: list[tuple[str, str]] = []
+    for d in ext.debt:
+        if not d.person or d.direction not in (DebtDirection.IN, DebtDirection.OUT):
+            return
+        worker_id = matcher.match(d.person, workers, worker_aliases).exact_id
+        client_id = matcher.match(d.person, clients, client_aliases).exact_id
+        if worker_id is not None and client_id is None:
+            found.append(("worker", dict(workers)[worker_id]))
+        elif client_id is not None and worker_id is None and d.direction == DebtDirection.IN and not d.stated:
+            found.append(("client", dict(clients)[client_id]))
+        else:
+            return
+    if len({kind for kind, _ in found}) != 1:
+        return
+    if found[0][0] == "worker":
+        # Pul: berdim (out) — pay, oldim (in) — return. Qarz holati: «u menga qarzdor» (out) — ishchi qarzdor
+        ext.pays = [
+            llm.PayItem(
+                worker_name=name,
+                kind=PayKind.BALANCE if d.stated else PayKind.PAY if d.direction == DebtDirection.OUT else PayKind.RETURN,
+                amount=d.amount or 0,
+                whole=False,
+                worker_owes=d.stated and d.direction == DebtDirection.OUT,
+                currency=d.currency or "",
+                note=d.note or "",
+                date=d.date or "",
+            )
+            for d, (_, name) in zip(ext.debt, found)
+        ]
+        ext.section = "pay"
+    else:
+        ext.client = [
+            llm.ClientItem(
+                client_name=name, kind=ClientKind.PAYMENT, product=None, sets=None, pieces=None,
+                price_per_set=None, price_per_piece=None, total=d.amount, currency=d.currency, note=d.note,
+            )
+            for d, (_, name) in zip(ext.debt, found)
+        ]
+        ext.section = "client"
+    ext.debt = []
+
+
 async def _build(
     session: AsyncSession,
     user: User,
@@ -135,6 +190,8 @@ async def _build(
     entry_id: int | None = None,
     source: str | None = None,
 ) -> dict:
+    if entry_id is None:
+        await _reroute_debts(session, user, ext)
     if not _understood(user, ext):
         example = (
             "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «A-12 modeldan 50 ta» "
@@ -161,14 +218,16 @@ async def _build(
 
 
 async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
-    """Rasmdan o'qilgan xarajat/daromad va qarz to'liq bo'lsa — «✅ Tasdiqlash» bosilmasdan saqlanadimi."""
-    return (
-        user.is_owner
-        and draft.get("source") == "image"
-        and draft["section"] == "money"
-        and drafts.next_missing(draft) is None
-        and await repo.auto_save_images(session, user.id)
-    )
+    """To'liq qoralama (ishchi, model, mijoz topildi, summa aytildi) «✅ Saqlash» bosilmasdan saqlanadimi.
+
+    Ovoz va matn — «⚙️ Sozlamalar → Darhol saqlash» yoqilgan bo'lsa (sukut bo'yicha yoqiq). Rasmdan o'qilgani —
+    faqat xarajat/daromad va qarz, «Rasmdagi xarajatlarni darhol saqlash» yoqilgan bo'lsa; rasmdagi boshqa
+    yozuvlar har doim «To'g'rimi?» deb so'raladi."""
+    if drafts.next_missing(draft) is not None:
+        return False
+    if draft.get("source") == "image":
+        return user.is_owner and draft["section"] == "money" and await repo.auto_save_images(session, user.id)
+    return await repo.auto_save(session, user.account_id)
 
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
@@ -362,8 +421,9 @@ class Saved:
 
 
 async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
-    """Qoralamani bazaga yozadi. Ishchi yozuvi tasdiq kutsa — egaga xabar yuboriladi."""
-    from bot.handlers.entries import entry_text, notify_owner_pending, pay_text  # aylanma importdan qochish uchun
+    """Qoralamani bazaga yozadi. Ish va pul yozuvi haqida ikkinchi tomonga xabar boradi: egasi yozsa — ishchiga,
+    ishchi yozsa — egasiga (tasdiq kerak bo'lsa tugmalari bilan)."""
+    from bot.handlers.entries import entry_text, pay_text  # aylanma importdan qochish uchun
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
@@ -425,13 +485,18 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if needs_approval and saved:
         header += "\n⏳ Ish yozuvlari egasining tasdig'ini kutmoqda."
-        for entry in saved:
-            await notify_owner_pending(bot, session, entry)
     if any(p.status == EntryStatus.PENDING for p in payments):
         header += "\n⏳ Pul yozuvlari egasining tasdig'ini kutmoqda."
-    if payments:
-        header += "\n\n" + "\n".join(await _balance_lines(session, user, [p.worker for p in payments]))
-        await _notify_payments(bot, session, user, payments)
+    balance = await _balance_lines(session, user, [e.worker for e in saved], [p.worker for p in payments])
+    if balance:
+        header += "\n\n" + "\n".join(balance)
+    edited = bool(draft["entry_id"])
+    if user.is_owner:
+        notified = await _notify_workers(bot, session, user, saved, payments, edited)
+        if notified:
+            header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
+    else:
+        await _notify_owner(bot, session, user, saved, payments, edited)
     cards = [(entry_text(e), kbs.entry_kb(e, user)) for e in saved]
     cards += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in payments]
     if cards:
@@ -441,6 +506,16 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         kb = kbs.pay_entry_kb(last, user, app=True) if payments else kbs.entry_kb(last, user, app=True)
         cards[-1] = (last_text, kb)
     return Saved(header, cards)
+
+
+async def save_auto(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
+    """«✅ Saqlash» bosilmasdan saqlash: qoralama ko'rsatilmagani uchun sarlavhada nima eshitilgani ham bor."""
+    saved = await save(session, bot, user, draft)
+    said = drafts.short_raw(draft)
+    if said:
+        first, _, rest = saved.header.partition("\n")
+        saved.header = "\n".join(part for part in (first, said, rest) if part)
+    return saved
 
 
 async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> WorkerPayment:
@@ -471,37 +546,81 @@ async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> 
     )
 
 
-async def _balance_lines(session: AsyncSession, viewer: User, workers: list[User]) -> list[str]:
-    unique = list({w.id: w for w in workers}.values())
+async def _balance_lines(
+    session: AsyncSession, viewer: User, workers: list[User], paid: list[User]
+) -> list[str]:
+    """Ishchilarning qoldig'i: pul yozilganlarniki — har doim, faqat ish yozilganlarniki — hisob-kitob
+    yuritilsa (pul yoki hisob holati avval yozilgan bo'lsa)."""
+    from bot.handlers.entries import tracked
+
+    unique = list({w.id: w for w in [*workers, *paid]}.values())
+    if not unique:
+        return []
     balances = await repo.worker_balances(session, viewer.account_id, [w.id for w in unique])
+    always = {w.id for w in paid}
     rows = []
     for w in unique:
-        balance = balances[w.id].balance if w.id in balances else {}
-        rows.append(drafts.balance_text(balance, w.name if viewer.is_owner else None))
+        b = balances.get(w.id)
+        if w.id in always or tracked(b):
+            rows.append(drafts.balance_text(b.balance if b else {}, w.name if viewer.is_owner else None))
     return rows
 
 
-async def _notify_payments(bot: Bot, session: AsyncSession, user: User, payments: list[WorkerPayment]) -> None:
-    """Egasi yozsa — ishchiga, ishchi yozsa — egasiga xabar (tasdiq kerak bo'lsa tugmalari bilan)."""
-    from bot.handlers.entries import notify_owner, notify_user, pay_text
+async def _notify_workers(
+    bot: Bot, session: AsyncSession, owner: User, entries: list[WorkEntry], payments: list[WorkerPayment],
+    edited: bool,
+) -> list[str]:
+    """Egasi yozdi: har bir ishchiga uning ishlari va pullari bitta xabarda, yangi qoldig'i bilan.
+    Xabar borgan ishchilar ismi qaytadi (botga ulanmagan yoki botni bloklagan ishchiga xabar bormaydi)."""
+    from bot.handlers.entries import entry_text, notify_user, pay_text, tracked
 
-    if user.is_owner:
-        for e in payments:
-            worker = e.worker
-            if worker.tg_id and worker.is_active and worker.id != user.id:
-                balance = (await repo.worker_balance(session, e.owner_id, worker.id)).balance
-                text = f"🧾 <b>Hisob-kitob</b> (boshlig'ingiz yozdi)\n\n{pay_text(e, worker)}\n\n{drafts.balance_text(balance)}"
-                await notify_user(bot, worker.tg_id, text, kbs.app_kb("ledger"))
-        return
-    owner = await session.get(User, user.owner_id)
+    by_worker: dict[int, tuple[User, list[str]]] = {}
+    for e in entries:
+        by_worker.setdefault(e.worker_id, (e.worker, []))[1].append(entry_text(e))
+    for e in payments:
+        by_worker.setdefault(e.worker_id, (e.worker, []))[1].append(pay_text(e, e.worker))
+    paid = {e.worker_id for e in payments}
+    notified = []
+    for worker_id, (worker, cards) in by_worker.items():
+        if not worker.tg_id or not worker.is_active or worker_id == owner.id:
+            continue
+        title = "✏️ <b>Boshlig'ingiz yozuvni o'zgartirdi</b>" if edited else "🧾 <b>Boshlig'ingiz yozdi</b>"
+        text = title + "\n\n" + "\n\n".join(cards)
+        b = await repo.worker_balance(session, owner.id, worker_id)
+        if worker_id in paid or tracked(b):
+            text += "\n\n" + drafts.balance_text(b.balance)
+        if await notify_user(bot, worker.tg_id, text, kbs.app_kb("ledger")):
+            notified.append(worker.name)
+    return notified
+
+
+async def _notify_owner(
+    bot: Bot, session: AsyncSession, worker: User, entries: list[WorkEntry], payments: list[WorkerPayment],
+    edited: bool,
+) -> None:
+    """Ishchi yozdi: egasiga — tasdiq kutayotgani tugmalari bilan, darhol hisobga kirgani ham xabar bo'lib."""
+    from bot.handlers.entries import entry_text, notify_owner, notify_owner_pending, pay_text
+
+    owner = await session.get(User, worker.owner_id)
     if owner is None:
         return
+    done = []
+    for e in entries:
+        if e.status == EntryStatus.PENDING:
+            await notify_owner_pending(bot, session, e)
+        else:
+            done.append(e)
+    if done:
+        action = "yozuvini o'zgartirdi" if edited else "yozdi"
+        text = f"🧾 <b>{escape(worker.name)} {action}</b>\n\n" + "\n\n".join(entry_text(e) for e in done)
+        markup = kbs.entry_kb(done[0], owner) if len(done) == 1 else kbs.app_kb("entries")
+        await notify_owner(bot, session, owner.id, text, markup=markup)
     for e in payments:
-        balance = (await repo.worker_balance(session, e.owner_id, user.id)).balance
+        balance = (await repo.worker_balance(session, e.owner_id, worker.id)).balance
         title = "🔔 <b>Tasdiq kutmoqda</b>" if e.status == EntryStatus.PENDING else "🧾 <b>Hisob-kitob</b>"
         text = (
-            f"{title} — {escape(user.name)} yozdi\n\n{pay_text(e, owner)}\n\n"
-            f"{drafts.balance_text(balance, user.name)}"
+            f"{title} — {escape(worker.name)} yozdi\n\n{pay_text(e, owner)}\n\n"
+            f"{drafts.balance_text(balance, worker.name)}"
         )
         await notify_owner(bot, session, e.owner_id, text, markup=kbs.pay_entry_kb(e, owner))
 

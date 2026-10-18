@@ -1,4 +1,8 @@
-"""Ovoz/matn/rasm -> LLM -> qoralama -> «To'g'rimi?» -> saqlash (mantiq — bot/intake.py da)."""
+"""Ovoz/matn/rasm -> LLM -> qoralama -> saqlash (mantiq — bot/intake.py da).
+
+Hamma narsa tushunilsa (ishchi, model, mijoz topildi, summa aytildi) — darhol saqlanadi («⚙️ Sozlamalar →
+Darhol saqlash» o'chiq bo'lsa — «To'g'rimi?» deb so'raladi). Yetishmagani bo'lsa — so'raladi, javob berilgach
+saqlanadi."""
 import asyncio
 import logging
 from html import escape
@@ -55,13 +59,13 @@ async def on_voice(message: Message, bot: Bot, state: FSMContext, session: Async
     # Eshitilgani darhol ko'rinsin: tahlil (Claude) bir necha soniya oladi
     shown = text if len(text) <= HEARD_PREVIEW else text[:HEARD_PREVIEW] + "…"
     await status.edit_text(f"🎧 «{escape(shown)}»\n\n⏳ Tahlil qilinmoqda…")
-    await process_text(status, text, state, session, user)
+    await process_text(status, bot, text, state, session, user)
 
 
 @router.message(F.text & ~F.text.startswith("/"))
-async def on_text(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+async def on_text(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
     status = await message.answer("⏳ Tahlil qilinmoqda…")
-    await process_text(status, message.text, state, session, user)
+    await process_text(status, bot, message.text, state, session, user)
 
 
 # --- Rasm: bank ilovasi skrinshoti, chek yoki daftar sahifasi ----------------
@@ -111,6 +115,7 @@ async def on_image(message: Message, bot: Bot, state: FSMContext, session: Async
             await message.answer(f"ℹ️ Bir martada {intake.MAX_IMAGES} tagacha rasm o'qiladi — qolganini alohida yuboring.")
         if await intake.autosave(session, user, draft):
             saved = await intake.save(session, bot, user, draft)
+            await state.clear()
             await send_saved(status, saved, compact=True)
             return
     except intake.IntakeError as e:
@@ -125,14 +130,23 @@ async def on_other(message: Message) -> None:
     await message.answer("Ovozli, matnli xabar yoki rasm (bank skrinshoti, chek) yuboring.")
 
 
-async def process_text(status: Message, text: str, state: FSMContext, session: AsyncSession, user: User) -> None:
+async def process_text(
+    status: Message, bot: Bot, text: str, state: FSMContext, session: AsyncSession, user: User
+) -> None:
     """status — «Eshitilmoqda…» xabari, natija shu xabarga yoziladi."""
     draft = None
     if await state.get_state() == DraftSG.active.state:
         draft = (await state.get_data()).get("draft")
     try:
         new_draft = await intake.analyze(session, user, text, draft)
+        if await intake.autosave(session, user, new_draft):
+            saved = await intake.save_auto(session, bot, user, new_draft)
+            await state.clear()
+            await send_saved(status, saved)
+            return
     except intake.IntakeError as e:
+        if e.drop:
+            await state.clear()
         await status.edit_text(e.message)
         return
     await show_draft(status, new_draft, state, session, user)
@@ -184,10 +198,38 @@ async def _load_draft(call: CallbackQuery, state: FSMContext) -> dict | None:
     return draft
 
 
-async def _show(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User, draft: dict) -> None:
+async def _show(
+    call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User, draft: dict, answered: bool = False
+) -> None:
+    """answered — tugma bilan so'ralgan narsaga javob berildi: endi hammasi to'liq bo'lsa — darhol saqlanadi."""
     await state.update_data(draft=draft)
+    if answered and await intake.autosave(session, user, draft):
+        await _save(call, state, session, user, draft, auto=True)
+        return
     text_out, kb = await drafts.present(session, draft, user)
     await call.message.edit_text(text_out, reply_markup=kb)
+    await call.answer()
+
+
+async def _save(
+    call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User, draft: dict, auto: bool = False
+) -> None:
+    try:
+        if auto:
+            saved = await intake.save_auto(session, call.bot, user, draft)
+        else:
+            saved = await intake.save(session, call.bot, user, draft)
+    except intake.IntakeError as e:
+        if e.drop:
+            await state.clear()
+            await call.message.edit_text(e.message)
+            await call.answer()
+        else:
+            await call.answer(e.message, show_alert=True)
+        return
+
+    await state.clear()
+    await send_saved(call.message, saved, compact=draft.get("source") == "image")
     await call.answer()
 
 
@@ -206,7 +248,7 @@ async def on_resolve(
     if not changed:
         await call.answer()
         return
-    await _show(call, state, session, user, draft)
+    await _show(call, state, session, user, draft, answered=True)
 
 
 @router.callback_query(kbs.DraftCb.filter(F.action == "cancel"))
@@ -249,7 +291,7 @@ async def on_debt_direction(
     if not intake.set_direction(draft, callback_data):
         await call.answer()
         return
-    await _show(call, state, session, user, draft)
+    await _show(call, state, session, user, draft, answered=True)
 
 
 @router.callback_query(kbs.PayKindCb.filter())
@@ -263,7 +305,7 @@ async def on_pay_kind(
         await call.answer()
         return
     await drafts.resolve(session, draft, user)
-    await _show(call, state, session, user, draft)
+    await _show(call, state, session, user, draft, answered=True)
 
 
 @router.callback_query(kbs.DraftCb.filter(F.action == "asdebt"))
@@ -275,7 +317,7 @@ async def on_as_debt(call: CallbackQuery, state: FSMContext, session: AsyncSessi
         await call.answer()
         return
     await drafts.resolve(session, draft, user)
-    await _show(call, state, session, user, draft)
+    await _show(call, state, session, user, draft, answered=True)
 
 
 @router.callback_query(kbs.ClientKindCb.filter())
@@ -288,7 +330,7 @@ async def on_client_kind(
     if not intake.set_client_kind(draft, callback_data):
         await call.answer()
         return
-    await _show(call, state, session, user, draft)
+    await _show(call, state, session, user, draft, answered=True)
 
 
 @router.callback_query(kbs.DraftCb.filter(F.action.in_({"today", "yesterday"})))
@@ -309,17 +351,4 @@ async def on_save(call: CallbackQuery, state: FSMContext, session: AsyncSession,
     draft = await _load_draft(call, state)
     if draft is None:
         return
-    try:
-        saved = await intake.save(session, call.bot, user, draft)
-    except intake.IntakeError as e:
-        if e.drop:
-            await state.clear()
-            await call.message.edit_text(e.message)
-            await call.answer()
-        else:
-            await call.answer(e.message, show_alert=True)
-        return
-
-    await state.clear()
-    await send_saved(call.message, saved, compact=draft.get("source") == "image")
-    await call.answer()
+    await _save(call, state, session, user, draft)

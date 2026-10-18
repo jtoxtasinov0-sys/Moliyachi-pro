@@ -783,7 +783,7 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
     return None
 
 
-def _short_raw(draft: dict) -> str | None:
+def short_raw(draft: dict) -> str | None:
     raw = draft.get("raw_text") or ""
     if not raw:
         return None
@@ -805,7 +805,7 @@ def _render(draft: dict, owner: bool = True) -> str:
     else:
         title = "📝 <b>Ish topshirish</b>"
     parts = [title]
-    if raw := _short_raw(draft):
+    if raw := short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
 
@@ -963,7 +963,7 @@ MAX_DUP_ROWS = 5
 
 def _render_money(draft: dict) -> str:
     parts = ["📝 <b>Yangi yozuv</b>"]
-    if raw := _short_raw(draft):
+    if raw := short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
 
@@ -1061,7 +1061,7 @@ def material_line(
 
 def _render_material(draft: dict) -> str:
     parts = ["🧱 <b>Xom ashyo</b>"]
-    if raw := _short_raw(draft):
+    if raw := short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
     rows = []
@@ -1099,7 +1099,7 @@ async def _job_options(session: AsyncSession, acc: int, query: str) -> list[tupl
 
 def _render_price(draft: dict) -> str:
     parts = ["💰 <b>Ish haqi narxi</b> (bir dona uchun)"]
-    if raw := _short_raw(draft):
+    if raw := short_raw(draft):
         parts.append(raw)
     rows = []
     for p in draft["prices"]:
@@ -1212,7 +1212,7 @@ def _client_who(c: dict) -> str:
 
 def _render_client(draft: dict) -> str:
     parts = ["📝 <b>Mijoz bilan oldi-berdi</b>"]
-    if raw := _short_raw(draft):
+    if raw := short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
     items = draft["client"]

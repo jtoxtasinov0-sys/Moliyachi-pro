@@ -305,6 +305,7 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "require_approval": await repo.require_approval(session, user.account_id),
             "require_pay_approval": await repo.require_pay_approval(session, user.account_id),
             "set_size": await repo.set_size(session, user.account_id),
+            "auto_save": await repo.auto_save(session, user.account_id),
             "auto_save_images": await repo.auto_save_images(session, user.account_id),
             "savings_pct": await repo.savings_pct(session, user.account_id),
             "reminder_hour": await repo.reminder_hour(session, user.account_id),
@@ -359,6 +360,8 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
         await repo.set_setting(
             session, user.id, "require_pay_approval", "1" if data["require_pay_approval"] else "0"
         )
+    if "auto_save" in data:
+        await repo.set_setting(session, user.id, "auto_save", "1" if data["auto_save"] else "0")
     if "auto_save_images" in data:
         await repo.set_setting(session, user.id, "auto_save_images", "1" if data["auto_save_images"] else "0")
     if "currencies" in data:
@@ -393,6 +396,7 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
             "require_approval": await repo.require_approval(session, user.id),
             "require_pay_approval": await repo.require_pay_approval(session, user.id),
             "set_size": await repo.set_size(session, user.id),
+            "auto_save": await repo.auto_save(session, user.id),
             "auto_save_images": await repo.auto_save_images(session, user.id),
             "savings_pct": await repo.savings_pct(session, user.id),
             "reminder_hour": await repo.reminder_hour(session, user.id),
@@ -1399,8 +1403,9 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     return web.json_response({"items": page, "has_more": len(items) > offset + limit})
 
 
-# --- Ilova ichida yozish: ovoz/matn/rasm -> qoralama -> «To'g'rimi?» -> saqlash ---
-# Qoralama bot chatidagidek ishlaydi (bot/intake.py), faqat server xotirasida saqlanadi.
+# --- Ilova ichida yozish: ovoz/matn/rasm -> qoralama -> saqlash ---
+# Qoralama bot chatidagidek ishlaydi (bot/intake.py), faqat server xotirasida saqlanadi: hammasi tushunilsa —
+# darhol saqlanadi, yetishmagani bo'lsa — so'raladi.
 
 _drafts: dict[int, dict] = {}
 
@@ -1419,6 +1424,10 @@ def _current_draft(user: User) -> dict | None:
     return draft
 
 
+def _saved_html(saved: intake.Saved) -> str:
+    return "\n\n".join([saved.header, *(text for text, _ in saved.cards)])
+
+
 def _buttons(kb: InlineKeyboardMarkup) -> list[list[dict]]:
     return [[{"text": b.text, "data": b.callback_data} for b in row if b.callback_data] for row in kb.inline_keyboard]
 
@@ -1434,16 +1443,28 @@ async def _input_state(session: AsyncSession, user: User, **extra) -> web.Respon
 
 
 async def _analyze(
-    session: AsyncSession, user: User, text: str, heard: bool = False, worker: User | None = None
+    request: web.Request,
+    session: AsyncSession,
+    user: User,
+    text: str,
+    heard: bool = False,
+    worker: User | None = None,
 ) -> web.Response:
     text = text.strip()[:2000]
     if not text:
         raise ApiError(400, "Matn bo'sh")
     extra = {"heard": text} if heard else {}
     try:
-        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user), worker)
+        draft = await intake.analyze(session, user, text, _current_draft(user), worker)
+        if await intake.autosave(session, user, draft):
+            saved = await intake.save_auto(session, request.app["bot"], user, draft)
+            _drafts.pop(user.id, None)
+            return await _input_state(session, user, saved=_saved_html(saved), **extra)
     except intake.IntakeError as e:
+        if e.drop:
+            _drafts.pop(user.id, None)
         return await _input_state(session, user, notice=e.message, **extra)
+    _drafts[user.id] = draft
     return await _input_state(session, user, **extra)
 
 
@@ -1465,7 +1486,9 @@ async def input_text(request: web.Request, session: AsyncSession, user: User) ->
     worker = None
     if user.is_owner and data.get("worker_id") is not None:
         worker = await _ledger_worker(request, session, user, data["worker_id"])
-    return await _analyze(session, user, str(data.get("text") or ""), heard=bool(data.get("heard")), worker=worker)
+    return await _analyze(
+        request, session, user, str(data.get("text") or ""), heard=bool(data.get("heard")), worker=worker
+    )
 
 
 @routes.post("/api/input/voice")
@@ -1488,7 +1511,7 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
         return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
     if request.query.get("only") == "heard":
         return web.json_response({"heard": text})
-    return await _analyze(session, user, text, heard=True)
+    return await _analyze(request, session, user, text, heard=True)
 
 
 @routes.post("/api/input/image")
@@ -1512,7 +1535,8 @@ async def input_image(request: web.Request, session: AsyncSession, user: User) -
         draft = await intake.analyze_images(session, user, images, str(form.get("caption") or ""))
         if await intake.autosave(session, user, draft):
             saved = await intake.save(session, request.app["bot"], user, draft)
-            return await _input_state(session, user, saved="\n\n".join([saved.header, *(text for text, _ in saved.cards)]))
+            _drafts.pop(user.id, None)
+            return await _input_state(session, user, saved=_saved_html(saved))
     except intake.IntakeError as e:
         return await _input_state(session, user, notice=e.message)
     _drafts[user.id] = draft
@@ -1533,14 +1557,16 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
 
     try:
         prefix = value.split(":", 1)[0]
+        # So'ralgan narsaga javob berildi: endi hammasi to'liq bo'lsa — darhol saqlanadi
+        answered = False
         if prefix == kbs.ResolveCb.__prefix__:
-            await intake.choose(session, user, draft, kbs.ResolveCb.unpack(value))
+            answered = await intake.choose(session, user, draft, kbs.ResolveCb.unpack(value))
         elif prefix == kbs.DebtDirCb.__prefix__:
-            intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
+            answered = intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
         elif prefix == kbs.ClientKindCb.__prefix__:
-            intake.set_client_kind(draft, kbs.ClientKindCb.unpack(value))
+            answered = intake.set_client_kind(draft, kbs.ClientKindCb.unpack(value))
         elif prefix == kbs.PayKindCb.__prefix__:
-            if intake.set_pay_kind(draft, kbs.PayKindCb.unpack(value)):
+            if answered := intake.set_pay_kind(draft, kbs.PayKindCb.unpack(value)):
                 await drafts.resolve(session, draft, user)
         elif prefix == kbs.DraftCb.__prefix__:
             action = kbs.DraftCb.unpack(value).action
@@ -1548,13 +1574,16 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
                 if not intake.set_date(draft, action):
                     return await _input_state(session, user, notice="Sana o'zgarmadi.")
             elif action == "asdebt":
-                if intake.pays_to_debt(draft, user):
+                if answered := intake.pays_to_debt(draft, user):
                     await drafts.resolve(session, draft, user)
             elif action == "save":
                 saved = await intake.save(session, request.app["bot"], user, draft)
                 _drafts.pop(user.id, None)
-                html = "\n\n".join([saved.header, *(text for text, _ in saved.cards)])
-                return await _input_state(session, user, saved=html)
+                return await _input_state(session, user, saved=_saved_html(saved))
+        if answered and await intake.autosave(session, user, draft):
+            saved = await intake.save_auto(session, request.app["bot"], user, draft)
+            _drafts.pop(user.id, None)
+            return await _input_state(session, user, saved=_saved_html(saved))
     except (ValueError, TypeError):
         raise ApiError(400, "Noto'g'ri tugma")
     except intake.IntakeError as e:

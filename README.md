@@ -15,6 +15,18 @@ oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». 
 yozilmagan bo'lsa — modelning umumiy narxi. Hisobotda har bir model qaysi bosqichdan (kroy, brsovka, tikuv...)
 qancha o'tgani ko'rinadi.
 
+**⚡ Darhol saqlash:** ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, soni yoki summasi aytildi)
+bot «To'g'rimi?» deb so'ramay darhol saqlaydi va nima saqlanganini ko'rsatadi — xato bo'lsa, kartadagi «✏️ Tahrirlash»
+yoki «🗑 O'chirish». Masalan, Robiyaning 1 mln so'm haqqi bo'lsa va «Robiyaga 500 ming berdim» deyilsa — Robiya
+topiladi, qoldig'idan 500 ming ayriladi (500 ming qoladi), egasi ham, Robiya ham xabar oladi. «Robiya 10 ta sapog
+topshirdi» — ish Robiya hisobiga qo'shiladi va Robiyaga xabar boradi. Mijoz («Tohir 2 million to'ladi», «Tohirga 10
+komplekt berdim») va xom ashyo («20 kg kley oldim») ham shunday. Ism ovozda buzilsa ham topiladi: «Robiyaga»,
+«Robiya opa», «Rabiya», «Робия» — Robiya, «Toxir» — Tohir, «sapok» — Sapog; Claude ishchi yoki mijozni «qarz» deb
+ajratib yuborsa ham — to'g'ri bo'limga o'tkaziladi. Ikki o'xshash ishchi bo'lsa yoki ism topilmasa — bot so'raydi,
+tugma bosilgach darhol saqlaydi va tanlovni eslab qoladi. Ishchi o'zi yozsa ham darhol saqlanadi (tasdiq sozlamalari
+bo'yicha), egasiga xabar boradi. «⚙️ Sozlamalar → Ovoz va matnni darhol saqlash» o'chirilsa — avvalgidek har safar
+«✅ Saqlash» bosiladi. Rasm (skrinshot, chek, daftar) uchun — alohida sozlama (pastda).
+
 **🧾 Ishchi bilan hisob-kitob (avans, ish haqi):** SMS'dagidek qisqa yozish kifoya. Ishchi o'zi: «500 ming oldim»,
 «15 loaf 15 sapog, 500.000 oldim» — olgan puli hisobidan ayriladi, topshirgan ishlari qo'shiladi. Egasi: «Robiyaga
 500 ming berdim», «Robiya 200 ming qaytardi», «Robiyaga qolganini berdim». Hisob holatini ham aytish mumkin
@@ -145,7 +157,7 @@ bot/
   db/repo.py         bazaga so'rovlar
   services/stt.py    ovoz → matn: Aisha (VoiceLab), zaxira — ElevenLabs Scribe
   services/llm.py    Claude: matn yoki rasm → JSON
-  services/matcher.py  o'xshash ismlarni topish
+  services/matcher.py  o'xshash ismlarni topish: qo'shimchasiz («Robiyaga»), talaffuz bo'yicha («Rabiya»)
   jobs.py            kasblar: standart ro'yxat, «brsovka» → Brsovkachi, «kroy 1500, tikuv 5000» narx matni
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar

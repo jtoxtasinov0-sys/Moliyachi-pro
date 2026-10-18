@@ -57,12 +57,14 @@ def pay_text(entry: WorkerPayment, viewer: User) -> str:
     return text
 
 
-async def notify_user(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
-    """Xabar yuborish. Yetmasa (botni bloklagan) — faqat logga yoziladi."""
+async def notify_user(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None) -> bool:
+    """Xabar yuborish. Yetmasa (botni bloklagan) — faqat logga yoziladi va False."""
     try:
         await bot.send_message(chat_id, text, reply_markup=markup)
     except TelegramAPIError:
         log.warning("Xabar yuborilmadi (chat %s)", chat_id, exc_info=True)
+        return False
+    return True
 
 
 async def notify_owner(

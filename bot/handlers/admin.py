@@ -532,6 +532,7 @@ async def model_toggle(call: CallbackQuery, callback_data: kbs.ModelCb, session:
 async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
     approval = await repo.require_approval(session, owner_id)
     pay_approval = await repo.require_pay_approval(session, owner_id)
+    auto_save = await repo.auto_save(session, owner_id)
     auto_images = await repo.auto_save_images(session, owner_id)
     enabled = await repo.enabled_currencies(session, owner_id)
     remind = await repo.reminder_hour(session, owner_id)
@@ -543,6 +544,10 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
     kb.button(
         text=f"{'✅' if pay_approval else '⬜'} Pul yozuvlarini tasdiqlash",
         callback_data=kbs.SettingsCb(action="payapproval"),
+    )
+    kb.button(
+        text=f"{'✅' if auto_save else '⬜'} Ovoz va matnni darhol saqlash",
+        callback_data=kbs.SettingsCb(action="autosave"),
     )
     kb.button(
         text=f"{'✅' if auto_images else '⬜'} Rasmdagi xarajatlarni darhol saqlash",
@@ -564,7 +569,7 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
             text=f"{'✅ ' if hour == remind else ''}🔔 {hour}:00",
             callback_data=kbs.SettingsCb(action="remind", value=str(hour)),
         )
-    kb.adjust(1, 1, 1, 3, 3, 1 + len(repo.REMINDER_HOURS))
+    kb.adjust(1, 1, 1, 1, 3, 3, 1 + len(repo.REMINDER_HOURS))
     images_mode = (
         "tasdiqlamasdan darhol hisobga qo'shiladi"
         if auto_images
@@ -575,6 +580,10 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
         f"• 💵 Ishchi yozgan pul («oldim», «qaytardim»): {'egasi tasdiqlagandan keyin' if pay_approval else 'darhol'} "
         "hisob-kitobga kiradi\n"
+        "• ⚡ Ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, summa aytildi): "
+        + ("«To'g'rimi?» so'ralmay darhol saqlanadi, ikkinchi tomonga xabar boradi" if auto_save
+           else "«To'g'rimi?» deb so'raladi, «✅ Saqlash» bosilgach saqlanadi")
+        + "\n"
         f"• 🖼 Bank skrinshoti yoki chek rasmi: {images_mode}\n"
         f"• Valyutalar: {', '.join(enabled)}\n"
         f"• ⭐ Asosiy valyuta: <b>{enabled[0]}</b> — summa valyutasiz aytilsa shu olinadi\n"
@@ -601,6 +610,9 @@ async def settings_toggle(
     elif callback_data.action == "payapproval":
         current = await repo.require_pay_approval(session, user.id)
         await repo.set_setting(session, user.id, "require_pay_approval", "0" if current else "1")
+    elif callback_data.action == "autosave":
+        current = await repo.auto_save(session, user.id)
+        await repo.set_setting(session, user.id, "auto_save", "0" if current else "1")
     elif callback_data.action == "autoimg":
         current = await repo.auto_save_images(session, user.id)
         await repo.set_setting(session, user.id, "auto_save_images", "0" if current else "1")

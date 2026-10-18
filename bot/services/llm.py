@@ -244,6 +244,8 @@ xarajat — {", ".join(EXPENSE_CATEGORIES)}; daromad — {", ".join(INCOME_CATEG
 Benzin, moy, avtoservis, jarima, parkovka — Mashina.
 - Ism, model va kasb nomlarini "Ma'lum nomlar" ro'yxatidagi eng mos yozuvga keltir; mos keladigani \
 bo'lmasa, eshitilgancha lotin yozuvida, bosh harf bilan yoz. O'zingdan ism yoki son to'qima.
+- Ovozda ism biroz buzilgan bo'lsa ham ("Rabiya", "Робия", "Robiyaxon" — ro'yxatda Robiya) ro'yxatdagi \
+yozilishini yoz. Ismni qo'shimchasiz va hurmat so'zisiz yoz: "Robiyaga", "Robiyadan", "Robiya opa" — Robiya.
 - Sonlarni raqamga aylantir: "ellik" -> 50, "bir yarim million" -> 1500000, "200 ming" -> 200000, \
 "500.000" yoki "500,000" -> 500000 (nuqta va vergul — minglik ajratgich).
 - Valyuta: so'm -> UZS, dollar/$ -> USD, von/won/₩ -> KRW. Aytilmasa null.

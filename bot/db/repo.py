@@ -47,6 +47,8 @@ DEFAULT_SETTINGS = {
     "main_currency": ALL_CURRENCIES[0],
     # Bir komplektdagi dona (razmerlar) soni
     "set_size": "5",
+    # Ovoz yoki matndan to'liq tushunilgan yozuv (ism, model, mijoz topildi) «✅ Saqlash» bosilmasdan saqlanadi
+    "auto_save": "1",
     # Bank skrinshoti / chek rasmidan o'qilgan xarajatlar «✅ Tasdiqlash» bosilmasdan saqlanadi
     "auto_save_images": "0",
     # Daromadning necha foizi jamg'armaga ajratiladi (maslahat va byudjet uchun)
@@ -82,6 +84,10 @@ async def require_approval(session: AsyncSession, owner_id: int) -> bool:
 
 async def require_pay_approval(session: AsyncSession, owner_id: int) -> bool:
     return await get_setting(session, owner_id, "require_pay_approval") == "1"
+
+
+async def auto_save(session: AsyncSession, owner_id: int) -> bool:
+    return await get_setting(session, owner_id, "auto_save") == "1"
 
 
 async def auto_save_images(session: AsyncSession, owner_id: int) -> bool:
