@@ -1835,8 +1835,19 @@ function composeSheet(voice, images) {
   else composeRequest(api("/api/input"), null);
 }
 
-function sendVoice(blob) {
-  composeRequest(api("/api/input/voice", { method: "POST", blob }), "🎧 Eshitilmoqda…");
+// Ovoz avval matnga aylanadi va eshitilgani darhol ko'rinadi, tahlil (Claude) keyin alohida so'raladi
+async function sendVoice(blob) {
+  setBusy(true, "🎧 Eshitilmoqda…");
+  try {
+    const res = await api("/api/input/voice?only=heard", { method: "POST", blob });
+    if (!res.heard) return renderCompose(res); // ovoz o'qilmadi yoki unda gap yo'q
+    if ($("cBusy")) $("cBusy").innerHTML = `🗣 «${esc(res.heard)}»<br>⏳ Tahlil qilinmoqda…`;
+    renderCompose(await api("/api/input", { method: "POST", body: { text: res.heard, heard: true } }));
+  } catch (e) {
+    fail(e);
+  } finally {
+    setBusy(false);
+  }
 }
 
 // --- Rasm: bank skrinshoti, chek yoki daftar sahifasi ---------------------------
@@ -2063,6 +2074,10 @@ function verticalSwipes(on) {
   } catch (_) { /* eski Telegram */ }
 }
 
+// Nutq uchun yetarli sifat (Telegram ovozli xabaridek). Brauzer o'zicha 64–128 kbit/s yozadi — fayl
+// 2–4 barobar katta bo'lib, sekin mobil internetda serverga uzoq yuklanadi
+const VOICE_BITRATE = 32000;
+
 // Mikrofon bir marta ochiladi va ilova yopilguncha qayta ishlatiladi. Har yozuvda getUserMedia chaqirilib,
 // keyin yopilsa, Telegram ichidagi brauzer (ayniqsa iPhone'da) har gal qaytadan ruxsat so'raydi.
 let micStream = null;
@@ -2119,7 +2134,9 @@ async function startRecording() {
   compose.stream = stream;
   compose.chunks = [];
   compose.cancel = false;
-  compose.recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const recOpts = { audioBitsPerSecond: VOICE_BITRATE };
+  if (mime) recOpts.mimeType = mime;
+  compose.recorder = new MediaRecorder(stream, recOpts);
   compose.recorder.ondataavailable = (ev) => ev.data.size && compose.chunks.push(ev.data);
   compose.recorder.onstop = onRecorded;
   compose.recorder.start();

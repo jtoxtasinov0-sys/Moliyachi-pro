@@ -104,7 +104,8 @@ pip install -r requirements.txt
    - `OWNER_TG_ID` — botni ishga tushirib `/id` yozing (yoki @userinfobot). Bir nechta ega bo'lsa — vergul bilan: `111,222`
    - `AISHA_API_KEY` — voicelab.uz → API kalitlari (**Nutqdan matnga** ruxsati yoqilgan bo'lsin)
    - `ELEVENLABS_API_KEY` (ixtiyoriy, zaxira) — elevenlabs.io → Profile → API Keys (**Speech to Text** ruxsati bilan).
-     Aisha ishlamasa yoki balansi tugasa, ovoz shu orqali matnga aylanadi
+     Aisha ishlamasa yoki balansi tugasa, ovoz shu orqali matnga aylanadi. Aisha 4 soniyada javob bermasa ham
+     ElevenLabs parallel ishga tushadi — qaysi biri oldin tayyor bo'lsa, o'sha olinadi (ovoz tezroq matnga aylanadi)
    - `ANTHROPIC_API_KEY` — console.anthropic.com → API Keys (balansga pul tashlash kerak)
    - `DATABASE_URL` — sinash uchun SQLite qoldiring; serverda PostgreSQL (Neon)
 

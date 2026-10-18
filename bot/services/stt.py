@@ -25,6 +25,10 @@ RETRY_STATUSES = {429, 500, 502, 503, 504}
 RETRIES = 2
 RETRY_MAX_SECONDS = 5.0
 
+# Ikkala kalit bo'lsa: Aisha shuncha soniyada javob bermasa, ElevenLabs ham ishga tushadi
+# (qaysi biri oldin tayyor bo'lsa — o'sha). Qisqa ovozli xabar uchun ElevenLabs narxi arzimas.
+HEDGE_SECONDS = 4.0
+
 STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 STT_MODEL = "scribe_v2"
 
@@ -58,21 +62,59 @@ class SttError(Exception):
 
 
 async def transcribe(audio: bytes, filename: str = "voice.ogg", content_type: str = "audio/ogg") -> str:
-    error = SttError("AISHA_API_KEY ham, ELEVENLABS_API_KEY ham sozlanmagan")
+    if settings.aisha_api_key and settings.elevenlabs_api_key:
+        return await _hedged(audio, filename, content_type)
     if settings.aisha_api_key:
-        try:
-            return await _aisha(audio, filename, content_type)
-        except SttError as e:
-            error = e
-            log.error("Aisha STT xatosi: %s%s", e, " — ElevenLabs'ga o'tilmoqda" if settings.elevenlabs_api_key else "")
+        return await _logged("Aisha", _aisha(audio, filename, content_type))
     if settings.elevenlabs_api_key:
+        return await _logged("ElevenLabs", _elevenlabs(audio, filename, content_type))
+    error = SttError("AISHA_API_KEY ham, ELEVENLABS_API_KEY ham sozlanmagan")
+    log.error("STT: %s", error)
+    raise error
+
+
+async def _logged(name: str, coro) -> str:
+    try:
+        return await coro
+    except SttError as e:
+        log.error("%s STT xatosi: %s", name, e)
+        raise
+
+
+async def _hedged(audio: bytes, filename: str, content_type: str) -> str:
+    """Avval Aisha. U HEDGE_SECONDS ichida javob bermasa, ElevenLabs ham ishga tushadi va qaysi biri oldin
+    tayyor bo'lsa, o'sha natija olinadi (ikkinchisi to'xtatiladi). Aisha xato bersa — ElevenLabs'ning o'zi."""
+    started = time.monotonic()
+    aisha = asyncio.create_task(_aisha(audio, filename, content_type), name="Aisha")
+    done, _ = await asyncio.wait({aisha}, timeout=HEDGE_SECONDS)
+    if done:
         try:
-            return await _elevenlabs(audio, filename, content_type)
+            return aisha.result()
         except SttError as e:
-            error = e
-            log.error("ElevenLabs STT xatosi: %s", e)
-    elif not settings.aisha_api_key:
-        log.error("STT: %s", error)
+            log.error("Aisha STT xatosi: %s — ElevenLabs'ga o'tilmoqda", e)
+        return await _logged("ElevenLabs", _elevenlabs(audio, filename, content_type))
+
+    log.info("Aisha %.0f s da javob bermadi — ElevenLabs ham ishga tushdi", HEDGE_SECONDS)
+    scribe = asyncio.create_task(_elevenlabs(audio, filename, content_type), name="ElevenLabs")
+    pending = {aisha, scribe}
+    error: SttError | None = None
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            # Ikkalasi birga tayyor bo'lsa — Aisha (o'zbek tiliga ixtisoslashgan)
+            for task in sorted(done, key=lambda t: t is not aisha):
+                try:
+                    text = task.result()
+                except SttError as e:
+                    log.error("%s STT xatosi: %s", task.get_name(), e)
+                    error = e
+                    continue
+                log.info("STT: %s yutdi, %.1f s", task.get_name(), time.monotonic() - started)
+                return text
+    finally:
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     raise error
 
 

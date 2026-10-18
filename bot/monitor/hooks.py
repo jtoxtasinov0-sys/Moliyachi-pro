@@ -286,7 +286,9 @@ async def _track_api(request: web.Request, user: User, response: web.StreamRespo
 
     data = _response_json(response)
     if path == "/api/input":
-        tracker.record(tg_id, K.TEXT, str((await _request_json(request)).get("text") or ""), source="app")
+        body = await _request_json(request)
+        if not body.get("heard"):  # ovozdan eshitilgani — /api/input/voice da yozilgan
+            tracker.record(tg_id, K.TEXT, str(body.get("text") or ""), source="app")
     elif path == "/api/input/voice":
         text = f"«{data['heard']}»" if data.get("heard") else "ovozli xabar"
         tracker.record(tg_id, K.VOICE, text, source="app")

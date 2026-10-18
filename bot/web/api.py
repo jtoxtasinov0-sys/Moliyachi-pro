@@ -1456,20 +1456,23 @@ async def input_state(request: web.Request, session: AsyncSession, user: User) -
 @routes.post("/api/input")
 @endpoint()
 async def input_text(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """{text, new, worker_id}. new — eski qoralamani tuzatmasdan yangisini boshlash; worker_id — egasi shu
-    ishchining hisob-kitob oynasida yozdi (ismi aytilmagan pul va ish shu ishchiga)."""
+    """{text, new, worker_id, heard}. new — eski qoralamani tuzatmasdan yangisini boshlash; worker_id — egasi shu
+    ishchining hisob-kitob oynasida yozdi (ismi aytilmagan pul va ish shu ishchiga); heard — matn ovozdan
+    eshitilgan (/api/input/voice?only=heard), javobda yana ko'rsatiladi."""
     data = await _json(request)
     if data.get("new"):
         _drafts.pop(user.id, None)
     worker = None
     if user.is_owner and data.get("worker_id") is not None:
         worker = await _ledger_worker(request, session, user, data["worker_id"])
-    return await _analyze(session, user, str(data.get("text") or ""), worker=worker)
+    return await _analyze(session, user, str(data.get("text") or ""), heard=bool(data.get("heard")), worker=worker)
 
 
 @routes.post("/api/input/voice")
 @endpoint()
 async def input_voice(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Ovozli xabar. ?only=heard — faqat matnga aylantiriladi: ilova eshitilganini darhol ko'rsatadi va
+    tahlilni (Claude) /api/input dan alohida so'raydi. Busiz (eski ilova) — tahlil ham shu so'rovda."""
     ext = AUDIO_EXT.get(request.content_type)
     if ext is None:
         raise ApiError(400, "Ovoz formati qo'llab-quvvatlanmaydi")
@@ -1483,6 +1486,8 @@ async def input_voice(request: web.Request, session: AsyncSession, user: User) -
         return await _input_state(session, user, notice=notice)
     if not text:
         return await _input_state(session, user, notice="🤷 Ovozda gap eshitilmadi. Qayta ayting.")
+    if request.query.get("only") == "heard":
+        return web.json_response({"heard": text})
     return await _analyze(session, user, text, heard=True)
 
 
