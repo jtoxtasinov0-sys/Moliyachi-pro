@@ -1433,13 +1433,15 @@ async def _input_state(session: AsyncSession, user: User, **extra) -> web.Respon
     return web.json_response(data)
 
 
-async def _analyze(session: AsyncSession, user: User, text: str, heard: bool = False) -> web.Response:
+async def _analyze(
+    session: AsyncSession, user: User, text: str, heard: bool = False, worker: User | None = None
+) -> web.Response:
     text = text.strip()[:2000]
     if not text:
         raise ApiError(400, "Matn bo'sh")
     extra = {"heard": text} if heard else {}
     try:
-        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user))
+        _drafts[user.id] = await intake.analyze(session, user, text, _current_draft(user), worker)
     except intake.IntakeError as e:
         return await _input_state(session, user, notice=e.message, **extra)
     return await _input_state(session, user, **extra)
@@ -1454,7 +1456,15 @@ async def input_state(request: web.Request, session: AsyncSession, user: User) -
 @routes.post("/api/input")
 @endpoint()
 async def input_text(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    return await _analyze(session, user, str((await _json(request)).get("text") or ""))
+    """{text, new, worker_id}. new — eski qoralamani tuzatmasdan yangisini boshlash; worker_id — egasi shu
+    ishchining hisob-kitob oynasida yozdi (ismi aytilmagan pul va ish shu ishchiga)."""
+    data = await _json(request)
+    if data.get("new"):
+        _drafts.pop(user.id, None)
+    worker = None
+    if user.is_owner and data.get("worker_id") is not None:
+        worker = await _ledger_worker(request, session, user, data["worker_id"])
+    return await _analyze(session, user, str(data.get("text") or ""), worker=worker)
 
 
 @routes.post("/api/input/voice")

@@ -670,7 +670,8 @@ async function fillWorkerFilter() {
 
 const PAY_ICON = { pay: "💵", return: "↩️", balance: "🧾" };
 const LEDGER_PAGE = 20;
-const ledger = { el: null, workerId: null, data: null, items: [], busy: false };
+// draft — kartadagi matndan chiqqan «To'g'rimi?» qoralamasi (/api/input javobi) yoki { busy: "⏳ ..." }
+const ledger = { el: null, workerId: null, data: null, items: [], busy: false, draft: null };
 
 function signedMoney(amounts) {
   const parts = Object.entries(amounts || {}).filter(([, v]) => v).map(([c, v]) => (v < 0 ? "−" : "") + money(Math.abs(v), c));
@@ -754,8 +755,15 @@ async function openLedger(el, workerId) {
   ledger.workerId = workerId;
   ledger.data = null;
   ledger.items = [];
+  ledger.draft = null;
   el.innerHTML = SKELETONS;
   el.onclick = onLedgerClick;
+  el.onkeydown = (ev) => {
+    if (ev.key === "Enter" && !ev.isComposing && ev.target.classList.contains("lg-input")) {
+      ev.preventDefault();
+      ledgerSend();
+    }
+  };
   await loadLedger(false);
 }
 
@@ -830,19 +838,28 @@ function renderLedger() {
     </div>
     ${tip}
     <div class="lg-quick">
-      <input class="input lg-input" inputmode="decimal" autocomplete="off" placeholder="${owner ? "Summa, masalan 500 000" : "Olgan pulingiz, masalan 500 000"}">
+      <div class="lg-row">
+        <input class="input lg-input" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${owner ? "Masalan: 500 ming berdim" : "Masalan: 500 ming oldim"}">
+        <button class="send-btn" data-lg="send" aria-label="Yuborish">➤</button>
+      </div>
+      <div class="lg-draft">${ledgerDraftHtml()}</div>
       ${quick}
-      <p class="lg-hint">🎤 yoki ayting: ${owner ? `«${esc(d.worker.name)}ga 500 ming berdim», «${esc(d.worker.name)}ga 900 ming qarzman»` : "«500 ming oldim», «15 loaf 15 sapog»"}</p>
+      <p class="lg-hint">${owner
+        ? `✍️ Yozing: «500 ming berdim», «200 ming qaytardi», «900 ming qarzman». 🎤 bilan: «${esc(d.worker.name)}ga 500 ming berdim»`
+        : "✍️ Yozing yoki 🎤 bilan ayting: «500 ming oldim», «200 ming qaytardim», «15 loaf 15 sapog»"}</p>
     </div>
     <div class="lg-list">${list}</div>`;
 }
 
 async function onLedgerClick(ev) {
+  const cb = ev.target.closest("[data-cb]");
+  if (cb) return ledgerDraftAction(cb.dataset.cb);
   const b = ev.target.closest("[data-lg]");
   if (!b || ledger.busy) return;
   const act = b.dataset.lg;
   const id = Number(b.dataset.id);
   if (act === "more") return loadLedger(true);
+  if (act === "send") return ledgerSend();
   if (["pay", "return", "whole", "balance"].includes(act)) return quickPay(act);
   ledger.busy = true;
   try {
@@ -862,10 +879,11 @@ async function quickPay(act) {
   const d = ledger.data;
   const input = ledger.el.querySelector(".lg-input");
   const raw = input.value.trim();
-  const amount = raw ? parseAmount(raw) : null;
+  const parsed = raw ? splitLedgerText(raw, state.me.is_owner) : null;
+  const amount = parsed ? parsed.amount : null;
   const who = d.worker.name;
   const body = { kind: act, worker_id: ledger.workerId };
-  if (raw && amount === null) { toast("Summani tushunmadim. Masalan: 500 000", true); return input.focus(); }
+  if (raw && amount === null) { toast("Summani tushunmadim. Masalan: 500 000 — yoki ➤ ni bosing", true); return input.focus(); }
   if (act === "whole") {
     body.kind = "pay";
     body.whole = true;
@@ -887,6 +905,107 @@ async function quickPay(act) {
     input.value = "";
     await afterLedgerChange();
   } catch (e) { fail(e); } finally { ledger.busy = false; }
+}
+
+// Kartadagi matn: «500 ming berdim» (ishchida «500 ming oldim») — tugmadagidek darhol saqlanadi. Boshqasi
+// («15 loaf, 500 ming oldim», «900 ming qarzman», «qolganini berdim») — Claude tahlil qiladi va «To'g'rimi?»
+// shu kartaning o'zida chiqadi
+const LEDGER_VERBS = {
+  owner: { pay: /^(berdim|бердим)$/, return: /^(qaytardi|қайтарди|кайтарди)$/ },
+  worker: { pay: /^(oldim|олдим)$/, return: /^(qaytardim|қайтардим|кайтардим|berdim|бердим)$/ },
+};
+
+// «500 ming berdim» -> { kind: "pay", amount: 500000 }; summaning o'zi -> { kind: null, amount }; boshqasi -> null
+function splitLedgerText(raw, owner) {
+  const words = raw.trim().split(/\s+/);
+  const verbs = LEDGER_VERBS[owner ? "owner" : "worker"];
+  let kind = null;
+  if (words.length > 1) {
+    for (const at of [words.length - 1, 0]) {
+      const word = words[at].toLowerCase().replace(/[.,!]+$/, "");
+      kind = Object.keys(verbs).find((k) => verbs[k].test(word)) || null;
+      if (kind) { words.splice(at, 1); break; }
+    }
+  }
+  const amount = parseAmount(words.join(" "));
+  return amount === null ? null : { kind, amount };
+}
+
+function ledgerSend() {
+  if (ledger.busy || !ledger.data) return;
+  const input = ledger.el.querySelector(".lg-input");
+  const raw = input.value.trim();
+  if (!raw) return input.focus();
+  const owner = state.me.is_owner;
+  // «To'g'rimi?» ochiq bo'lsa — yozilgani shu qoralamani tuzatadi
+  const open = !!(ledger.draft && ledger.draft.draft);
+  if (!open) {
+    const parsed = splitLedgerText(raw, owner);
+    if (parsed && parsed.kind) return quickPay(parsed.kind);
+    if (parsed) return toast(owner ? "Tugmani bosing: 💵 Berdim yoki ↩️ Qaytardi" : "Tugmani bosing: 💵 Oldim yoki ↩️ Qaytardim");
+  }
+  input.value = "";
+  haptic();
+  const body = { text: raw, new: !open };
+  if (ledger.workerId) body.worker_id = ledger.workerId;
+  ledgerDraftRequest("/api/input", body, "⏳ Tahlil qilinmoqda…");
+}
+
+function ledgerDraftAction(data) {
+  if (ledger.busy) return;
+  haptic();
+  if (data === FIX_ACTION) {
+    const input = ledger.el.querySelector(".lg-input");
+    input.placeholder = "Nimani o'zgartiramiz? Masalan: 450 ming, kecha edi";
+    return input.focus();
+  }
+  ledgerDraftRequest("/api/input/action", { data }, data === "d:save" ? "💾 Saqlanmoqda…" : null);
+}
+
+async function ledgerDraftRequest(path, body, label) {
+  const el = ledger.el, prev = ledger.draft;
+  ledger.busy = true;
+  if (label) setLedgerDraft({ busy: label });
+  try {
+    const res = await api(path, { method: "POST", body });
+    if (ledger.el !== el) return; // oyna yopilgan
+    if (res.saved) {
+      setLedgerDraft(null);
+      toast(res.saved.includes("tasdig'ini kutmoqda") ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
+      ledger.busy = false;
+      // Ishchida: ish yozuvlari bosh sahifadagi raqamlarni ham o'zgartiradi
+      if (state.me.is_owner) await afterLedgerChange();
+      else refreshView();
+      return;
+    }
+    setLedgerDraft(res);
+  } catch (e) {
+    fail(e);
+    setLedgerDraft(prev);
+  } finally {
+    ledger.busy = false;
+  }
+}
+
+function setLedgerDraft(res) {
+  ledger.draft = res;
+  const box = ledger.el && ledger.el.querySelector(".lg-draft");
+  if (box) box.innerHTML = ledgerDraftHtml();
+  const input = ledger.el && ledger.el.querySelector(".lg-input");
+  if (input && !(res && res.draft)) input.placeholder = state.me.is_owner ? "Masalan: 500 ming berdim" : "Masalan: 500 ming oldim";
+}
+
+function ledgerDraftHtml() {
+  const r = ledger.draft;
+  if (!r) return "";
+  if (r.busy) return `<div class="c-note busy">${esc(r.busy)}</div>`;
+  let html = r.heard ? `<div class="c-note heard">🗣 «${esc(r.heard)}»</div>` : "";
+  if (r.notice) html += `<div class="c-note">${tgHtml(r.notice)}</div>`;
+  if (r.draft) {
+    html += `<div class="draft-box">${tgHtml(r.draft.html)}</div>${draftButtons(r.draft.buttons)}`;
+    if (!r.draft.buttons.length || r.draft.html.includes("❓")) html += `<p class="muted small c-ask">Javobni yuqoridagi qatorga yozing.</p>`;
+  }
+  return html;
 }
 
 async function afterLedgerChange() {
@@ -1835,13 +1954,16 @@ function renderCompose(res) {
     refreshView();
   }
   if (res.draft) {
-    html += `<div class="draft-box">${tgHtml(res.draft.html)}</div>`;
-    html += res.draft.buttons.map((row) => `<div class="kb-row">${row.map((b) =>
-      `<button class="kb-btn${b.data === "d:save" ? " main" : ""}" data-cb="${esc(b.data)}">${esc(b.text)}</button>`).join("")}</div>`).join("");
+    html += `<div class="draft-box">${tgHtml(res.draft.html)}</div>${draftButtons(res.draft.buttons)}`;
     if (!res.draft.buttons.length || res.draft.html.includes("❓")) html += `<p class="muted small c-ask">Javobni pastga yozing yoki 🎤 bilan ayting.</p>`;
   }
   $("cOut").innerHTML = html;
   $("cMicText").textContent = res.draft ? "🎤 Tuzatish yoki javob — bosib turing" : "🎤 Bosib turing va gapiring";
+}
+
+function draftButtons(buttons) {
+  return buttons.map((row) => `<div class="kb-row">${row.map((b) =>
+    `<button class="kb-btn${b.data === "d:save" ? " main" : ""}" data-cb="${esc(b.data)}">${esc(b.text)}</button>`).join("")}</div>`).join("");
 }
 
 function sendText() {

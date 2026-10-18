@@ -40,10 +40,18 @@ async def _context(session: AsyncSession, user: User) -> tuple[dict[str, list[st
     return known, worker_name, set_size, info
 
 
-async def analyze(session: AsyncSession, user: User, text: str, draft: dict | None) -> dict:
-    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None."""
+async def analyze(
+    session: AsyncSession, user: User, text: str, draft: dict | None, worker: User | None = None
+) -> dict:
+    """Matndan yangi qoralama. draft — tuzatilayotgan (yoki to'ldirilayotgan) qoralama, bo'lmasa None.
+    worker — egasi shu ishchining hisob-kitob oynasida yozdi: ismi aytilmagan ish va pul unga tegishli."""
     correcting = draft is not None and not drafts.is_stale(draft)
     known, worker_name, set_size, info = await _context(session, user)
+    if worker is not None and user.is_owner:
+        info += (
+            f" Xabar ishchi {worker.name} bilan hisob-kitob oynasida yozildi: ishchi ismi aytilmagan ish va "
+            f"pul (pay) — {worker.name}ga tegishli."
+        )
     try:
         if correcting:
             ext = await llm.correct(drafts.for_llm(draft), text, today(), known, worker_name, info)
@@ -53,12 +61,16 @@ async def analyze(session: AsyncSession, user: User, text: str, draft: dict | No
         raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
 
     raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
-    return await _build(
+    new = await _build(
         session, user, ext, raw, set_size,
         said=f"🗣 <i>«{escape(text)}»</i>",
         entry_id=draft["entry_id"] if correcting else None,
         source=draft.get("source") if correcting else None,
     )
+    if worker is not None and user.is_owner and new["section"] == "work":
+        drafts.share_worker(new, worker.id, worker.name)
+        await drafts.resolve(session, new, user)
+    return new
 
 
 MAX_IMAGES = 5

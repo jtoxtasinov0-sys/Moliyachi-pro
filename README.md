@@ -26,8 +26,9 @@ darhol hisobga kiradi (egasiga xabar boradi); hisob holatini ishchi yozsa — ha
 sozlama ish yozuvlarini tasdiqlashdan («Ishchi yozuvlarini tasdiqlash») alohida. Egasi yozsa — ishchiga xabar
 boradi. Ko'rish: ishchida — botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun
 oxiridagi qoldiq, «💵 Oldim» tugmasi); egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi
-(«💵 Berdim», «✅ Qolganini berdim», «🧾 Qoldiq shu»). Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir
-kun alohida o'qiladi.
+(«💵 Berdim», «✅ Qolganini berdim», «🧾 Qoldiq shu»). Kartadagi qatorga summani yoki gapni yozish mumkin: «500 ming
+berdim» (ishchida «500 ming oldim») — darhol saqlanadi, murakkabrog'i («15 loaf, 500 ming oldim», «900 ming qarzman»)
+— «To'g'rimi?» shu kartada chiqadi. Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir kun alohida o'qiladi.
 ⚠️ Avvaldan ishlatayotgan bo'lsangiz: pul yozilmagan ishchining qoldig'i — barcha ishlari summasi. Har bir ishchi
 uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga 900 ming qarzman».
 

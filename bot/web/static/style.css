@@ -533,6 +533,12 @@ a.link-box.phone { display: block; text-decoration: none; font-size: 15px; }
   font-size: 12.5px; font-weight: 600; line-height: 1.45; margin: 0 0 12px;
 }
 .lg-quick { background: var(--bg); border-radius: 18px; padding: 10px; margin-bottom: 14px; }
+.lg-row { display: flex; gap: 8px; }
+.lg-row .input { flex: 1; min-width: 0; font-size: 16px; }
+.lg-draft { margin-top: 8px; }
+.lg-draft:empty { display: none; }
+.lg-draft .c-note, .lg-draft .draft-box, .lg-draft .kb-btn { background: #fff; }
+.lg-draft .kb-btn.main { background: var(--green); }
 .lg-btns { display: flex; gap: 8px; margin-top: 8px; }
 .lg-btns .act { flex: 1; }
 .act.soft { background: #fff; color: var(--navy); }
