@@ -15,7 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import advisor, drafts
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ClientKind, DebtDirection, EntryStatus, PayKind, User, WorkEntry, WorkerPayment
+from bot.db.models import (
+    ClientKind,
+    DebtDirection,
+    EntryStatus,
+    MaterialEntry,
+    PayKind,
+    Supplier,
+    User,
+    WorkEntry,
+    WorkerPayment,
+)
 from bot.services import llm, matcher
 from bot.services.utils import fmt_money, today
 
@@ -231,9 +241,11 @@ async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
 
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
-    """Ishchi, model, kasb yoki mijozni tanlash tugmasi. False — o'zgarish yo'q."""
+    """Ishchi, model, kasb, mijoz yoki ta'minotchini tanlash tugmasi. False — o'zgarish yo'q."""
     if draft["section"] == "client":
         return await _choose_client(session, user, draft, cb)
+    if draft["section"] == "material":
+        return await _choose_supplier(session, user, draft, cb)
     if draft["section"] == "price":
         return await _choose_price(session, user, draft, cb)
     if draft["section"] == "work" and cb.kind == "pworker":
@@ -347,6 +359,23 @@ async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs
     return True
 
 
+async def _choose_supplier(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
+    """Ta'minotchi tugmasi; item_id=0 — ro'yxatda yo'q: aytilgancha yoziladi, xabar bormaydi."""
+    if cb.kind != "supplier" or not user.is_owner or cb.line >= len(draft["materials"]):
+        return False
+    item = draft["materials"][cb.line]
+    if cb.item_id == 0:
+        item.update(supplier_id=None, supplier_free=True)
+        return True
+    supplier = await repo.get_supplier(session, user.account_id, cb.item_id)
+    if supplier is None or not supplier.is_active:
+        raise IntakeError("Ta'minotchi topilmadi.")
+    if item["supplier"] and item["supplier"].lower() != supplier.name.lower():
+        await repo.save_alias(session, user.account_id, "supplier", supplier.id, item["supplier"])
+    item.update(supplier_id=supplier.id, supplier=supplier.name, supplier_free=False)
+    return True
+
+
 def set_client_kind(draft: dict, cb: kbs.ClientKindCb) -> bool:
     if draft["section"] != "client" or cb.line >= len(draft["client"]) or cb.kind not in CLIENT_KINDS:
         return False
@@ -435,7 +464,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         if draft["section"] == "price":
             return await _save_prices(session, user, draft)
         if draft["section"] == "material":
-            return await _save_materials(session, user, draft)
+            return await _save_materials(session, bot, user, draft)
         return await _save_money(session, user, draft)
 
     acc = user.account_id
@@ -643,11 +672,20 @@ async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
     return Saved(header)
 
 
-async def _save_materials(session: AsyncSession, user: User, draft: dict) -> Saved:
+async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
+    """Xom ashyo xaridi. Ro'yxatdagi ta'minotchidan olingan bo'lsa — unga xabar boradi."""
     from bot.handlers.money import material_month_line, material_text
 
     def dec(value: str | None) -> Decimal | None:
         return Decimal(value) if value else None
+
+    suppliers: dict[int, Supplier] = {}
+    for m in draft["materials"]:
+        if m["supplier_id"] and m["supplier_id"] not in suppliers:
+            supplier = await repo.get_supplier(session, user.id, m["supplier_id"])
+            if supplier is None:
+                raise IntakeError("⚠️ Ta'minotchi topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
+            suppliers[supplier.id] = supplier
 
     entries = [
         await repo.create_material_entry(
@@ -661,6 +699,7 @@ async def _save_materials(session: AsyncSession, user: User, draft: dict) -> Sav
             amount=dec(m["total"]),
             currency=m["currency"],
             supplier=m["supplier"],
+            supplier_id=m["supplier_id"],
             entry_date=date.fromisoformat(draft["date"]),
             raw_text=draft["raw_text"],
             created_by=user.id,
@@ -668,10 +707,47 @@ async def _save_materials(session: AsyncSession, user: User, draft: dict) -> Sav
         for m in draft["materials"]
     ]
     header = "✅ <b>Xom ashyoga qo'shildi</b>\n\n" + await material_month_line(session, user.id)
+    notified, unlinked = await _notify_suppliers(bot, session, user, entries, list(suppliers.values()))
+    if notified:
+        header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
+    if unlinked:
+        header += (
+            f"\n🔗 {', '.join(escape(name) for name in unlinked)} hali botga ulanmagan — xabar bormadi. "
+            "Taklif havolasi: «🧱 Xom ashyo → 🏪 Ta'minotchilar»."
+        )
     last = len(entries) - 1
     return Saved(
         header, [(material_text(e), kbs.money_entry_kb("x", e.id, app=i == last)) for i, e in enumerate(entries)]
     )
+
+
+async def _notify_suppliers(
+    bot: Bot, session: AsyncSession, owner: User, entries: list[MaterialEntry], suppliers: list[Supplier]
+) -> tuple[list[str], list[str]]:
+    """Egasi ta'minotchidan xom ashyo oldi: har bir ta'minotchiga bitta xabar («Jasur sizdan xom ashyo oldi»).
+    Qaytadi: (xabar borganlar, botga ulanmaganlar). O'chirilgan ta'minotchiga xabar bormaydi."""
+    from bot.handlers.entries import notify_user
+    from bot.handlers.money import material_text, supplier_month_line
+
+    notified: list[str] = []
+    unlinked: list[str] = []
+    stats = await repo.supplier_stats(session, owner.id, today().replace(day=1)) if suppliers else {}
+    for supplier in suppliers:
+        own = [e for e in entries if e.supplier_id == supplier.id]
+        if not own or not supplier.is_active:
+            continue
+        if not supplier.tg_id:
+            unlinked.append(supplier.name)
+            continue
+        text = f"🧱 <b>{escape(owner.name)}</b> sizdan xom ashyo oldi\n\n" + "\n\n".join(
+            material_text(e, supplier=False) for e in own
+        )
+        st = stats.get(supplier.id)
+        if st is not None and st.month_count > len(own):
+            text += "\n\n" + supplier_month_line(st)
+        if await notify_user(bot, supplier.tg_id, text):
+            notified.append(supplier.name)
+    return notified, unlinked
 
 
 async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:

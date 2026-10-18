@@ -17,8 +17,8 @@ const state = {
   advice: null,
   // home — bosh sahifadagi qisqa ko'rinish, data — «Mijozlar» bo'limi
   clients: { period: "month", data: null, home: null, byId: {}, feed: { offset: 0, items: [] } },
-  // Xom ashyo: home — bosh sahifadagi qisqa ko'rinish
-  materials: { period: "month", data: null, home: null, feed: { offset: 0, items: [] } },
+  // Xom ashyo: home — bosh sahifadagi qisqa ko'rinish, suppliers — ta'minotchilar
+  materials: { period: "month", data: null, home: null, feed: { offset: 0, items: [] }, suppliers: null },
 };
 const charts = {};
 
@@ -391,7 +391,7 @@ function feedRow(e, opts = {}) {
     sub.push("Xom ashyo", materialQty(e));
     if (e.unit_price != null && e.quantity) sub.push(`${money(e.unit_price, e.currency)} / ${e.unit || "dona"}`);
     if (e.amount == null) sub.push("narxi aytilmagan");
-    if (e.supplier) sub.push(e.supplier);
+    if (e.supplier && !opts.noWho) sub.push(e.supplier);
   } else if (e.type === "client") {
     icon = CLIENT_ICON[e.kind] || "❔";
     iconCls = e.kind === "payment" ? "in" : e.kind === "return" ? "out" : "";
@@ -1419,6 +1419,7 @@ async function loadMaterials() {
     $("xFeed").innerHTML = SKELETONS;
   }
   loadMaterialFeed(true);
+  loadSuppliers();
   try {
     m.data = await api(`/api/materials?period=${m.period}`);
     renderMaterials();
@@ -1454,13 +1455,120 @@ async function loadMaterialFeed(reset) {
   } catch (e) { fail(e); }
 }
 
-async function deleteMaterial(id) {
+async function deleteMaterial(id, after) {
   if (!(await confirmBox("Xom ashyo yozuvi o'chirilsinmi?"))) return;
   try {
     await api(`/api/materials/${id}`, { method: "DELETE" });
     toast("O'chirildi");
     refreshView();
+    if (after) after();
   } catch (e) { fail(e); }
+}
+
+// --- Ta'minotchilar: xom ashyo kimdan olinadi --------------------------------
+
+async function loadSuppliers() {
+  if (state.materials.suppliers) renderSuppliers();
+  else $("supplierList").innerHTML = SKELETONS;
+  try {
+    state.materials.suppliers = (await api("/api/suppliers")).items;
+    renderSuppliers();
+  } catch (e) { fail(e); }
+}
+
+function renderSuppliers() {
+  const items = state.materials.suppliers;
+  if (!items.length) {
+    $("supplierList").innerHTML = `<div class="empty"><span class="big">🏪</span>Hali ta'minotchi yo'q.<br>«+ Qo'shish» tugmasini bosing.</div>`;
+    return;
+  }
+  $("supplierList").innerHTML = items.map((s) => {
+    const tag = !s.is_active ? '<span class="tag off">O\'chirilgan</span>'
+      : s.linked ? '<span class="tag ok">Ulangan</span>' : '<span class="tag wait">Havola kutilmoqda</span>';
+    return `
+      <button class="row-card${s.is_active ? "" : " off"}" data-supplier="${s.id}">
+        <div class="avatar">${esc(initials(s.name))}</div>
+        <div class="info"><b>${esc(s.name)}</b>${tag}</div>
+        <div class="side">${esc(moneyList(s.month) || "—")}<small>shu oy · ${s.month_count} ta xarid</small></div>
+      </button>`;
+  }).join("");
+}
+
+function replaceSupplier(upd) {
+  state.materials.suppliers = (state.materials.suppliers || []).map((x) => (x.id === upd.id ? upd : x));
+  renderSuppliers();
+}
+
+async function supplierSheet(s) {
+  const invite = s.invite_link
+    ? `<div class="field"><label>Taklif havolasi (bir martalik)</label><div class="link-box">${esc(s.invite_link)}</div></div>
+       <button class="primary" id="sShare">📤 Ta'minotchiga yuborish</button>
+       <button class="secondary" id="sCopy">Nusxalash</button>`
+    : s.is_active ? `<button class="secondary" id="sInvite">🔗 Yangi taklif havolasi</button>` : "";
+  const status = !s.is_active ? "⛔ O'chirilgan — undan olinganda xabar bormaydi."
+    : s.linked ? "✅ Botga ulangan — undan xom ashyo olganingizda xabar oladi."
+    : "🔗 Havolani yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.";
+  openSheet(`
+    <h3>${esc(s.name)}</h3>
+    <p class="muted small">${status}</p>
+    <div class="stat-pair">
+      <div><b>${esc(moneyList(s.month) || "—")}</b><small>shu oy · ${s.month_count} ta xarid</small></div>
+      <div><b>${esc(moneyList(s.total) || "—")}</b><small>hammasi · ${s.count} ta xarid</small></div>
+    </div>
+    <div id="supplierHistory">${SKELETONS}</div>
+    ${invite}
+    <button class="${s.is_active ? "danger" : "secondary"}" id="sToggle">${s.is_active ? "⛔ O'chirish (xabar bormaydi)" : "✅ Qayta faollashtirish"}</button>
+  `);
+  if ($("sShare")) $("sShare").onclick = () => shareInvite(s.invite_link, `${s.name}, sizdan olingan xom ashyo haqida xabar olish uchun Moliyachi botiga ulaning:`);
+  if ($("sCopy")) $("sCopy").onclick = () => copyText(s.invite_link);
+  if ($("sInvite")) $("sInvite").onclick = async () => {
+    try {
+      const upd = await api(`/api/suppliers/${s.id}/invite`, { method: "POST" });
+      replaceSupplier(upd);
+      supplierSheet(upd);
+    } catch (e) { fail(e); }
+  };
+  $("sToggle").onclick = async () => {
+    if (s.is_active && !(await confirmBox(`${s.name} o'chirilsinmi? Undan olinganda endi xabar bormaydi.`))) return;
+    try {
+      const upd = await api(`/api/suppliers/${s.id}/toggle`, { method: "POST" });
+      replaceSupplier(upd);
+      closeSheet();
+      toast(upd.is_active ? "Faollashtirildi" : "O'chirildi");
+    } catch (e) { fail(e); }
+  };
+  try {
+    const data = await api(`/api/materials/entries?supplier_id=${s.id}&limit=50`);
+    if (!$("supplierHistory")) return;
+    $("supplierHistory").innerHTML = data.items.map((e) => feedRow({ type: "material", ...e }, { date: true, del: true, noWho: true })).join("")
+      || `<p class="muted">Undan hali xom ashyo olinmagan</p>`;
+    $("supplierHistory").onclick = (ev) => {
+      const btn = ev.target.closest("[data-del-feed]");
+      if (btn) deleteMaterial(Number(btn.dataset.delFeed.split(":")[1]), () => closeSheet());
+    };
+  } catch (e) { fail(e); }
+}
+
+function addSupplierSheet() {
+  openSheet(`
+    <h3>Yangi ta'minotchi</h3>
+    <div class="field"><label>Ismi yoki do'koni</label><input class="input" id="sName" maxlength="100" placeholder="Masalan: Xayrulloh Uz charm" autocomplete="off"></div>
+    <p class="muted small">Qo'shilgach taklif havolasini unga yuboring. U botga ulansa, undan xom ashyo olganingizda xabar oladi.</p>
+    <button class="primary" id="sSave">Qo'shish</button>
+  `);
+  setTimeout(() => $("sName").focus(), 250);
+  $("sSave").onclick = async () => {
+    const name = $("sName").value.trim();
+    if (!name) return $("sName").focus();
+    $("sSave").disabled = true;
+    try {
+      const s = await api("/api/suppliers", { method: "POST", body: { name } });
+      state.materials.suppliers = [s, ...(state.materials.suppliers || [])];
+      renderSuppliers();
+      toast("Qo'shildi — havolani ta'minotchiga yuboring");
+      supplierSheet(s);
+    } catch (e) { fail(e); $("sSave").disabled = false; }
+  };
 }
 
 // --- Ishchilar va kasblar ---------------------------------------------------
@@ -1519,9 +1627,8 @@ function jobPicker(id, selected) {
   </div>`;
 }
 
-function shareInvite(w) {
-  const text = `${w.name}, Moliyachi botiga ulanish uchun havolani bosing:`;
-  const url = `https://t.me/share/url?url=${encodeURIComponent(w.invite_link)}&text=${encodeURIComponent(text)}`;
+function shareInvite(link, text) {
+  const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
   if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
 }
@@ -1571,7 +1678,7 @@ function workerSheet(w) {
     if (b.dataset.job === "new") jobSheet(null, (job) => setJob(job.id));
     else setJob(b.dataset.job ? Number(b.dataset.job) : null);
   };
-  if ($("wShare")) $("wShare").onclick = () => shareInvite(w);
+  if ($("wShare")) $("wShare").onclick = () => shareInvite(w.invite_link, `${w.name}, Moliyachi botiga ulanish uchun havolani bosing:`);
   if ($("wCopy")) $("wCopy").onclick = () => copyText(w.invite_link);
   if ($("wInvite")) $("wInvite").onclick = async () => {
     try {
@@ -2612,6 +2719,13 @@ function bind() {
     loadMaterials();
   };
   $("xMoreBtn").onclick = () => loadMaterialFeed(false);
+  $("addSupplierBtn").onclick = () => addSupplierSheet();
+  $("supplierList").onclick = (ev) => {
+    const b = ev.target.closest("[data-supplier]");
+    if (!b) return;
+    const s = (state.materials.suppliers || []).find((x) => x.id === Number(b.dataset.supplier));
+    if (s) supplierSheet(s);
+  };
   $("xFeed").onclick = (ev) => {
     const btn = ev.target.closest("[data-del-feed]");
     if (btn) deleteMaterial(Number(btn.dataset.delFeed.split(":")[1]));

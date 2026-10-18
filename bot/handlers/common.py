@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile, LinkPreviewOptions, Message
+from aiogram.types import FSInputFile, LinkPreviewOptions, Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards as kbs
@@ -38,6 +38,7 @@ OWNER_HELP = """\
 • <i>Robiyaga 900 ming qarzman</i>, <i>Robiya bilan hisob yopildi</i> — ishchi bilan hisob holati
 • <i>A-12 modelga brsovka 2000dan, kroy 1500</i> — model narxi kasb bo'yicha
 • <i>10 millionlik teri oldim, nomi Shirin gul</i> — xom ashyo
+• <i>Xayrulloh Uz charmdan 1 millionlik material oldim</i> — ta'minotchiga ham xabar boradi
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
 • <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
 • <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i> — mijozga mol
@@ -66,7 +67,9 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
      tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb), 🧾 hisob-kitobi: ishlari,
      olgan puli va qoldig'i
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
-🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
+🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi;
+     🏪 Ta'minotchilar — kimdan olinadi: qo'shish va taklif havolasi (ulangan ta'minotchiga
+     undan olingan xom ashyo haqida xabar boradi)
 ⚙️ Sozlamalar — ish va pul yozuvlarini tasdiqlash, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
@@ -90,6 +93,27 @@ Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 🧾 Hisob-kitob — ishlaringiz, olgan pulingiz va qolgan haqqingiz
 """
+
+
+@router.message(CommandStart(deep_link=True, magic=F.args.startswith("sup_")))
+async def start_supplier(message: Message, command: CommandObject, session: AsyncSession, user: User | None) -> None:
+    """Ta'minotchining taklif havolasi. Ishchi yoki ega ham bosishi mumkin — u holda menyusi o'zgarmaydi."""
+    supplier = await repo.link_supplier(session, command.args.removeprefix("sup_"), message.from_user.id)
+    if supplier is None:
+        await message.answer("Bu havola eskirgan yoki allaqachon ishlatilgan. Yangisini so'rang.")
+        return
+    owner = await session.get(User, supplier.owner_id)
+    owner_name = escape(owner.name) if owner else "Korxona egasi"
+    registered = user is not None and user.is_active
+    await message.answer(
+        f"Xush kelibsiz, <b>{escape(supplier.name)}</b>! Siz <b>{owner_name}</b>ning ta'minotchisi sifatida "
+        "ulandingiz.\n\n🧱 U sizdan xom ashyo olganda shu yerga xabar keladi.",
+        reply_markup=kbs.main_menu(user) if registered else ReplyKeyboardRemove(),
+    )
+    await notify_owner(
+        message.bot, session, supplier.owner_id,
+        f"🏪 {escape(supplier.name)} botga ulandi — undan xom ashyo olganingizda unga xabar boradi.",
+    )
 
 
 @router.message(CommandStart(deep_link=True), Guest())
@@ -184,8 +208,37 @@ async def my_id(message: Message) -> None:
     await message.answer(f"Sizning Telegram ID: <code>{message.from_user.id}</code>")
 
 
+SUPPLIER_ROWS = 10
+
+
+async def _supplier_view(session: AsyncSession, tg_id: int) -> str | None:
+    """Botga ta'minotchi sifatida ulangan odam: kimning ta'minotchisi va undan oxirgi olinganlar."""
+    from bot.handlers.money import material_text  # aylanma importdan qochish uchun
+
+    suppliers = await repo.suppliers_by_tg(session, tg_id)
+    if not suppliers:
+        return None
+    owners = {sp.id: await session.get(User, sp.owner_id) for sp in suppliers}
+    names = ", ".join(f"<b>{escape(o.name)}</b>" for o in {o.id: o for o in owners.values() if o}.values())
+    text = f"🏪 Siz {names}ning ta'minotchisisiz: sizdan xom ashyo olinganda shu yerga xabar keladi."
+    entries = await repo.supplier_material_entries(session, [sp.id for sp in suppliers], limit=SUPPLIER_ROWS)
+    if entries:
+        many = len(owners) > 1
+        rows = []
+        for e in entries:
+            owner = owners.get(e.supplier_id)
+            who = f"👤 {escape(owner.name)}\n" if many and owner else ""
+            rows.append(who + material_text(e, supplier=False))
+        text += "\n\n🕘 <b>Sizdan oxirgi olinganlar</b>\n\n" + "\n\n".join(rows)
+    return text
+
+
 @router.message(Guest())
-async def guest(message: Message) -> None:
+async def guest(message: Message, session: AsyncSession) -> None:
+    supplier_text = await _supplier_view(session, message.from_user.id)
+    if supplier_text:
+        await message.answer(supplier_text, reply_markup=ReplyKeyboardRemove())
+        return
     await message.answer(
         "Siz hali ro'yxatda yo'qsiz. Korxona egasidan taklif havolasini so'rang.\n"
         f"Sizning ID: <code>{message.from_user.id}</code>"

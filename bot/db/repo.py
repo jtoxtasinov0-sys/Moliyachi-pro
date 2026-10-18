@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from bot.db.models import (
     PersonalEntry,
     Role,
     Setting,
+    Supplier,
     User,
     WorkEntry,
     WorkerPayment,
@@ -1376,6 +1377,7 @@ async def create_material_entry(
     entry_date: date,
     raw_text: str | None,
     created_by: int,
+    supplier_id: int | None = None,
 ) -> MaterialEntry:
     entry = MaterialEntry(
         owner_id=owner_id,
@@ -1387,6 +1389,7 @@ async def create_material_entry(
         amount=amount,
         currency=currency,
         supplier=supplier,
+        supplier_id=supplier_id,
         entry_date=entry_date,
         raw_text=raw_text,
         created_by=created_by,
@@ -1404,7 +1407,7 @@ async def get_material_entry(session: AsyncSession, owner_id: int, entry_id: int
 
 
 async def list_material_entries(
-    session: AsyncSession, owner_id: int, *, limit: int = 30, offset: int = 0
+    session: AsyncSession, owner_id: int, *, supplier_id: int | None = None, limit: int = 30, offset: int = 0
 ) -> list[MaterialEntry]:
     q = (
         select(MaterialEntry)
@@ -1413,6 +1416,8 @@ async def list_material_entries(
         .limit(limit)
         .offset(offset)
     )
+    if supplier_id is not None:
+        q = q.where(MaterialEntry.supplier_id == supplier_id)
     return list(await session.scalars(q))
 
 
@@ -1472,3 +1477,119 @@ async def material_kinds(session: AsyncSession, owner_id: int) -> list[str]:
 
 async def material_names(session: AsyncSession, owner_id: int) -> list[str]:
     return await _material_values(session, owner_id, MaterialEntry.name)
+
+
+# --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
+
+async def list_suppliers(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[Supplier]:
+    q = select(Supplier).where(Supplier.owner_id == owner_id).order_by(Supplier.name)
+    if active_only:
+        q = q.where(Supplier.is_active.is_(True))
+    return list(await session.scalars(q))
+
+
+async def get_supplier(session: AsyncSession, owner_id: int, supplier_id: int) -> Supplier | None:
+    supplier = await session.get(Supplier, supplier_id)
+    return supplier if supplier is not None and supplier.owner_id == owner_id else None
+
+
+async def get_supplier_by_name(session: AsyncSession, owner_id: int, name: str) -> Supplier | None:
+    return await session.scalar(
+        select(Supplier).where(Supplier.owner_id == owner_id, func.lower(Supplier.name) == name.strip().lower())
+    )
+
+
+async def create_supplier(session: AsyncSession, owner_id: int, name: str) -> Supplier:
+    """Yangi ta'minotchi (taklif havolasi bilan). Avval xuddi shu ism bilan yozilgan xaridlar ham unga bog'lanadi."""
+    supplier = Supplier(owner_id=owner_id, name=name.strip()[:100], invite_token=secrets.token_urlsafe(12))
+    session.add(supplier)
+    await session.flush()
+    await session.execute(
+        update(MaterialEntry)
+        .where(
+            MaterialEntry.owner_id == owner_id,
+            MaterialEntry.supplier_id.is_(None),
+            func.lower(MaterialEntry.supplier) == supplier.name.lower(),
+        )
+        .values(supplier_id=supplier.id)
+        .execution_options(synchronize_session=False)
+    )
+    return supplier
+
+
+async def new_supplier_token(session: AsyncSession, supplier: Supplier) -> str:
+    supplier.invite_token = secrets.token_urlsafe(12)
+    await session.flush()
+    return supplier.invite_token
+
+
+async def link_supplier(session: AsyncSession, token: str, tg_id: int) -> Supplier | None:
+    supplier = await session.scalar(select(Supplier).where(Supplier.invite_token == token))
+    if supplier is None or not supplier.is_active:
+        return None
+    supplier.tg_id = tg_id
+    supplier.invite_token = None
+    await session.flush()
+    return supplier
+
+
+async def suppliers_by_tg(session: AsyncSession, tg_id: int) -> list[Supplier]:
+    """Shu Telegram akkaunt ulangan faol ta'minotchilar (har xil egalarda bo'lishi mumkin)."""
+    q = select(Supplier).where(Supplier.tg_id == tg_id, Supplier.is_active.is_(True)).order_by(Supplier.id)
+    return list(await session.scalars(q))
+
+
+async def supplier_material_entries(
+    session: AsyncSession, supplier_ids: list[int], limit: int = 10
+) -> list[MaterialEntry]:
+    """Ta'minotchilardan olingan xom ashyo — yangisi birinchi (ta'minotchining o'ziga ko'rsatish uchun)."""
+    if not supplier_ids:
+        return []
+    q = (
+        select(MaterialEntry)
+        .where(MaterialEntry.supplier_id.in_(supplier_ids), MaterialEntry.deleted_at.is_(None))
+        .order_by(MaterialEntry.entry_date.desc(), MaterialEntry.id.desc())
+        .limit(limit)
+    )
+    return list(await session.scalars(q))
+
+
+@dataclass
+class SupplierStats:
+    month: dict[str, Decimal] = field(default_factory=dict)  # shu oy olingan xom ashyo summasi
+    month_count: int = 0
+    total: dict[str, Decimal] = field(default_factory=dict)
+    count: int = 0
+    last_date: date | None = None
+
+
+async def supplier_stats(session: AsyncSession, owner_id: int, month_start: date) -> dict[int, SupplierStats]:
+    """Ta'minotchi -> undan olingan xom ashyo: shu oy va jami (narxi aytilmaganlari faqat sonda)."""
+    rows = await session.execute(
+        select(
+            MaterialEntry.supplier_id,
+            MaterialEntry.currency,
+            MaterialEntry.entry_date,
+            func.sum(MaterialEntry.amount),
+            func.count(MaterialEntry.id),
+        )
+        .where(
+            MaterialEntry.owner_id == owner_id,
+            MaterialEntry.deleted_at.is_(None),
+            MaterialEntry.supplier_id.is_not(None),
+        )
+        .group_by(MaterialEntry.supplier_id, MaterialEntry.currency, MaterialEntry.entry_date)
+    )
+    out: dict[int, SupplierStats] = {}
+    for supplier_id, currency, entry_date, amount, count in rows:
+        st = out.setdefault(supplier_id, SupplierStats())
+        amount = Decimal(str(amount or 0))
+        if amount:
+            _add_to(st.total, currency, amount)
+        st.count += int(count)
+        st.last_date = max(filter(None, [st.last_date, entry_date]), default=None)
+        if entry_date >= month_start:
+            if amount:
+                _add_to(st.month, currency, amount)
+            st.month_count += int(count)
+    return out

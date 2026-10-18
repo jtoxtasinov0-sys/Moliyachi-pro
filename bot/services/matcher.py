@@ -104,8 +104,8 @@ def match(
     """items: (id, nom). aliases: (id, taxallus) — avval tanlangan to'g'rilashlar.
 
     Aniq mos kelishi (exact_id): yozilishi bir xil; qo'shimchasiz bir xil («Robiyaga» — Robiya); ismning
-    bir qismi («Robiya» — Robiya Karimova, «Robiya» — Robiya opa) yoki talaffuzi bir xil («Rabiya» — Robiya) —
-    faqat bittasiga mos kelsa. Ikki ishchi bir xil chiqsa — so'raladi."""
+    bir qismi («Robiya» — Robiya Karimova, «Robiya» — Robiya opa, «Uz charm» — Xayrulloh Uz charm) yoki
+    talaffuzi bir xil («Rabiya» — Robiya) — faqat bittasiga mos kelsa. Ikki ishchi bir xil chiqsa — so'raladi."""
     q = normalize(query)
     if not q or not items:
         return MatchResult()
@@ -128,13 +128,15 @@ def match(
         if text.replace(" ", "") in compact:
             return MatchResult(exact_id=compact[text.replace(" ", "")])
 
-    # Nomning qismlari: «Robiya opa» -> «robiya», «Robiya Karimova» -> «robiya», «karimova»
+    # Nomning qismlari: «Robiya opa» -> «robiya», «Robiya Karimova» -> «robiya», «karimova»,
+    # «Xayrulloh Uz charm» -> «xayrulloh uz», «uz charm»
     parts: dict[str, set[int]] = {}
     for text, item_id in choices.items():
         words = text.split()
         if len(words) < 2:
             continue
-        for part in {*variants(text), *(w for w in words if len(w) >= 3 and w not in _HONORIFICS)}:
+        phrases = (" ".join(words[i:j]) for i in range(len(words)) for j in range(i + 2, len(words) + (i > 0)))
+        for part in {*variants(text), *(w for w in words if len(w) >= 3 and w not in _HONORIFICS), *phrases}:
             parts.setdefault(part, set()).add(item_id)
     for text in queries:
         if (found := _only(parts.get(text))) is not None:

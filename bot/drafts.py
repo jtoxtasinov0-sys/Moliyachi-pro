@@ -30,9 +30,11 @@ Model narxini belgilash — "section": "price":
 job_q yo'q — umumiy narx. old — hozirgi narx {price, currency}, bo'lmasa None.
 Xom ashyo xaridi — "section": "material":
 {
-  ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier}],
+  ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier, supplier_id, supplier_free}],
 }
 price — bir birlik (list, kg...) narxi, total — jami; aytilmasa None, narxsiz ham saqlanadi.
+supplier — kimdan olingani; ro'yxatdagi ta'minotchi bo'lsa supplier_id (saqlangach unga xabar boradi),
+supplier_free — ro'yxatda yo'q, aytilgancha yoziladi. Ikkalasi ham bo'lmasa — qaysi ta'minotchi ekani so'raladi.
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],
@@ -266,6 +268,8 @@ def from_extraction(
                 "total": _amount(item.total),
                 "currency": item.currency or default_currency,
                 "supplier": _name(item.supplier, 100),
+                "supplier_id": None,
+                "supplier_free": False,
             }
             material_total(m)
             draft["materials"].append(m)
@@ -475,6 +479,7 @@ async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]
         known["clients"] = [c.name for c in await repo.list_clients(session, acc)][:100]
         known["material_kinds"] = await repo.material_kinds(session, acc)
         known["material_names"] = await repo.material_names(session, acc)
+        known["suppliers"] = [s.name for s in await repo.list_suppliers(session, acc)][:100]
     return known
 
 
@@ -508,6 +513,7 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
                     res = matcher.match(m[key], items)
                     if res.exact_id is not None:
                         m[key] = values[res.exact_id]
+        await _resolve_suppliers(session, draft, acc)
         return
     if draft["section"] == "client":
         await _resolve_clients(session, draft, acc)
@@ -683,6 +689,21 @@ async def _resolve_prices(session: AsyncSession, draft: dict, acc: int) -> None:
                 p["currency"] = default_currency
 
 
+async def _resolve_suppliers(session: AsyncSession, draft: dict, acc: int) -> None:
+    """Aniq mos kelsa — ro'yxatdagi ta'minotchi, o'xshashi bo'lmasa — aytilgancha, aks holda so'raladi."""
+    items = [(s.id, s.name) for s in await repo.list_suppliers(session, acc)]
+    aliases = await repo.get_aliases(session, acc, "supplier")
+    names = dict(items)
+    for m in draft["materials"]:
+        if m["supplier_id"] is not None or m["supplier_free"] or not m["supplier"]:
+            continue
+        res = matcher.match(m["supplier"], items, aliases)
+        if res.exact_id is not None:
+            m["supplier_id"], m["supplier"] = res.exact_id, names[res.exact_id]
+        elif not res.options:
+            m["supplier_free"] = True
+
+
 async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None:
     """Aniq mos kelsa — mavjud mijoz, o'xshashi bo'lmasa — yangi mijoz, aks holda so'raladi."""
     clients = await repo.list_clients(session, acc)
@@ -730,6 +751,8 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
         for i, m in enumerate(draft["materials"]):
             if not m["kind"]:
                 return "m_kind", i
+            if m["supplier"] and m["supplier_id"] is None and not m["supplier_free"]:
+                return "m_supplier", i
         return None
     if draft["section"] == "price":
         for i, p in enumerate(draft["prices"]):
@@ -1071,7 +1094,7 @@ def _render_material(draft: dict) -> str:
             m["kind"], m["name"], m["quantity"], m["unit"], m["price"], m["total"], m["currency"]
         )
         if m["supplier"]:
-            row += f"\n   🏪 {escape(m['supplier'])}"
+            row += f"\n   🏪 {escape(m['supplier'])}" + ("" if m["supplier_id"] or m["supplier_free"] else "?")
         rows.append(row)
         if m["total"]:
             totals[m["currency"]] = totals.get(m["currency"], Decimal(0)) + Decimal(m["total"])
@@ -1081,10 +1104,22 @@ def _render_material(draft: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _present_material(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
+async def _present_material(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     text = _render_material(draft)
-    if next_missing(draft) is None:
+    missing = next_missing(draft)
+    if missing is None:
         return text + "\n\n<b>To'g'rimi?</b>", kbs.draft_kb(with_date_buttons=True)
+    kind, i = missing
+    if kind == "m_supplier":
+        query = draft["materials"][i]["supplier"]
+        acc = user.account_id
+        items = [(s.id, s.name) for s in await repo.list_suppliers(session, acc)]
+        aliases = await repo.get_aliases(session, acc, "supplier")
+        options = [(o[0], o[1]) for o in matcher.match(query, items, aliases).options] or items[:20]
+        return (
+            text + f"\n\n❓ «{escape(query)}» — qaysi ta'minotchi? Ro'yxatdagisiga undan olinganda xabar boradi.",
+            kbs.resolve_kb("supplier", i, options, query, new_label="✍️ Ro'yxatda yo'q"),
+        )
     return text + "\n\n❓ Qanday xom ashyo? Masalan: <i>teri</i>, <i>kley</i>, <i>padosh</i>.", kbs.cancel_only_kb()
 
 
@@ -1260,7 +1295,7 @@ async def _present_client(session: AsyncSession, draft: dict, user: User) -> tup
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi."""
     if draft["section"] == "material":
-        return _present_material(draft)
+        return await _present_material(session, draft, user)
     if draft["section"] == "price":
         return await _present_price(session, draft, user)
     if draft["section"] == "client":

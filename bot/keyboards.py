@@ -56,7 +56,8 @@ class DraftCb(CallbackData, prefix="d"):
 
 
 class ResolveCb(CallbackData, prefix="r"):
-    kind: str  # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb) | pworker (pul)
+    # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb) | pworker (pul) | supplier
+    kind: str
     line: int
     item_id: int  # 0 — yangi qo'shish
 
@@ -124,6 +125,11 @@ class WorkerCb(CallbackData, prefix="wk"):
     value: int = 0
 
 
+class SupplierCb(CallbackData, prefix="sp"):
+    action: str  # list | open | add | link | toggle
+    supplier_id: int = 0
+
+
 class JobCb(CallbackData, prefix="jb"):
     action: str  # list | add | rename | del
     job_id: int = 0
@@ -167,13 +173,13 @@ def cancel_only_kb() -> InlineKeyboardMarkup:
 
 
 def resolve_kb(
-    kind: str, line: int, options: list[tuple[int, str]], allow_new: str | None
+    kind: str, line: int, options: list[tuple[int, str]], allow_new: str | None, new_label: str = "➕ Yangi"
 ) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for item_id, name in options:
         kb.button(text=name, callback_data=ResolveCb(kind=kind, line=line, item_id=item_id))
     if allow_new:
-        kb.button(text=f"➕ Yangi: {allow_new[:30]}", callback_data=ResolveCb(kind=kind, line=line, item_id=0))
+        kb.button(text=f"{new_label}: {allow_new[:30]}", callback_data=ResolveCb(kind=kind, line=line, item_id=0))
     kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
     kb.adjust(2)
     return kb.as_markup()
@@ -314,7 +320,8 @@ def materials_report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Shu hafta", callback_data=MaterialReportCb(period="week"))
     kb.button(text="Shu oy", callback_data=MaterialReportCb(period="month"))
     kb.button(text="🕘 Oxirgi xaridlar", callback_data=MaterialReportCb(period="recent"))
-    kb.adjust(3, 1)
+    kb.button(text="🏪 Ta'minotchilar", callback_data=SupplierCb(action="list"))
+    kb.adjust(3, 2)
     add_app_button(kb, "materials")
     return kb.as_markup()
 

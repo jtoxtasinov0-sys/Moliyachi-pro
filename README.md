@@ -51,6 +51,17 @@ miqdori va birligini, narxini (bir birlik yoki jami) va kimdan olinganini ajrati
 aytilmasa ham yoziladi. Botda «🧱 Xom ashyo» — kun/hafta/oy bo'yicha turlari va summasi, ilovada «Jamoa → Xom
 ashyo» va bosh sahifadagi karta.
 
+**🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
+🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga
+bir martalik taklif havolasi beriladi — ta'minotchi bosganda botga ulanadi (ishchi bo'lmaydi, faqat xabar oladi).
+Keyin «Xayrulloh Uz charmdan 1 millionlik material oldim» desangiz, xarid xom ashyoga yoziladi va Xayrulloh Uz
+charmga xabar boradi: «Jasur sizdan xom ashyo oldi — Material 1 000 000 so'm», egasiga esa «📨 Xabar yuborildi».
+Ism qo'shimcha bilan yoki qisman aytilsa ham topiladi («Xayrullohdan», «Uz charmdan»); ikki o'xshash ta'minotchi
+bo'lsa — bot so'raydi va tanlovni eslab qoladi. Ta'minotchi hali ulanmagan bo'lsa — egasiga eslatiladi; xarid
+o'chirilsa — ta'minotchiga ham xabar boradi. Ta'minotchi botga yozsa — kimning ta'minotchisi ekani va undan oxirgi
+olinganlar ko'rinadi. Ro'yxatda yo'q odam aytilsa — avvalgidek, faqat ismi yoziladi. Ta'minotchini qo'shganda
+avval shu ism bilan yozilgan xaridlar ham unga bog'lanadi.
+
 **Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi

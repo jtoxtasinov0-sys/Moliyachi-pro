@@ -1,6 +1,6 @@
 """Ma'lumotlar bazasi jadvallari.
 
-Har bir ega — alohida kabinet: ishchilar, modellar, sozlamalar, ish yozuvlari, xom ashyo,
+Har bir ega — alohida kabinet: ishchilar, modellar, sozlamalar, ish yozuvlari, xom ashyo va ta'minotchilar,
 shaxsiy xarajatlar va qarzlar egasining id si (owner_id) bilan ajratiladi.
 Bir ega boshqa eganing hech narsasini ko'rmaydi.
 """
@@ -301,6 +301,24 @@ class DebtEntry(TimestampMixin, Base):
 
 # --- 4. Xom ashyo: teri, material, kley... ----------------------------------
 
+class Supplier(Base):
+    """Xom ashyo ta'minotchisi: «Xayrulloh Uz charm». Egasi ishchidek qo'shadi va taklif havolasini yuboradi;
+    ulangach undan xom ashyo olinganda unga xabar boradi. Users jadvalida emas: botdan faqat xabar oladi
+    (bitta Telegram akkaunt bir nechta eganing ta'minotchisi yoki o'zi ham ega bo'lishi mumkin)."""
+
+    __tablename__ = "suppliers"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    tg_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # Taklif havolasi orqali ulanmaguncha shu token saqlanadi
+    invite_token: Mapped[str | None] = mapped_column(String(32), unique=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MaterialEntry(TimestampMixin, Base):
     """Sotib olingan xom ashyo: «1 list teri», «10 millionlik teri, nomi Shirin gul», «20 kg kley».
     Narx aytilmasa ham yoziladi (amount bo'sh)."""
@@ -317,6 +335,8 @@ class MaterialEntry(TimestampMixin, Base):
     amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))  # jami summa
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     supplier: Mapped[str | None] = mapped_column(String(100))  # kimdan olingan
+    # Ro'yxatdagi ta'minotchi bo'lsa — u (ismi supplier da ham), aks holda faqat aytilgan ism
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), index=True)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

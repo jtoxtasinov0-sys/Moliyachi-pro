@@ -70,7 +70,9 @@ class MaterialItem(BaseModel):
     )
     total: float = Field(description="Jami summa (\"10 millionlik\", \"jami 10 million\"), aytilmasa 0")
     currency: CurrencyOrEmpty = Field(description="Aytilmasa bo'sh satr")
-    supplier: str = Field(description="Kimdan yoki qayerdan olingani, aytilmasa bo'sh satr")
+    supplier: str = Field(
+        description="Kimdan yoki qayerdan olingani (\"Ta'minotchilar\" ro'yxatidagi yozilishi), aytilmasa bo'sh satr"
+    )
 
 
 class PayItem(BaseModel):
@@ -182,7 +184,8 @@ Ishchi ismi va dona soni aytilmaydi.
 - material — korxona uchun xom ashyo sotib olindi: teri, material (mato), podklad, kley (yelim), padosh \
 (tag), ip, furnitura (zamok, tugma, lenta), upakovka (karobka, paket): "1 list teri oldim", \
 "10 millionlik teri oldim, nomi Shirin gul", "Lider terisidan 5 list, listi 300 ming", \
-"Alisherdan 20 kg kley oldim". Bu shaxsiy xarajat (personal) emas.
+"Alisherdan 20 kg kley oldim", "Xayrulloh Uz charmdan 1 millionlik material oldim". Bu shaxsiy xarajat \
+(personal) emas.
 - client — korxona mijozlar bilan optom savdo qiladi: mijozga mol (komplekt yoki dona) berish/sotish, \
 mijozning to'lovi, mijoz molni qaytarishi: "Tohirga 10 komplekt maksima berdim, 140 mingdan", \
 "Tohir 2 million to'ladi", "Tohir 3 komplekt qaytardi".
@@ -220,7 +223,10 @@ work va price farqi: ishchi ismi yoki dona soni bo'lsa — work, faqat model, ka
 bosh harf bilan (Teri, Material, Podklad, Kley, Padosh, Ip, Furnitura, Upakovka). name — nomi yoki markasi \
 ("nomi Shirin gul", "Lider terisi" — "Lider"), "Xom ashyo nomlari" ro'yxatidagi yozilishiga keltir. \
 "listi 300 ming", "kilosi 50 ming", "300 mingdan" (miqdor bilan) — price_per_unit; "10 millionlik", \
-"10 millionga", "jami", "hammasi" — total. Narxni o'zing hisoblama, faqat aytilganini yoz.
+"10 millionga", "jami", "hammasi" — total. Narxni o'zing hisoblama, faqat aytilganini yoz. \
+supplier — kimdan olingani, qo'shimchasiz ("Xayrullohdan" — Xayrulloh); "Ta'minotchilar" ro'yxatidagi \
+odamdan olinsa — ro'yxatdagi to'liq yozilishi ("Xayrullohdan", "Uz charmdan" — Xayrulloh Uz charm). \
+"Ta'minotchilar" ro'yxatidagi odamdan xom ashyo yoki mol olinsa — material, debt emas.
 - Mijoz bilan savdo (client):
   * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
 ro'yxatida bo'lmasa ham (yangi mijoz).
@@ -258,6 +264,7 @@ _LABELS = {
     "jobs": "Kasblar",
     "material_kinds": "Xom ashyo turlari",
     "material_names": "Xom ashyo nomlari",
+    "suppliers": "Ta'minotchilar (xom ashyo kimdan olinadi)",
     "clients": "Mijozlar",
     "categories": "Kategoriyalar",
     "people": "Qarz bo'yicha odamlar",

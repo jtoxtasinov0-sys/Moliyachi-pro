@@ -29,6 +29,7 @@ from bot.db.models import (
     PayKind,
     PersonalEntry,
     PersonalKind,
+    Supplier,
     User,
     WorkEntry,
     WorkerPayment,
@@ -1122,6 +1123,7 @@ def _material_json(e: MaterialEntry) -> dict:
         "amount": _num(e.amount),
         "currency": e.currency,
         "supplier": e.supplier,
+        "supplier_id": e.supplier_id,
         "raw_text": e.raw_text,
     }
 
@@ -1177,18 +1179,104 @@ async def materials(request: web.Request, session: AsyncSession, user: User) -> 
 @endpoint(owner_only=True)
 async def material_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     limit, offset = _paging(request)
-    rows = await repo.list_material_entries(session, user.id, limit=limit + 1, offset=offset)
+    supplier_id = request.query.get("supplier_id")
+    rows = await repo.list_material_entries(
+        session, user.id, supplier_id=int(supplier_id) if supplier_id and supplier_id.isdigit() else None,
+        limit=limit + 1, offset=offset,
+    )
     return web.json_response({"items": [_material_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
 
 
 @routes.delete(r"/api/materials/{id:\d+}")
 @endpoint(owner_only=True)
 async def delete_material(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    from bot.handlers.money import supplier_deleted_message  # aylanma importdan qochish uchun
+
     entry = await repo.get_material_entry(session, user.id, int(request.match_info["id"]))
     if entry is None:
         raise ApiError(404, "Yozuv topilmadi")
     await repo.soft_delete(session, entry)
+    if notice := await supplier_deleted_message(session, user, entry):
+        _notify(request, *notice)
     return web.json_response({"ok": True})
+
+
+# --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
+
+async def _supplier_json(request: web.Request, sp: Supplier, stats: dict[int, repo.SupplierStats]) -> dict:
+    link = None
+    if sp.is_active and not sp.tg_id and sp.invite_token:
+        bot_me = await request.app["bot"].me()
+        link = f"https://t.me/{bot_me.username}?start=sup_{sp.invite_token}"
+    st = stats.get(sp.id) or repo.SupplierStats()
+    return {
+        "id": sp.id,
+        "name": sp.name,
+        "is_active": sp.is_active,
+        "linked": sp.tg_id is not None,
+        "invite_link": link,
+        "month": _money(st.month),
+        "month_count": st.month_count,
+        "total": _money(st.total),
+        "count": st.count,
+    }
+
+
+async def _supplier_stats(session: AsyncSession, owner_id: int) -> dict[int, repo.SupplierStats]:
+    return await repo.supplier_stats(session, owner_id, today().replace(day=1))
+
+
+async def _get_supplier(request: web.Request, session: AsyncSession, user: User) -> Supplier:
+    supplier = await repo.get_supplier(session, user.id, int(request.match_info["id"]))
+    if supplier is None:
+        raise ApiError(404, "Ta'minotchi topilmadi")
+    return supplier
+
+
+@routes.get("/api/suppliers")
+@endpoint(owner_only=True)
+async def suppliers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    stats = await _supplier_stats(session, user.id)
+    items = [await _supplier_json(request, sp, stats) for sp in await repo.list_suppliers(session, user.id, False)]
+    items.sort(key=lambda sp: (not sp["is_active"], -sp["month_count"], -sp["count"], sp["name"].lower()))
+    return web.json_response({"items": items})
+
+
+@routes.post("/api/suppliers")
+@endpoint(owner_only=True)
+async def add_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    data = await _json(request)
+    name = str(data.get("name") or "").strip()[:100]
+    if not name:
+        raise ApiError(400, "Nomini kiriting")
+    if await repo.get_supplier_by_name(session, user.id, name):
+        raise ApiError(400, "Bunday ta'minotchi bor")
+    supplier = await repo.create_supplier(session, user.id, name)
+    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
+
+
+@routes.post(r"/api/suppliers/{id:\d+}/toggle")
+@endpoint(owner_only=True)
+async def toggle_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    supplier = await _get_supplier(request, session, user)
+    supplier.is_active = not supplier.is_active
+    await session.flush()
+    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
+
+
+@routes.post(r"/api/suppliers/{id:\d+}/invite")
+@endpoint(owner_only=True)
+async def reinvite_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    supplier = await _get_supplier(request, session, user)
+    if not supplier.is_active:
+        raise ApiError(400, "Avval ta'minotchini faollashtiring")
+    await repo.new_supplier_token(session, supplier)
+    data = await _supplier_json(request, supplier, await _supplier_stats(session, user.id))
+    if data["invite_link"] is None:
+        # Avval ulangan bo'lsa ham — yangi havola (boshqa Telegram akkauntga o'tkazish uchun)
+        bot_me = await request.app["bot"].me()
+        data["invite_link"] = f"https://t.me/{bot_me.username}?start=sup_{supplier.invite_token}"
+    return web.json_response(data)
 
 
 # --- Ishchi bilan hisob-kitob: avans, ish haqi, qaytarilgan pul, qoldiq ------------

@@ -1,4 +1,4 @@
-"""Egasi uchun: ishchilar, kasblar, modellar va sozlamalar."""
+"""Egasi uchun: ishchilar, kasblar, modellar, ta'minotchilar va sozlamalar."""
 from html import escape
 
 from aiogram import Bot, F, Router
@@ -12,10 +12,11 @@ from bot import drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ItemModel, User
+from bot.db.models import ItemModel, Supplier, User
 from bot.handlers.entries import ledger_text, tracked
+from bot.handlers.money import supplier_month_line
 from bot.middlewares import IsOwner
-from bot.services.utils import CURRENCY_LABELS, fmt_money, parse_price
+from bot.services.utils import CURRENCY_LABELS, fmt_money, fmt_totals, parse_price, today
 
 router = Router(name="admin")
 router.message.filter(IsOwner())
@@ -27,16 +28,18 @@ class AdminSG(StatesGroup):
     job_name = State()  # yangi kasb yoki kasb nomini o'zgartirish
     model_name = State()
     model_price = State()
+    supplier_name = State()
 
 
 # --- Ishchilar --------------------------------------------------------------
 
-async def _invite_link(bot: Bot, token: str) -> str:
+async def _invite_link(bot: Bot, token: str, prefix: str = "inv") -> str:
+    """Taklif havolasi: ishchiga — inv_, ta'minotchiga — sup_."""
     me = await bot.me()
-    return f"https://t.me/{me.username}?start=inv_{token}"
+    return f"https://t.me/{me.username}?start={prefix}_{token}"
 
 
-def _status(w: User) -> str:
+def _status(w: User | Supplier) -> str:
     if not w.is_active:
         return "⛔ o'chirilgan"
     return "✅ ulangan" if w.tg_id else "🔗 havola kutilmoqda"
@@ -227,6 +230,159 @@ async def worker_new_job(call: CallbackQuery, callback_data: kbs.WorkerCb, state
     await state.update_data(worker_id=callback_data.user_id, job_id=None)
     await call.message.answer("Yangi kasb nomini yozing (masalan: <i>Upakovkachi</i>):")
     await call.answer()
+
+
+# --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
+
+SUPPLIERS_BUDGET = 3300
+
+
+async def _suppliers_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    suppliers = await repo.list_suppliers(session, owner_id, active_only=False)
+    stats = await repo.supplier_stats(session, owner_id, today().replace(day=1))
+    kb = InlineKeyboardBuilder()
+    lines = []
+    budget = SUPPLIERS_BUDGET
+    for sp in suppliers:
+        line = f"• <b>{escape(sp.name)}</b> · {_status(sp)}"
+        st = stats.get(sp.id)
+        if st is not None and st.month_count:
+            line += f"\n   {supplier_month_line(st)}"
+        if len(line) <= budget:
+            budget -= len(line) + 1
+            lines.append(line)
+        kb.button(text=f"🏪 {sp.name}", callback_data=kbs.SupplierCb(action="open", supplier_id=sp.id))
+    if len(lines) < len(suppliers):
+        lines.append(f"… yana {len(suppliers) - len(lines)} ta — ko'rish uchun tugmasini bosing")
+    kb.button(text="➕ Ta'minotchi qo'shish", callback_data=kbs.SupplierCb(action="add"))
+    kb.button(text="↩️ Xom ashyo", callback_data=kbs.MaterialReportCb(period="month"))
+    kb.adjust(*([1] * len(suppliers)), 2)
+    text = "🏪 <b>Ta'minotchilar</b> — xom ashyo kimdan olinadi\n\n" + (
+        "\n".join(lines) if lines else "Hali ta'minotchi yo'q."
+    )
+    text += (
+        "\n\n💡 Ta'minotchini qo'shib, taklif havolasini unga yuboring. U botga ulangach, undan xom ashyo "
+        "olganingizda unga xabar boradi: <i>«Xayrulloh Uz charmdan 1 millionlik material oldim»</i>."
+    )
+    return text, kb.as_markup()
+
+
+async def _supplier_card(session: AsyncSession, supplier: Supplier) -> tuple[str, InlineKeyboardMarkup]:
+    st = (await repo.supplier_stats(session, supplier.owner_id, today().replace(day=1))).get(supplier.id)
+    recent = await repo.list_material_entries(session, supplier.owner_id, supplier_id=supplier.id, limit=5)
+    kb = InlineKeyboardBuilder()
+    if supplier.is_active and not supplier.tg_id:
+        kb.button(text="🔗 Yangi taklif havolasi", callback_data=kbs.SupplierCb(action="link", supplier_id=supplier.id))
+    kb.button(
+        text="⛔ O‘chirish (xabar bormaydi)" if supplier.is_active else "✅ Qayta faollashtirish",
+        callback_data=kbs.SupplierCb(action="toggle", supplier_id=supplier.id),
+    )
+    kb.button(text="↩️ Ta'minotchilar", callback_data=kbs.SupplierCb(action="list"))
+    kb.adjust(1)
+    parts = [f"🏪 <b>{escape(supplier.name)}</b>\n\nHolati: {_status(supplier)}"]
+    if st is not None:
+        total = fmt_totals(st.total) if st.total else "narxi aytilmagan"
+        parts.append(f"{supplier_month_line(st)}\nHammasi: <b>{total}</b> ({st.count} ta xarid)")
+    if recent:
+        rows = [
+            f"• {e.entry_date.strftime('%d.%m')} — "
+            + drafts.material_line(e.kind, e.name, e.quantity, e.unit, e.unit_price, e.amount, e.currency)
+            for e in recent
+        ]
+        parts.append("🕘 <b>Oxirgi xaridlar</b>\n" + "\n".join(rows))
+    if not supplier.is_active:
+        parts.append("O'chirilgan: undan olinganda xabar bormaydi.")
+    elif supplier.tg_id:
+        parts.append(
+            f"Undan xom ashyo olganingizda ayting: <i>«{escape(supplier.name)}dan 1 millionlik material oldim»</i> — "
+            "unga xabar boradi."
+        )
+    else:
+        parts.append("Taklif havolasini unga yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.")
+    return "\n\n".join(parts), kb.as_markup()
+
+
+async def _get_supplier(call: CallbackQuery, session: AsyncSession, user: User, supplier_id: int) -> Supplier | None:
+    supplier = await repo.get_supplier(session, user.id, supplier_id)
+    if supplier is None:
+        await call.answer("Ta'minotchi topilmadi.", show_alert=True)
+    return supplier
+
+
+@router.callback_query(kbs.SupplierCb.filter(F.action == "list"))
+async def suppliers_list(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    text, kb = await _suppliers_view(session, user.id)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.SupplierCb.filter(F.action == "open"))
+async def supplier_open(
+    call: CallbackQuery, callback_data: kbs.SupplierCb, session: AsyncSession, user: User
+) -> None:
+    supplier = await _get_supplier(call, session, user, callback_data.supplier_id)
+    if supplier is None:
+        return
+    text, kb = await _supplier_card(session, supplier)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.SupplierCb.filter(F.action == "add"))
+async def supplier_add(call: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AdminSG.supplier_name)
+    await call.message.answer(
+        "Ta'minotchining ismi yoki do'koni nomini yozing (masalan: <i>Xayrulloh Uz charm</i>):"
+    )
+    await call.answer()
+
+
+@router.message(AdminSG.supplier_name, F.text, ~F.text.in_(kbs.MENU_TEXTS))
+async def supplier_add_name(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
+    name = message.text.strip()[:100]
+    if not name or name.startswith("/"):
+        await message.answer("Nom bo'sh bo'lmasin. Qaytadan yozing:")
+        return
+    if await repo.get_supplier_by_name(session, user.id, name):
+        await message.answer("Bunday ta'minotchi bor. Boshqa nom yozing:")
+        return
+    supplier = await repo.create_supplier(session, user.id, name)
+    await state.clear()
+    link = await _invite_link(bot, supplier.invite_token, "sup")
+    await message.answer(
+        f"✅ <b>{escape(supplier.name)}</b> qo'shildi.\n\n"
+        "Ushbu havolani unga yuboring — u bosganda bot unga ulanadi va undan xom ashyo olganingizda "
+        f"xabar oladi:\n{link}\n\nHavola bir martalik."
+    )
+    text, kb = await _supplier_card(session, supplier)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(kbs.SupplierCb.filter(F.action == "link"))
+async def supplier_link(
+    call: CallbackQuery, callback_data: kbs.SupplierCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    supplier = await _get_supplier(call, session, user, callback_data.supplier_id)
+    if supplier is None:
+        return
+    link = await _invite_link(bot, await repo.new_supplier_token(session, supplier), "sup")
+    await call.message.answer(f"🔗 <b>{escape(supplier.name)}</b> uchun yangi havola:\n{link}")
+    await call.answer()
+
+
+@router.callback_query(kbs.SupplierCb.filter(F.action == "toggle"))
+async def supplier_toggle(
+    call: CallbackQuery, callback_data: kbs.SupplierCb, session: AsyncSession, user: User
+) -> None:
+    supplier = await _get_supplier(call, session, user, callback_data.supplier_id)
+    if supplier is None:
+        return
+    supplier.is_active = not supplier.is_active
+    await session.flush()
+    text, kb = await _supplier_card(session, supplier)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer("Faollashtirildi" if supplier.is_active else "O'chirildi — endi xabar bormaydi")
 
 
 # --- Kasblar ----------------------------------------------------------------

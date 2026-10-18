@@ -23,6 +23,7 @@ from bot.db.models import (
     User,
 )
 from bot.drafts import CLIENT_KIND_LABELS, debt_line, material_line, qty_text
+from bot.handlers.entries import notify_user
 from bot.middlewares import IsOwner
 from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, period_range
 
@@ -69,12 +70,31 @@ def client_text(e: ClientEntry) -> str:
     return text
 
 
-def material_text(e: MaterialEntry) -> str:
-    """«🧱 <b>Teri</b> «Shirin gul» — 1 list = 10 000 000 so'm\n🏪 Alisher\n📅 18.10.2026»"""
+def material_text(e: MaterialEntry, supplier: bool = True) -> str:
+    """«🧱 <b>Teri</b> «Shirin gul» — 1 list = 10 000 000 so'm\n🏪 Alisher\n📅 18.10.2026».
+    supplier=False — ta'minotchining o'ziga: kimdan olingani ko'rsatilmaydi."""
     text = "🧱 " + material_line(e.kind, e.name, e.quantity, e.unit, e.unit_price, e.amount, e.currency)
-    if e.supplier:
+    if supplier and e.supplier:
         text += f"\n🏪 {escape(e.supplier)}"
     return text + f"\n📅 {fmt_date(e.entry_date)}"
+
+
+def supplier_month_line(st: repo.SupplierStats) -> str:
+    """«🧾 Shu oy jami: 5 000 000 so'm (3 ta xarid)»."""
+    return f"🧾 Shu oy jami: {_sum_text(st.month)} ({st.month_count} ta xarid)"
+
+
+async def supplier_deleted_message(
+    session: AsyncSession, owner: User, entry: MaterialEntry
+) -> tuple[int, str] | None:
+    """O'chirilgan xarid ta'minotchidan olingan bo'lsa — unga xabar (avval «sizdan oldi» deb borgan): (chat, matn)."""
+    if not entry.supplier_id:
+        return None
+    supplier = await repo.get_supplier(session, owner.id, entry.supplier_id)
+    if supplier is None or not supplier.is_active or not supplier.tg_id:
+        return None
+    text = f"🗑 <b>{escape(owner.name)}</b> bu yozuvni o'chirdi:\n\n<s>{material_text(entry, supplier=False)}</s>"
+    return supplier.tg_id, text
 
 
 async def material_month_line(session: AsyncSession, owner_id: int) -> str:
@@ -408,5 +428,7 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
             extra = "\n\n" + await client_balance_line(session, user.id, entry.client)
         await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi{extra}")
         await call.answer("O'chirildi")
+        if isinstance(entry, MaterialEntry) and (notice := await supplier_deleted_message(session, user, entry)):
+            await notify_user(call.bot, *notice)
     else:
         await call.answer()
