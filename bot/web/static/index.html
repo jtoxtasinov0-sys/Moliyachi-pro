@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=17">
+  <link rel="stylesheet" href="static/style.css?v=18">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -124,6 +124,12 @@
           <div class="hero-range" id="heroRange"></div>
         </div>
 
+        <!-- Ishchida: hisob-kitob — ishlar, olgan pul va qoldiq -->
+        <div class="card" id="ledgerCard" hidden>
+          <div class="card-head"><h3>🧾 Hisob-kitob</h3></div>
+          <div id="homeLedger"></div>
+        </div>
+
         <button class="pending-card" id="pendingCard" hidden>
           <div class="pending-icon">⏳</div>
           <div class="pending-text"><b id="pendingCount">0</b> ta yozuv tasdiq kutmoqda<small>Ko'rish va tasdiqlash</small></div>
@@ -176,6 +182,7 @@
           <button data-type="debt">🤝 Qarz</button>
           <button data-type="material">🧱 Xom ashyo</button>
           <button data-type="work">🧵 Ish</button>
+          <button data-type="pay">💵 Ish haqi</button>
         </div>
         <div class="chips" id="statusChips">
           <button data-status="" class="on">Hammasi</button>
@@ -373,6 +380,13 @@
           <p>Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.</p>
         </div>
         <div class="card help">
+          <h3>💵 Pul oldingizmi?</h3>
+          <p>Egangizdan avans yoki ish haqi olsangiz — ayting yoki yozing:</p>
+          <p class="quote">«500 ming oldim»</p>
+          <p class="quote">«15 loaf 15 sapog, 500 ming oldim»</p>
+          <p>Pul hisobingizdan ayriladi, topshirgan ishlaringiz qo'shiladi. «Asosiy» bo'limidagi «🧾 Hisob-kitob»da kunma-kun hammasi va qancha olishingiz kerakligi ko'rinadi.</p>
+        </div>
+        <div class="card help">
           <h3>📊 Hisobot</h3>
           <p>«Asosiy» bo'limida tanlangan davr uchun ish haqingiz, topshirgan donalaringiz va grafiklar ko'rinadi.</p>
         </div>
@@ -438,6 +452,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=17"></script>
+  <script src="static/app.js?v=18"></script>
 </body>
 </html>

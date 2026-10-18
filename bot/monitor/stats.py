@@ -20,6 +20,7 @@ from bot.db.models import (
     PersonalKind,
     User,
     WorkEntry,
+    WorkerPayment,
 )
 from bot.monitor.tracker import ICONS, USER_KINDS, cut, display_name, line, local, role_of
 from bot.services.utils import fmt_money
@@ -280,6 +281,7 @@ async def _entries_since(session: AsyncSession, since: datetime) -> dict[int, in
         (DebtEntry, DebtEntry.owner_id),
         (ClientEntry, ClientEntry.created_by),
         (WorkEntry, WorkEntry.created_by),
+        (WorkerPayment, WorkerPayment.created_by),
     ):
         query = select(who, func.count()).where(model.created_at >= since).group_by(who)
         for user_id, count in await session.execute(query):

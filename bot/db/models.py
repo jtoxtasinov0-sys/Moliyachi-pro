@@ -163,6 +163,40 @@ class WorkEntry(TimestampMixin, Base):
     job: Mapped[Job | None] = relationship(lazy="joined")
 
 
+class PayKind:
+    PAY = "pay"  # egasi ishchiga pul berdi (ishchi «oldim» dedi) — qoldiqdan ayriladi
+    RETURN = "return"  # ishchi pulni qaytardi («berdim», «qaytardim») — qoldiqqa qo'shiladi
+    BALANCE = "balance"  # hisob holati aytildi («Robiyaga 900 ming qarzman») — qoldiq shu summaga teng bo'ladi
+
+
+class WorkerPayment(TimestampMixin, Base):
+    """Ishchi bilan pul oldi-berdisi: avans, ish haqi, qaytarilgan pul yoki aytilgan hisob holati.
+
+    Ishchi qoldig'i = tasdiqlangan ishlar summasi − berilgan pul + qaytarilgan pul: musbat — egasi ishchiga
+    qarzdor (ishchi olishi kerak), manfiy — ishchi ortiqcha olgan. BALANCE yozuvida amount — shu paytdagi
+    qoldiqning o'zi (manfiy bo'lishi mumkin), keyingi yozuvlar shu qoldiqdan davom etadi.
+    """
+
+    __tablename__ = "worker_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    worker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # PayKind
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    note: Mapped[str | None] = mapped_column(Text)
+    entry_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(10), default=EntryStatus.APPROVED, index=True)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    worker: Mapped[User] = relationship(foreign_keys=[worker_id], lazy="joined")
+
+
 # --- 2. Mijozlar: optom savdo ---------------------------------------------
 
 class Client(Base):

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,11 +24,13 @@ from bot.db.models import (
     Job,
     MaterialEntry,
     ModelPrice,
+    PayKind,
     PersonalEntry,
     Role,
     Setting,
     User,
     WorkEntry,
+    WorkerPayment,
 )
 from bot.services.matcher import normalize
 
@@ -425,6 +427,8 @@ async def create_work_entry(
         status=status,
         raw_text=raw_text,
         created_by=created_by,
+        # Vaqt ilovada qo'yiladi: bir saqlashdagi yozuvlar ham har xil vaqtda bo'ladi (hisob-kitob tartibi uchun)
+        created_at=_now(),
     )
     session.add(entry)
     await session.flush()
@@ -433,7 +437,8 @@ async def create_work_entry(
 
 
 async def soft_delete(
-    session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry | ClientEntry | MaterialEntry
+    session: AsyncSession,
+    entry: WorkEntry | PersonalEntry | DebtEntry | ClientEntry | MaterialEntry | WorkerPayment,
 ) -> None:
     entry.deleted_at = _now()
     await session.flush()
@@ -636,6 +641,314 @@ async def count_pending(session: AsyncSession, owner_id: int, worker_id: int | N
     if worker_id is not None:
         q = q.where(WorkEntry.worker_id == worker_id)
     return int(await session.scalar(q) or 0)
+
+
+# --- Ishchi bilan hisob-kitob: avans, ish haqi, qaytarilgan pul ---------------
+
+async def create_payment(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    worker_id: int,
+    kind: str,
+    amount: Decimal,
+    currency: str,
+    note: str | None,
+    entry_date: date,
+    status: str,
+    raw_text: str | None,
+    created_by: int,
+) -> WorkerPayment:
+    """kind=BALANCE da amount — qoldiqning o'zi: musbat — egasi qarzdor, manfiy — ishchi ortiqcha olgan."""
+    entry = WorkerPayment(
+        owner_id=owner_id,
+        worker_id=worker_id,
+        kind=kind,
+        amount=amount,
+        currency=currency,
+        note=note,
+        entry_date=entry_date,
+        status=status,
+        raw_text=raw_text,
+        created_by=created_by,
+        created_at=_now(),
+    )
+    session.add(entry)
+    await session.flush()
+    await session.refresh(entry, ["worker"])
+    return entry
+
+
+async def get_payment(session: AsyncSession, owner_id: int, payment_id: int) -> WorkerPayment | None:
+    entry = await session.get(WorkerPayment, payment_id)
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
+        return None
+    return entry
+
+
+async def review_payment(session: AsyncSession, entry: WorkerPayment, reviewer: User, approve: bool) -> None:
+    entry.status = EntryStatus.APPROVED if approve else EntryStatus.REJECTED
+    entry.reviewed_by = reviewer.id
+    entry.reviewed_at = _now()
+    await session.flush()
+
+
+async def list_payments(
+    session: AsyncSession,
+    owner_id: int,
+    *,
+    worker_id: int | None = None,
+    status: str | None = None,
+    limit: int = 30,
+    offset: int = 0,
+) -> list[WorkerPayment]:
+    q = (
+        select(WorkerPayment)
+        .where(WorkerPayment.owner_id == owner_id, WorkerPayment.deleted_at.is_(None))
+        .order_by(WorkerPayment.entry_date.desc(), WorkerPayment.created_at.desc(), WorkerPayment.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if worker_id is not None:
+        q = q.where(WorkerPayment.worker_id == worker_id)
+    if status:
+        q = q.where(WorkerPayment.status == status)
+    return list(await session.scalars(q))
+
+
+async def count_pending_payments(session: AsyncSession, owner_id: int, worker_id: int | None = None) -> int:
+    q = select(func.count(WorkerPayment.id)).where(
+        WorkerPayment.owner_id == owner_id,
+        WorkerPayment.deleted_at.is_(None),
+        WorkerPayment.status == EntryStatus.PENDING,
+    )
+    if worker_id is not None:
+        q = q.where(WorkerPayment.worker_id == worker_id)
+    return int(await session.scalar(q) or 0)
+
+
+def _dec(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+
+
+def _add_to(totals: dict[str, Decimal], currency: str, value: Decimal) -> None:
+    totals[currency] = totals.get(currency, Decimal(0)) + value
+
+
+@dataclass
+class WorkerBalance:
+    worker_id: int
+    # valyuta -> qoldiq: musbat — egasi ishchiga qarzdor (ishchi olishi kerak), manfiy — ishchi ortiqcha olgan
+    balance: dict[str, Decimal] = field(default_factory=dict)
+    # Oxirgi aytilgan hisob holati (since sanasida) va undan keyingi harakatlar; aytilmagan bo'lsa — boshidan
+    since: date | None = None
+    start: dict[str, Decimal] = field(default_factory=dict)
+    earned: dict[str, Decimal] = field(default_factory=dict)  # tasdiqlangan ishlar summasi
+    paid: dict[str, Decimal] = field(default_factory=dict)  # ishchi olgan pul
+    returned: dict[str, Decimal] = field(default_factory=dict)  # ishchi qaytargan pul
+
+    @property
+    def settled(self) -> bool:
+        return not any(self.balance.values())
+
+
+def _before(date_col, ts_col, key: tuple[date, datetime]):
+    d, ts = key
+    return or_(date_col < d, and_(date_col == d, ts_col < ts))
+
+
+def _after(date_col, ts_col, key: tuple[date, datetime]):
+    d, ts = key
+    return or_(date_col > d, and_(date_col == d, ts_col > ts))
+
+
+async def worker_balances(
+    session: AsyncSession,
+    owner_id: int,
+    worker_ids: list[int] | None = None,
+    before: tuple[date, datetime] | None = None,
+) -> dict[int, WorkerBalance]:
+    """Ishchilar qoldig'i: oxirgi aytilgan hisob holati + undan keyingi ishlar − olingan + qaytarilgan pul.
+
+    Faqat tasdiqlangan yozuvlar. before=(sana, vaqt) — shu paytgacha bo'lgan qoldiq (hisob-kitob ro'yxati uchun).
+    Harakatlar tartibi: sana, keyin kiritilgan vaqti.
+    """
+    alive = (
+        WorkerPayment.owner_id == owner_id,
+        WorkerPayment.deleted_at.is_(None),
+        WorkerPayment.status == EntryStatus.APPROVED,
+    )
+    st_q = select(WorkerPayment).where(*alive, WorkerPayment.kind == PayKind.BALANCE)
+    if worker_ids is not None:
+        st_q = st_q.where(WorkerPayment.worker_id.in_(worker_ids))
+    if before is not None:
+        st_q = st_q.where(_before(WorkerPayment.entry_date, WorkerPayment.created_at, before))
+    statements: dict[int, WorkerPayment] = {}
+    for p in await session.scalars(
+        st_q.order_by(WorkerPayment.entry_date, WorkerPayment.created_at, WorkerPayment.id)
+    ):
+        statements[p.worker_id] = p  # eng oxirgisi qoladi
+
+    def scope(date_col, ts_col, worker_col) -> list:
+        conds = []
+        if worker_ids is not None:
+            conds.append(worker_col.in_(worker_ids))
+        if statements:
+            conds.append(
+                or_(
+                    worker_col.not_in(list(statements)),
+                    *(
+                        and_(worker_col == wid, _after(date_col, ts_col, (p.entry_date, p.created_at)))
+                        for wid, p in statements.items()
+                    ),
+                )
+            )
+        if before is not None:
+            conds.append(_before(date_col, ts_col, before))
+        return conds
+
+    out: dict[int, WorkerBalance] = {}
+
+    def get(worker_id: int) -> WorkerBalance:
+        return out.setdefault(worker_id, WorkerBalance(worker_id=worker_id))
+
+    for wid, p in statements.items():
+        b = get(wid)
+        b.since = p.entry_date
+        if p.amount:
+            b.start[p.currency] = _dec(p.amount)
+
+    work_q = (
+        _work_rows_query(WorkEntry.worker_id, _REPORT_CURRENCY, func.sum(WorkEntry.quantity * _REPORT_PRICE))
+        .where(
+            WorkEntry.owner_id == owner_id,
+            WorkEntry.deleted_at.is_(None),
+            WorkEntry.status == EntryStatus.APPROVED,
+            *scope(WorkEntry.work_date, WorkEntry.created_at, WorkEntry.worker_id),
+        )
+        .group_by(WorkEntry.worker_id, _REPORT_CURRENCY)
+    )
+    for wid, currency, total in await session.execute(work_q):
+        if total is not None and currency:
+            _add_to(get(wid).earned, currency, _dec(total))
+
+    pay_q = (
+        select(WorkerPayment.worker_id, WorkerPayment.kind, WorkerPayment.currency, func.sum(WorkerPayment.amount))
+        .where(
+            *alive,
+            WorkerPayment.kind.in_((PayKind.PAY, PayKind.RETURN)),
+            *scope(WorkerPayment.entry_date, WorkerPayment.created_at, WorkerPayment.worker_id),
+        )
+        .group_by(WorkerPayment.worker_id, WorkerPayment.kind, WorkerPayment.currency)
+    )
+    for wid, kind, currency, total in await session.execute(pay_q):
+        b = get(wid)
+        _add_to(b.paid if kind == PayKind.PAY else b.returned, currency, _dec(total))
+
+    for b in out.values():
+        balance: dict[str, Decimal] = {}
+        for sign, part in ((1, b.start), (1, b.earned), (-1, b.paid), (1, b.returned)):
+            for currency, value in part.items():
+                _add_to(balance, currency, sign * value)
+        b.balance = {c: v for c, v in balance.items() if v}
+    return out
+
+
+async def worker_balance(session: AsyncSession, owner_id: int, worker_id: int) -> WorkerBalance:
+    return (await worker_balances(session, owner_id, [worker_id])).get(worker_id) or WorkerBalance(worker_id)
+
+
+@dataclass
+class LedgerRow:
+    kind: str  # "work" yoki PayKind
+    entry: WorkEntry | WorkerPayment
+    # Qoldiqqa ta'siri (ishda — ish haqi, olinganda — manfiy); BALANCE da — aytilgan qoldiq
+    delta: dict[str, Decimal]
+    counted: bool  # tasdiqlangan — qoldiqqa kirgan
+    balance: dict[str, Decimal] = field(default_factory=dict)  # shu yozuvdan keyingi qoldiq
+
+    @property
+    def day(self) -> date:
+        return self.entry.work_date if isinstance(self.entry, WorkEntry) else self.entry.entry_date
+
+
+def _naive_utc(dt: datetime | None) -> datetime:
+    if dt is None:
+        return datetime.min
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+# Bir vaqtda kiritilgan bo'lsa: avval ish, keyin pul, oxirida hisob holati
+_LEDGER_TIE = {"work": 0, PayKind.PAY: 1, PayKind.RETURN: 1, PayKind.BALANCE: 2}
+
+
+def _ledger_key(row: LedgerRow) -> tuple:
+    return (row.day, _naive_utc(row.entry.created_at), _LEDGER_TIE.get(row.kind, 1), row.entry.id)
+
+
+def work_pay(entry: WorkEntry, prices: dict[int, dict[int, ModelPrice]]) -> tuple[Decimal | None, str | None]:
+    """Yozuvning ish haqi — hisobotdagidek: yozilgan narx, bo'lmasa kasb narxi, u ham bo'lmasa umumiy narx."""
+    row = prices.get(entry.model_id, {}).get(entry.job_id) if entry.job_id else None
+    price = entry.unit_price
+    if price is None:
+        price = row.price if row is not None else entry.model.price
+    currency = entry.price_currency or (row.currency if row is not None else entry.model.currency)
+    if price is None or not currency:
+        return None, None
+    return _dec(price * entry.quantity), currency
+
+
+async def worker_ledger(
+    session: AsyncSession, owner_id: int, worker_id: int, limit: int = 30, offset: int = 0
+) -> tuple[list[LedgerRow], bool]:
+    """Ishchi hisob-kitobi (yangisi birinchi): ishlar va pul harakatlari, har biridan keyingi qoldiq bilan.
+    Rad etilganlar ko'rsatilmaydi, tasdiq kutayotganlar — qoldiqqa kirmasdan."""
+    need = offset + limit + 1
+    works = list(
+        await session.scalars(
+            select(WorkEntry)
+            .where(
+                WorkEntry.owner_id == owner_id,
+                WorkEntry.worker_id == worker_id,
+                WorkEntry.deleted_at.is_(None),
+                WorkEntry.status != EntryStatus.REJECTED,
+            )
+            .order_by(WorkEntry.work_date.desc(), WorkEntry.created_at.desc(), WorkEntry.id.desc())
+            .limit(need)
+        )
+    )
+    payments = [
+        p
+        for p in await list_payments(session, owner_id, worker_id=worker_id, limit=need)
+        if p.status != EntryStatus.REJECTED
+    ]
+    prices = await model_prices(session, list({e.model_id for e in works}))
+
+    rows: list[LedgerRow] = []
+    for e in works:
+        pay, currency = work_pay(e, prices)
+        delta = {currency: pay} if pay else {}
+        rows.append(LedgerRow("work", e, delta, e.status == EntryStatus.APPROVED))
+    for p in payments:
+        amount = _dec(p.amount)
+        delta = {p.currency: -amount if p.kind == PayKind.PAY else amount}
+        rows.append(LedgerRow(p.kind, p, delta, p.status == EntryStatus.APPROVED))
+    rows.sort(key=_ledger_key, reverse=True)
+    rows = rows[:need]
+
+    # Hozirgi qoldiqdan orqaga: har bir yozuvdan keyingi qoldiq
+    running = dict((await worker_balance(session, owner_id, worker_id)).balance)
+    for row in rows[: offset + limit]:
+        row.balance = {c: v for c, v in running.items() if v}
+        if not row.counted:
+            continue
+        if row.kind == PayKind.BALANCE:
+            prev = await worker_balances(session, owner_id, [worker_id], before=(row.day, row.entry.created_at))
+            running = dict(prev[worker_id].balance) if worker_id in prev else {}
+        else:
+            for currency, value in row.delta.items():
+                running[currency] = running.get(currency, Decimal(0)) - value
+    return rows[offset : offset + limit], len(rows) > offset + limit
 
 
 # --- Shaxsiy xarajat / daromad ----------------------------------------------

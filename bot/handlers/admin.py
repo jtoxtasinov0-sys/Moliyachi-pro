@@ -8,10 +8,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot import drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ItemModel, User
+from bot.handlers.entries import ledger_text, tracked
 from bot.middlewares import IsOwner
 from bot.services.utils import CURRENCY_LABELS, fmt_money, parse_price
 
@@ -48,12 +50,16 @@ def _rows(count: int, size: int) -> list[int]:
 async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
     workers = await repo.list_workers(session, owner_id, active_only=False)
     jobs = {j.id: j.name for j in await repo.list_jobs(session, owner_id)}
+    balances = await repo.worker_balances(session, owner_id)
     kb = InlineKeyboardBuilder()
     lines = []
     for w in workers:
         job = jobs.get(w.job_id)
         what = escape(job) if job else "kasbi tanlanmagan"
-        lines.append(f"• <b>{escape(w.name)}</b> — {what} · {_status(w)}")
+        line = f"• <b>{escape(w.name)}</b> — {what} · {_status(w)}"
+        if tracked(balances.get(w.id)):
+            line += f"\n   🧾 qoldiq: {drafts.fmt_signed(balances[w.id].balance)}"
+        lines.append(line)
         label = f"👷 {w.name} · {job}" if job else f"👷 {w.name}"
         kb.button(text=label, callback_data=kbs.WorkerCb(action="open", user_id=w.id))
     kb.button(text="➕ Ishchi qo'shish", callback_data=kbs.WorkerCb(action="add"))
@@ -77,6 +83,7 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
         callback_data=kbs.WorkerCb(action="job", user_id=worker.id, value=0),
     )
     kb.button(text="➕ Yangi kasb", callback_data=kbs.WorkerCb(action="newjob", user_id=worker.id))
+    kb.button(text="🧾 Hisob-kitob", callback_data=kbs.WorkerCb(action="ledger", user_id=worker.id))
     if worker.is_active and not worker.tg_id:
         kb.button(text="🔗 Yangi taklif havolasi", callback_data=kbs.WorkerCb(action="link", user_id=worker.id))
     kb.button(
@@ -86,12 +93,21 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     kb.button(text="↩️ Ishchilar", callback_data=kbs.WorkerCb(action="list"))
     kb.adjust(*_rows(len(jobs) + 2, 2), 1)
     job = f"<b>{escape(current.name)}</b>" if current else "tanlanmagan"
+    b = await repo.worker_balance(session, worker.owner_id, worker.id)
     text = (
         f"👷 <b>{escape(worker.name)}</b>\n\n"
         f"🏷 Kasbi: {job}\n"
-        f"Holati: {_status(worker)}\n\n"
+        f"Holati: {_status(worker)}\n"
+        f"{drafts.balance_text(b.balance, worker.name)}\n\n"
         "Kasbini tanlang. Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi."
     )
+    if not tracked(b):
+        text += (
+            "\n\n💡 Qoldiq — hamma ishlari summasi (pul yozilmagan). Avval hisobni boshlang: "
+            f"<i>«{escape(worker.name)} bilan hisob yopildi»</i> yoki <i>«{escape(worker.name)}ga 900 ming "
+            "qarzman»</i>, keyin pul berganingizda ayting: "
+            f"<i>«{escape(worker.name)}ga 500 ming berdim»</i>."
+        )
     return text, kb.as_markup()
 
 
@@ -124,6 +140,15 @@ async def worker_open(call: CallbackQuery, callback_data: kbs.WorkerCb, session:
         return
     text, kb = await _worker_card(session, worker)
     await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.WorkerCb.filter(F.action == "ledger"))
+async def worker_ledger(call: CallbackQuery, callback_data: kbs.WorkerCb, session: AsyncSession, user: User) -> None:
+    worker = await _get_worker(call, session, user, callback_data.user_id)
+    if worker is None:
+        return
+    await call.message.answer(await ledger_text(session, user, worker), reply_markup=kbs.app_kb("ledger"))
     await call.answer()
 
 

@@ -278,6 +278,8 @@ function drawDonut(key, canvasId, legendId, items, fmtValue, fmtLegend) {
 
 async function loadDashboard() {
   if (state.me.is_owner) loadHomeMoney();
+  else if (ledger.el === $("homeLedger")) loadLedger(false);
+  else openLedger($("homeLedger"), null);
   try {
     state.dash = await api(`/api/dashboard?period=${state.period}`);
     renderDashboard();
@@ -402,6 +404,18 @@ function feedRow(e, opts = {}) {
       if (e.unit_price != null) sub.push(money(e.unit_price, e.currency) + (e.price_unit === "piece" ? " / dona" : " / komplekt"));
     }
     if (e.note) sub.push(e.note);
+  } else if (e.type === "pay") {
+    const who = e.worker.name;
+    icon = PAY_ICON[e.kind] || "💵";
+    iconCls = e.kind === "pay" ? "out" : e.kind === "return" ? "in" : "";
+    if (e.kind === "pay") title = `${who}ga berildi`;
+    else if (e.kind === "return") title = `${who} qaytardi`;
+    else if (!e.amount) title = `${who} bilan hisob yopildi`;
+    else title = e.worker_owes ? `Hisob: ${who} sizga qarzdor` : `Hisob: siz ${who}ga qarzdorsiz`;
+    amt = e.amount ? money(e.amount, e.currency) : "";
+    sub.push("Ish haqi");
+    if (e.status !== "approved") sub.push(STATUS[e.status] || e.status);
+    if (e.note) sub.push(e.note);
   } else {
     icon = "🧵";
     title = `${e.model} · ${fmtNum(e.qty)} dona`;
@@ -450,9 +464,10 @@ function renderDashboard() {
   // Egada ishchi ham, ish yozuvi ham bo'lmasa — ishxona hisoboti kerak emas
   $("workSection").hidden = isOwner && !d.has_team;
 
-  // Tasdiq kutayotganlar
-  $("pendingCard").hidden = !(isOwner && d.pending > 0);
-  $("pendingCount").textContent = d.pending;
+  // Tasdiq kutayotganlar: ish yozuvlari va ishchilar yozgan pul
+  const pendingAll = d.pending + (d.pending_pay || 0);
+  $("pendingCard").hidden = !(isOwner && pendingAll > 0);
+  $("pendingCount").textContent = pendingAll;
 
   renderTrend();
   renderModels();
@@ -556,7 +571,14 @@ function renderEntries() {
       html += `<div class="date-head">${esc(dateLabel(e.date))}</div>`;
       lastDate = e.date;
     }
-    html += isWorkItem(e) ? entryCard(e) : `<div class="entry">${feedRow(e, { del: true })}</div>`;
+    if (isWorkItem(e)) {
+      html += entryCard(e);
+      continue;
+    }
+    const review = e.type === "pay" && e.status === "pending" && state.me.is_owner
+      ? `<div class="entry-actions"><button class="act ok" data-pay-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-pay-act="reject" data-id="${e.id}">Rad etish</button></div>`
+      : "";
+    html += `<div class="entry">${feedRow(e, { del: true })}${review}</div>`;
   }
   $("entryList").innerHTML = html;
 }
@@ -609,8 +631,17 @@ const isWorkItem = (e) => !e.type || e.type === "work";
 
 const DELETE_URL = {
   expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/", client: "/api/clients/entries/",
-  material: "/api/materials/",
+  material: "/api/materials/", pay: "/api/payments/",
 };
+
+async function reviewPayment(act, id) {
+  try {
+    const upd = await api(`/api/payments/${id}/${act}`, { method: "POST" });
+    state.entries.items = state.entries.items.map((e) => (e.type === "pay" && e.id === id ? { ...e, ...upd, type: "pay" } : e));
+    renderEntries();
+    toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
+  } catch (e) { fail(e); }
+}
 
 async function deleteFeedItem(type, id) {
   if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
@@ -631,6 +662,237 @@ async function fillWorkerFilter() {
     sel.value = state.entries.workerId;
     syncChips();
   } catch (e) { fail(e); }
+}
+
+// --- Hisob-kitob: ishlar, olingan pul va qoldiq — SMS'dagidek ---------------
+// Qoldiq: musbat — egasi ishchiga berishi kerak, manfiy — ishchi ortiqcha olgan (avans).
+// Ishchida — bosh sahifada, egada — ishchi oynasida (bir vaqtda bittasi ochiq bo'ladi).
+
+const PAY_ICON = { pay: "💵", return: "↩️", balance: "🧾" };
+const LEDGER_PAGE = 20;
+const ledger = { el: null, workerId: null, data: null, items: [], busy: false };
+
+function signedMoney(amounts) {
+  const parts = Object.entries(amounts || {}).filter(([, v]) => v).map(([c, v]) => (v < 0 ? "−" : "") + money(Math.abs(v), c));
+  return parts.length ? parts.join(" + ") : "0";
+}
+
+// «500 000», «500.000», «500 ming», «1,5 mln», «-200000» -> son (yozilmasa null)
+function parseAmount(text) {
+  let t = String(text || "").toLowerCase().replace(/so['‘’ʻ]?m|сўм|сум|uzs/g, "").trim();
+  const neg = /^[-−]/.test(t);
+  t = t.replace(/^[-−]\s*/, "");
+  let mult = 1;
+  if (/(mln|million|млн)/.test(t)) { mult = 1e6; t = t.replace(/(mln|million|млн)/g, ""); }
+  else if (/(ming|минг|k$)/.test(t)) { mult = 1e3; t = t.replace(/(ming|минг|k$)/g, ""); }
+  t = t.trim();
+  if (/^\d{1,3}([ .,]\d{3})+$/.test(t)) t = t.replace(/[ .,]/g, "");
+  else t = t.replace(/\s/g, "").replace(",", ".");
+  if (!t || !/^\d*\.?\d+$/.test(t)) return null;
+  const n = Math.round(Number(t) * mult * 100) / 100;
+  return neg ? -n : n;
+}
+
+// Katta raqam: «Olishingiz kerak 400 000 so'm» / «Robiyaga berishingiz kerak»
+function balanceHead(amounts, name) {
+  const abs = Object.fromEntries(Object.entries(amounts || {}).map(([c, v]) => [c, Math.abs(v)]));
+  const cur = mainCurrency(abs);
+  const main = (amounts || {})[cur] || 0;
+  let label = name ? `${name} bilan hisob yopilgan` : "Hisob yopilgan";
+  let cls = "";
+  if (main > 0) { label = name ? `${name}ga berishingiz kerak` : "Olishingiz kerak"; cls = "pos"; }
+  else if (main < 0) { label = name ? `${name} ortiqcha olgan (avans)` : "Ortiqcha olgansiz (avans)"; cls = "neg"; }
+  const others = Object.entries(amounts || {}).filter(([c, v]) => c !== cur && v)
+    .map(([c, v]) => (v < 0 ? "− " : "+ ") + money(Math.abs(v), c)).join("  ");
+  return { label, cls, others, html: `${fmtNum(Math.abs(main))}<small>${esc(CUR[cur] || cur)}</small>` };
+}
+
+function payTitle(e, owner) {
+  if (e.kind === "balance") {
+    if (!e.amount) return "Hisob yopildi";
+    if (owner) return e.worker_owes ? "Hisob: ishchi sizga qarzdor" : "Hisob: siz qarzdorsiz";
+    return e.worker_owes ? "Hisob: siz qarzdorsiz" : "Hisob: egangiz sizga qarzdor";
+  }
+  if (e.kind === "pay") return owner ? "Berildi" : "Oldingiz";
+  return owner ? "Qaytardi" : "Qaytardingiz";
+}
+
+function ledgerRow(e, owner) {
+  let title, amt, cls;
+  if (e.type === "work") {
+    title = `🧵 ${e.model} — ${fmtNum(e.qty)} dona`;
+    amt = Object.keys(e.delta).length ? "+" + moneyList(e.delta) : "narx yo'q";
+    cls = "work";
+  } else {
+    title = `${PAY_ICON[e.kind] || "💵"} ${payTitle(e, owner)}`;
+    amt = e.kind === "balance" ? (e.amount ? money(e.amount, e.currency) : "0") : (e.kind === "pay" ? "−" : "+") + money(e.amount, e.currency);
+    cls = e.kind === "pay" ? "pay" : e.kind === "return" ? "ret" : "bal";
+  }
+  const sub = [];
+  if (e.type === "work" && e.job) sub.push(e.job);
+  if (e.note) sub.push(e.note);
+  if (!e.counted) sub.push(e.status === "pending" ? "⏳ tasdiq kutmoqda" : STATUS[e.status] || "");
+  let acts = "";
+  const review = owner && e.type === "pay" && e.status === "pending";
+  if (review) {
+    acts += `<button class="lg-act ok" data-lg="approve" data-id="${e.id}" aria-label="Tasdiqlash">✓</button>`
+      + `<button class="lg-act no" data-lg="reject" data-id="${e.id}" aria-label="Rad etish">✕</button>`;
+  }
+  if (e.can_delete) acts += `<button class="lg-act del" data-lg="del-${e.type}" data-id="${e.id}" aria-label="O'chirish">🗑</button>`;
+  return `
+    <div class="lg-msg ${cls}${e.counted ? "" : " wait"}${review ? " review" : ""}">
+      <div class="lg-text"><b>${esc(title)}</b>${sub.length ? `<small>${esc(sub.filter(Boolean).join(" · "))}</small>` : ""}</div>
+      <div class="lg-amt">${esc(amt)}</div>
+      ${acts ? `<div class="lg-acts">${acts}</div>` : ""}
+    </div>`;
+}
+
+const shortDate = (iso) => { const d = parseDate(iso); return `${d.getDate()}-${MON_LONG[d.getMonth()]}`; };
+
+async function openLedger(el, workerId) {
+  ledger.el = el;
+  ledger.workerId = workerId;
+  ledger.data = null;
+  ledger.items = [];
+  el.innerHTML = SKELETONS;
+  el.onclick = onLedgerClick;
+  await loadLedger(false);
+}
+
+async function loadLedger(more) {
+  const el = ledger.el;
+  if (!el) return;
+  const q = new URLSearchParams({ limit: LEDGER_PAGE, offset: more ? ledger.items.length : 0 });
+  if (ledger.workerId) q.set("worker_id", ledger.workerId);
+  try {
+    const data = await api(`/api/ledger?${q}`);
+    if (ledger.el !== el) return; // oyna yopilgan yoki boshqa ishchi ochilgan
+    ledger.data = data;
+    ledger.items = more ? ledger.items.concat(data.items) : data.items;
+    renderLedger();
+  } catch (e) { fail(e); }
+}
+
+function renderLedger() {
+  const el = ledger.el, d = ledger.data;
+  if (!el || !d || !el.isConnected) return;
+  const owner = state.me.is_owner;
+  const b = d.balance;
+  const head = balanceHead(b.amounts, owner ? d.worker.name : null);
+  const sub = [b.since ? `${shortDate(b.since)} dagi hisobdan` : "boshidan"];
+  if (Object.keys(b.earned).length) sub.push(`ishlar +${moneyList(b.earned)}`);
+  if (Object.keys(b.paid).length) sub.push(`${owner ? "berildi" : "olindi"} −${moneyList(b.paid)}`);
+  if (Object.keys(b.returned).length) sub.push(`qaytdi +${moneyList(b.returned)}`);
+  const due = Object.values(b.amounts).some((v) => v > 0);
+
+  const quick = owner ? `
+      <div class="lg-btns">
+        <button class="act ok" data-lg="pay">💵 Berdim</button>
+        <button class="act" data-lg="return">↩️ Qaytardi</button>
+      </div>
+      <div class="lg-btns">
+        ${due ? '<button class="act soft" data-lg="whole">✅ Qolganini berdim</button>' : ""}
+        <button class="act soft" data-lg="balance">🧾 Qoldiq shu</button>
+      </div>`
+    : `
+      <div class="lg-btns">
+        <button class="act ok" data-lg="pay">💵 Oldim</button>
+        <button class="act" data-lg="return">↩️ Qaytardim</button>
+      </div>`;
+  const tip = owner && !b.tracked && Object.keys(b.earned).length
+    ? `<p class="lg-tip">💡 Pul hali yozilmagan — qoldiq hamma ishlari summasi. Avval hisobni boshlang: qancha qarzingiz borligini yozib «🧾 Qoldiq shu» ni bosing (bo'sh qoldirsangiz — hisob 0 dan boshlanadi).</p>`
+    : "";
+
+  // Eskisi tepada, yangisi pastda — SMS'dagidek. Har kun oxirida qoldiq
+  const asc = ledger.items.slice().reverse();
+  let list = "";
+  if (d.has_more) list += `<button class="lg-older" data-lg="more">↑ Oldingi yozuvlar</button>`;
+  asc.forEach((e, i) => {
+    if (i === 0 || asc[i - 1].date !== e.date) list += `<div class="lg-day">${esc(dateLabel(e.date))}</div>`;
+    list += ledgerRow(e, owner);
+    if (i === asc.length - 1 || asc[i + 1].date !== e.date) {
+      const neg = Object.values(e.balance).some((v) => v < 0);
+      list += `<div class="lg-total${neg ? " neg" : ""}">qoldiq: <b>${esc(signedMoney(e.balance))}</b></div>`;
+    }
+  });
+  if (!asc.length) {
+    list = `<p class="muted lg-empty">Hali yozuv yo'q. ${owner ? `Pul berganingizda yozing yoki ayting: «${esc(d.worker.name)}ga 500 ming berdim».` : "Ish topshirsangiz yoki pul olsangiz — shu yerda hisoblanib boradi."}</p>`;
+  }
+  const pending = d.pending ? `<span class="status pending">⏳ ${d.pending} ta tasdiq kutmoqda</span>` : "";
+
+  el.innerHTML = `
+    <div class="lg-head">
+      <div class="lg-label">${esc(head.label)}</div>
+      <div class="lg-amount ${head.cls}">${head.html}</div>
+      ${head.others ? `<div class="lg-sub">${esc(head.others)}</div>` : ""}
+      <div class="lg-sub">${esc(sub.join(" · "))}</div>
+      ${pending}
+    </div>
+    ${tip}
+    <div class="lg-quick">
+      <input class="input lg-input" inputmode="decimal" autocomplete="off" placeholder="${owner ? "Summa, masalan 500 000" : "Olgan pulingiz, masalan 500 000"}">
+      ${quick}
+      <p class="lg-hint">🎤 yoki ayting: ${owner ? `«${esc(d.worker.name)}ga 500 ming berdim», «${esc(d.worker.name)}ga 900 ming qarzman»` : "«500 ming oldim», «15 loaf 15 sapog»"}</p>
+    </div>
+    <div class="lg-list">${list}</div>`;
+}
+
+async function onLedgerClick(ev) {
+  const b = ev.target.closest("[data-lg]");
+  if (!b || ledger.busy) return;
+  const act = b.dataset.lg;
+  const id = Number(b.dataset.id);
+  if (act === "more") return loadLedger(true);
+  if (["pay", "return", "whole", "balance"].includes(act)) return quickPay(act);
+  ledger.busy = true;
+  try {
+    if (act === "approve" || act === "reject") {
+      await api(`/api/payments/${id}/${act}`, { method: "POST" });
+      toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
+    } else if (act.startsWith("del-")) {
+      if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
+      await api(`/api/payments/${id}`, { method: "DELETE" });
+      toast("O'chirildi");
+    }
+    await afterLedgerChange();
+  } catch (e) { fail(e); } finally { ledger.busy = false; }
+}
+
+async function quickPay(act) {
+  const d = ledger.data;
+  const input = ledger.el.querySelector(".lg-input");
+  const raw = input.value.trim();
+  const amount = raw ? parseAmount(raw) : null;
+  const who = d.worker.name;
+  const body = { kind: act, worker_id: ledger.workerId };
+  if (raw && amount === null) { toast("Summani tushunmadim. Masalan: 500 000", true); return input.focus(); }
+  if (act === "whole") {
+    body.kind = "pay";
+    body.whole = true;
+    if (!(await confirmBox(`${who}ga qolgan hamma puli (${signedMoney(d.balance.amounts)}) berildi deb yozilsinmi?`))) return;
+  } else if (act === "balance") {
+    const v = amount || 0;
+    const text = v > 0 ? `siz ${who}ga ${fmtNum(v)} qarzdorsiz` : v < 0 ? `${who} sizga ${fmtNum(-v)} qarzdor` : "hisob yopilgan (0)";
+    if (!(await confirmBox(`Hozirgi qoldiq: ${text}. Avvalgi hisob shu summaga almashadi. Yozilsinmi?`))) return;
+    body.amount = Math.abs(v);
+    body.worker_owes = v < 0;
+  } else {
+    if (!amount || amount < 0) { toast("Summani yozing", true); return input.focus(); }
+    body.amount = amount;
+  }
+  ledger.busy = true;
+  try {
+    await api("/api/payments", { method: "POST", body });
+    toast("Saqlandi");
+    input.value = "";
+    await afterLedgerChange();
+  } catch (e) { fail(e); } finally { ledger.busy = false; }
+}
+
+async function afterLedgerChange() {
+  await loadLedger(false);
+  // Egada: ishchilar ro'yxatidagi qoldiq ham yangilansin
+  if (state.me.is_owner && state.view === "workers") loadWorkers();
 }
 
 // --- Hamyon: xarajatlar ------------------------------------------------------
@@ -1106,13 +1368,21 @@ function renderWorkers() {
     const tag = !w.is_active ? '<span class="tag off">O\'chirilgan</span>'
       : w.linked ? '<span class="tag ok">Ulangan</span>' : '<span class="tag wait">Havola kutilmoqda</span>';
     const job = w.job ? `<span class="tag job">${esc(w.job.name)}</span>` : '<span class="tag none">Kasbi tanlanmagan</span>';
+    const bal = w.balance && w.balance.tracked ? balanceTag(w.balance.amounts) : "";
     return `
       <button class="row-card${w.is_active ? "" : " off"}" data-worker="${w.id}">
         <div class="avatar">${esc(initials(w.name))}</div>
-        <div class="info"><b>${esc(w.name)}</b>${job}${tag}</div>
+        <div class="info"><b>${esc(w.name)}</b>${job}${tag}${bal}</div>
         <div class="side">${fmtNum(w.month_qty)} ta<small>${esc(moneyList(w.month_pay) || "shu oy")}</small></div>
       </button>`;
   }).join("");
+}
+
+// Ishchilar ro'yxatida qoldiq: «🧾 400 000 so'm» (berishingiz kerak) yoki qizil — avans
+function balanceTag(amounts) {
+  const vals = Object.values(amounts || {});
+  const cls = vals.some((v) => v < 0) && !vals.some((v) => v > 0) ? "avans" : "pay";
+  return `<span class="tag ${cls}">🧾 ${esc(signedMoney(amounts))}</span>`;
 }
 
 function renderJobChips() {
@@ -1158,6 +1428,7 @@ function workerSheet(w) {
       <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
       <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>
     </div>
+    <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div></div>
     <div class="field"><label>🏷 Kasbi</label>
       ${jobPicker("wJobs", w.job && w.job.id)}
       <span class="field-hint">Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi.</span>
@@ -1166,6 +1437,7 @@ function workerSheet(w) {
     <button class="${w.is_active ? "danger" : "secondary"}" id="wToggle">${w.is_active ? "⛔ O'chirish (botdan foydalana olmaydi)" : "✅ Qayta faollashtirish"}</button>
     <button class="secondary" id="wEntries">🗂 Yozuvlarini ko'rish</button>
   `);
+  openLedger($("sheetLedger"), w.id);
   const setJob = async (jobId) => {
     try {
       const upd = await api(`/api/workers/${w.id}`, { method: "PATCH", body: { job_id: jobId } });
@@ -2120,8 +2392,10 @@ function bind() {
     renderTrend();
   };
   $("pendingCard").onclick = () => {
-    state.entries.type = "work";
-    state.entries.status = "pending";
+    // Ish yozuvlari kutayotgan bo'lsa — ular, aks holda ishchilar yozgan pul
+    const work = !state.dash || state.dash.pending > 0;
+    state.entries.type = work ? "work" : "pay";
+    state.entries.status = work ? "pending" : "";
     state.entries.workerId = "";
     syncChips();
     show("entries");
@@ -2152,6 +2426,11 @@ function bind() {
   };
   $("moreBtn").onclick = () => loadEntries(false);
   $("entryList").onclick = (ev) => {
+    const rev = ev.target.closest("[data-pay-act]");
+    if (rev) {
+      reviewPayment(rev.dataset.payAct, Number(rev.dataset.id));
+      return;
+    }
     const del = ev.target.closest("[data-del-feed]");
     if (del) {
       const [type, id] = del.dataset.delFeed.split(":");
@@ -2355,6 +2634,7 @@ async function init() {
   document.querySelectorAll(".team-seg").forEach((el) => (el.hidden = !me.is_owner));
   // Egada bosh sahifada — pullar holati, «Yozuvlar»da — barcha turdagi yozuvlar
   $("moneySection").hidden = !me.is_owner;
+  $("ledgerCard").hidden = me.is_owner;
   $("workTitle").hidden = !me.is_owner;
   $("typeChips").hidden = !me.is_owner;
   if (!me.is_owner) state.entries.type = "work";
@@ -2394,7 +2674,11 @@ async function loadAvatar() {
 function startView() {
   const view = new URLSearchParams(location.search).get("view");
   if (view === "entries") return "entries";
-  if (!state.me.is_owner) return "home";
+  if (!state.me.is_owner) {
+    if (view === "ledger") setTimeout(() => $("ledgerCard").scrollIntoView({ behavior: "smooth" }), 600);
+    return "home";
+  }
+  if (view === "ledger") return "workers";
   if (view === "clients") return "clients";
   if (view === "materials") return "materials";
   if (view === "debts" || view === "wallet") {

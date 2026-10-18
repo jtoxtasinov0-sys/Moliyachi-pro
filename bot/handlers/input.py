@@ -230,6 +230,8 @@ async def on_fix(call: CallbackQuery, state: FSMContext) -> None:
         examples = "• <i>12 komplekt</i>\n• <i>150 mingdan</i>\n• <i>mijoz Tohir emas, Toxir aka</i>\n• <i>kecha edi</i>"
     elif draft["section"] == "money":
         examples = "• <i>summa 45 ming</i>\n• <i>dollarda</i>\n• <i>kategoriya Mashina</i>\n• <i>kecha edi</i>"
+    elif draft.get("pays") and not draft["lines"]:
+        examples = "• <i>summa 400 ming</i>\n• <i>qaytardi</i>\n• <i>ishchi Vali</i>\n• <i>kecha edi</i>"
     else:
         examples = (
             "• <i>soni 45 ta</i>\n• <i>model B-12</i>\n• <i>brsovka qilgan</i>\n• <i>kecha edi</i>\n• <i>ishchi Vali</i>"
@@ -247,6 +249,32 @@ async def on_debt_direction(
     if not intake.set_direction(draft, callback_data):
         await call.answer()
         return
+    await _show(call, state, session, user, draft)
+
+
+@router.callback_query(kbs.PayKindCb.filter())
+async def on_pay_kind(
+    call: CallbackQuery, callback_data: kbs.PayKindCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    draft = await _load_draft(call, state)
+    if draft is None:
+        return
+    if not intake.set_pay_kind(draft, callback_data):
+        await call.answer()
+        return
+    await drafts.resolve(session, draft, user)
+    await _show(call, state, session, user, draft)
+
+
+@router.callback_query(kbs.DraftCb.filter(F.action == "asdebt"))
+async def on_as_debt(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
+    draft = await _load_draft(call, state)
+    if draft is None:
+        return
+    if not intake.pays_to_debt(draft, user):
+        await call.answer()
+        return
+    await drafts.resolve(session, draft, user)
     await _show(call, state, session, user, draft)
 
 

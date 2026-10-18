@@ -279,6 +279,8 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .tag.off { background: var(--red-soft); color: var(--red); }
 .tag.job { background: var(--blue-soft); color: var(--blue); margin-right: 4px; }
 .tag.none { background: var(--bg); color: var(--muted); margin-right: 4px; }
+.tag.pay { background: var(--green-soft); color: var(--green); margin-left: 4px; }
+.tag.avans { background: var(--red-soft); color: var(--red); margin-left: 4px; }
 .row-card .info small.line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 /* Kasb tanlash tugmalari */
@@ -515,3 +517,54 @@ a.link-box.phone { display: block; text-decoration: none; font-size: 15px; }
   .donut-box { width: 124px; height: 124px; }
   .bottom-nav > button span { font-size: 10.5px; }
 }
+
+/* --- Hisob-kitob: ishchi bilan pul (SMS'dagidek) --------------------------- */
+.lg-box { background: #fff; border: 1.5px solid var(--line); border-radius: 20px; padding: 14px; margin-bottom: 14px; }
+.lg-title { font-size: 15px; font-weight: 800; margin-bottom: 6px; }
+.lg-head { text-align: center; padding: 2px 0 12px; }
+.lg-label { font-size: 13px; font-weight: 700; color: var(--muted); }
+.lg-amount { font-size: 30px; font-weight: 800; letter-spacing: -.02em; margin-top: 4px; line-height: 1.15; word-break: break-word; }
+.lg-amount small { font-size: 16px; font-weight: 700; opacity: .7; margin-left: 4px; }
+.lg-amount.pos { color: var(--green); }
+.lg-amount.neg { color: var(--red); }
+.lg-sub { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+.lg-tip {
+  background: var(--amber-soft); color: #8a5a12; border-radius: 14px; padding: 10px 12px;
+  font-size: 12.5px; font-weight: 600; line-height: 1.45; margin: 0 0 12px;
+}
+.lg-quick { background: var(--bg); border-radius: 18px; padding: 10px; margin-bottom: 14px; }
+.lg-btns { display: flex; gap: 8px; margin-top: 8px; }
+.lg-btns .act { flex: 1; }
+.act.soft { background: #fff; color: var(--navy); }
+.lg-hint { margin: 8px 4px 0; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.4; }
+.lg-list { display: flex; flex-direction: column; gap: 6px; }
+.lg-empty { text-align: center; margin: 8px 0; line-height: 1.45; }
+.lg-day { align-self: center; font-size: 12px; font-weight: 700; color: var(--muted); margin: 10px 0 2px; }
+.lg-older { align-self: center; color: var(--blue); font-weight: 800; font-size: 13px; padding: 6px 12px; }
+.lg-msg {
+  align-self: flex-end; width: fit-content; max-width: 92%; min-width: 62%;
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  background: var(--blue-soft); border-radius: 18px 18px 6px 18px;
+}
+.lg-msg.pay { background: var(--green-soft); }
+.lg-msg.ret { background: var(--amber-soft); }
+.lg-msg.bal { background: #fff; border: 1.5px dashed #c9d2ea; }
+.lg-msg.wait { opacity: .65; }
+.lg-text { flex: 1; min-width: 0; }
+.lg-text b { display: block; font-size: 14px; }
+.lg-text small { display: block; color: var(--muted); font-weight: 600; font-size: 12px; }
+.lg-amt { font-weight: 800; font-size: 14px; white-space: nowrap; }
+.lg-msg.pay .lg-amt { color: var(--green); }
+.lg-acts { display: flex; gap: 4px; flex: none; }
+.lg-msg.review { flex-wrap: wrap; opacity: 1; }
+.lg-msg.review .lg-acts { width: 100%; justify-content: flex-end; }
+.lg-msg.review .lg-act { width: auto; padding: 0 12px; }
+.lg-act { width: 30px; height: 30px; border-radius: 9px; font-size: 13px; font-weight: 800; background: #fff; color: var(--muted); }
+.lg-act.ok { background: var(--green); color: #fff; }
+.lg-act.no, .lg-act.del { background: var(--red-soft); color: var(--red); }
+.lg-total {
+  align-self: flex-end; font-size: 12.5px; font-weight: 700; color: var(--muted);
+  border-top: 2px dashed #c9d2ea; padding: 4px 4px 0; margin: 2px 2px 4px;
+}
+.lg-total b { color: var(--navy); }
+.lg-total.neg b { color: var(--red); }

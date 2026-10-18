@@ -15,6 +15,20 @@ oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». 
 yozilmagan bo'lsa — modelning umumiy narxi. Hisobotda har bir model qaysi bosqichdan (kroy, brsovka, tikuv...)
 qancha o'tgani ko'rinadi.
 
+**🧾 Ishchi bilan hisob-kitob (avans, ish haqi):** SMS'dagidek qisqa yozish kifoya. Ishchi o'zi: «500 ming oldim»,
+«15 loaf 15 sapog, 500.000 oldim» — olgan puli hisobidan ayriladi, topshirgan ishlari qo'shiladi. Egasi: «Robiyaga
+500 ming berdim», «Robiya 200 ming qaytardi», «Robiyaga qolganini berdim». Hisob holatini ham aytish mumkin
+(«Robiyaga 900 ming qarzman», «Robiya bilan hisob yopildi») — qoldiq shu summaga teng bo'ladi va keyingi ishlar
+hamda pullar undan davom etib hisoblanadi. Qoldiq = tasdiqlangan ishlar − olingan pul + qaytarilgan pul: musbat —
+egasi ishchiga berishi kerak, manfiy — ishchi ortiqcha olgan (avans). Ishchi «oldim» desa — darhol hisobga kiradi
+(egasiga xabar boradi); «qaytardim» — «Ishchi yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi tasdiqlagach; hisob
+holatini ishchi yozsa — har doim egasi tasdiqlagach. Egasi yozsa — ishchiga xabar boradi. Ko'rish: ishchida —
+botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun oxiridagi qoldiq, «💵 Oldim»
+tugmasi); egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi («💵 Berdim», «✅ Qolganini
+berdim», «🧾 Qoldiq shu»). Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir kun alohida o'qiladi.
+⚠️ Avvaldan ishlatayotgan bo'lsangiz: pul yozilmagan ishchining qoldig'i — barcha ishlari summasi. Har bir ishchi
+uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga 900 ming qarzman».
+
 **🧱 Xom ashyo:** teri, material, podklad, kley, padosh, ip, furnitura xaridlari alohida bo'limda yuritiladi
 (shaxsiy xarajatga qo'shilmaydi). Ovoz yoki matn yuboring: «1 list teri oldim», «10 millionlik teri oldim, nomi
 Shirin gul», «Lider terisidan 5 list, listi 300 ming», «Alisherdan 20 kg kley oldim» — bot turini, nomini (markasi),

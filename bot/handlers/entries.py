@@ -1,4 +1,4 @@
-"""Saqlangan yozuvlar: ko'rish, tahrirlash, o'chirish, tasdiqlash va hisobot."""
+"""Saqlangan yozuvlar: ko'rish, tahrirlash, o'chirish, tasdiqlash, hisobot va ishchi hisob-kitobi."""
 import logging
 from collections import defaultdict
 from decimal import Decimal
@@ -8,13 +8,13 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import drafts
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import EntryStatus, User, WorkEntry
+from bot.db.models import EntryStatus, User, WorkEntry, WorkerPayment
 from bot.middlewares import IsOwner, Registered
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
 
@@ -44,18 +44,42 @@ def entry_text(entry: WorkEntry) -> str:
     return text
 
 
+def pay_text(entry: WorkerPayment, viewer: User) -> str:
+    """Ishchi bilan pul yozuvi: egasiga — ishchi ismi bilan, ishchining o'ziga — «Oldingiz»."""
+    amount = f"<b>{fmt_money(abs(entry.amount), entry.currency)}</b>"
+    who = entry.worker.name if viewer.is_owner else None
+    line = drafts.pay_line(entry.kind, amount, who, entry.amount < 0, not entry.amount, viewer.is_owner)
+    text = f"<b>#{entry.id}</b> · {fmt_date(entry.entry_date)}\n{line}"
+    if entry.note:
+        text += f"\n<i>{escape(entry.note)}</i>"
+    if entry.status != EntryStatus.APPROVED:
+        text += f"\n{STATUS_LABELS.get(entry.status, entry.status)}"
+    return text
+
+
+async def notify_user(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+    """Xabar yuborish. Yetmasa (botni bloklagan) — faqat logga yoziladi."""
+    try:
+        await bot.send_message(chat_id, text, reply_markup=markup)
+    except TelegramAPIError:
+        log.warning("Xabar yuborilmadi (chat %s)", chat_id, exc_info=True)
+
+
 async def notify_owner(
-    bot: Bot, session: AsyncSession, owner_id: int | None, text: str, entry: WorkEntry | None = None
+    bot: Bot,
+    session: AsyncSession,
+    owner_id: int | None,
+    text: str,
+    entry: WorkEntry | None = None,
+    markup: InlineKeyboardMarkup | None = None,
 ) -> None:
     """Kabinet egasiga xabar. Yetmasa (botni bloklagan) — faqat logga yoziladi."""
     owner = await session.get(User, owner_id) if owner_id else None
     if owner is None or owner.tg_id is None:
         return
-    markup = kbs.entry_kb(entry, owner) if entry is not None else None
-    try:
-        await bot.send_message(owner.tg_id, text, reply_markup=markup)
-    except TelegramAPIError:
-        log.warning("Egaga xabar yuborilmadi (chat %s)", owner.tg_id, exc_info=True)
+    if entry is not None:
+        markup = kbs.entry_kb(entry, owner)
+    await notify_user(bot, owner.tg_id, text, markup)
 
 
 async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry) -> None:
@@ -95,13 +119,15 @@ async def recent(message: Message, state: FSMContext, session: AsyncSession, use
 async def pending(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
     entries = await repo.pending_work_entries(session, user.id)
-    if not entries:
+    payments = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=30)
+    if not entries and not payments:
         await message.answer("✅ Tasdiq kutayotgan yozuv yo'q.")
         return
-    await message.answer(f"⏳ Tasdiq kutayotganlar: {len(entries)} ta")
-    shown = entries[:30]
-    for i, entry in enumerate(shown):
-        await message.answer(entry_text(entry), reply_markup=kbs.entry_kb(entry, user, app=i == len(shown) - 1))
+    await message.answer(f"⏳ Tasdiq kutayotganlar: {len(entries) + len(payments)} ta")
+    cards = [(entry_text(e), kbs.entry_kb(e, user)) for e in entries[:30]]
+    cards += [(pay_text(p, user), kbs.pay_entry_kb(p, user)) for p in reversed(payments)]
+    for text, kb in cards:
+        await message.answer(text, reply_markup=kb)
 
 
 # --- Yozuv tugmalari --------------------------------------------------------
@@ -201,12 +227,16 @@ async def on_report(call: CallbackQuery, callback_data: kbs.ReportCb, session: A
         f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
     )
 
+    balances = await repo.worker_balances(session, user.account_id, None if user.is_owner else [user.id])
     if not rows:
         body = "Bu davrda tasdiqlangan ish yo'q."
     elif user.is_owner:
-        body = _owner_report(rows)
+        body = _owner_report(rows, balances)
     else:
         body = _worker_report(rows)
+    if not user.is_owner:
+        mine = balances.get(user.id)
+        body += "\n\n🧾 <b>Hisob-kitob</b>\n" + drafts.balance_text(mine.balance if mine else {})
 
     pending_count = await repo.count_pending(session, user.account_id, worker_id=worker_id)
     if pending_count:
@@ -244,7 +274,12 @@ def _worker_report(rows: list[repo.WorkReportRow]) -> str:
     return "\n".join(lines)
 
 
-def _owner_report(rows: list[repo.WorkReportRow]) -> str:
+def tracked(b: repo.WorkerBalance | None) -> bool:
+    """Ishchi bilan pul yoki hisob holati yozilganmi — yozilmagan bo'lsa qoldiq hisobotda ko'rsatilmaydi."""
+    return b is not None and bool(b.since or b.paid or b.returned)
+
+
+def _owner_report(rows: list[repo.WorkReportRow], balances: dict[int, repo.WorkerBalance]) -> str:
     by_worker: dict[int, list[repo.WorkReportRow]] = defaultdict(list)
     for r in rows:
         by_worker[r.worker_id].append(r)
@@ -263,6 +298,9 @@ def _owner_report(rows: list[repo.WorkReportRow]) -> str:
         block = f"👷 <b>{who}</b> — {qty} ta\n   {models}"
         if totals:
             block += f"\n   💰 {fmt_totals(totals)}"
+        b = balances.get(worker_rows[0].worker_id)
+        if tracked(b):
+            block += f"\n   🧾 Qoldiq: {drafts.fmt_signed(b.balance)}"
         blocks.append(block)
 
     # Model bo'yicha: kasblar bo'lsa — har bir bosqichda (kroy, brsovka, tikuv...) nechta
@@ -285,3 +323,148 @@ def _owner_report(rows: list[repo.WorkReportRow]) -> str:
     if grand:
         text += f"\nIsh haqi fondi: <b>{fmt_totals(grand)}</b>"
     return text
+
+
+# --- Ishchi bilan pul: tasdiqlash va o'chirish -------------------------------
+
+async def _get_payment(
+    call: CallbackQuery, session: AsyncSession, user: User, entry_id: int
+) -> WorkerPayment | None:
+    entry = await repo.get_payment(session, user.account_id, entry_id)
+    if entry is None or not (user.is_owner or entry.worker_id == user.id):
+        await call.answer("Yozuv topilmadi yoki o'chirilgan.", show_alert=True)
+        return None
+    return entry
+
+
+async def _pay_card(session: AsyncSession, entry: WorkerPayment, viewer: User) -> str:
+    balance = (await repo.worker_balance(session, entry.owner_id, entry.worker_id)).balance
+    name = entry.worker.name if viewer.is_owner else None
+    return f"{pay_text(entry, viewer)}\n\n{drafts.balance_text(balance, name)}"
+
+
+@router.callback_query(kbs.PayCb.filter(F.action.in_({"approve", "reject"})), IsOwner())
+async def on_pay_review(call: CallbackQuery, callback_data: kbs.PayCb, session: AsyncSession, user: User) -> None:
+    entry = await _get_payment(call, session, user, callback_data.entry_id)
+    if entry is None:
+        return
+    approve = callback_data.action == "approve"
+    await repo.review_payment(session, entry, user, approve)
+    await call.message.edit_text(await _pay_card(session, entry, user), reply_markup=kbs.pay_entry_kb(entry, user))
+    await call.answer("Tasdiqlandi" if approve else "Rad etildi")
+    worker = entry.worker
+    if worker.tg_id and worker.id != user.id:
+        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        await notify_user(call.bot, worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + await _pay_card(session, entry, worker))
+
+
+@router.callback_query(kbs.PayCb.filter(F.action.in_({"del", "del_no", "del_yes"})))
+async def on_pay_delete(call: CallbackQuery, callback_data: kbs.PayCb, session: AsyncSession, user: User) -> None:
+    entry = await _get_payment(call, session, user, callback_data.entry_id)
+    if entry is None:
+        return
+    if not user.is_owner and entry.created_by != user.id:
+        await call.answer("Bu yozuvni egangiz kiritgan — faqat u o'chira oladi.", show_alert=True)
+        return
+    if callback_data.action == "del":
+        await call.message.edit_reply_markup(reply_markup=kbs.pay_confirm_delete_kb(entry.id))
+        await call.answer("Rostdan o'chirilsinmi?")
+        return
+    if callback_data.action == "del_no":
+        await call.message.edit_reply_markup(reply_markup=kbs.pay_entry_kb(entry, user))
+        await call.answer()
+        return
+    text = pay_text(entry, user)
+    await repo.soft_delete(session, entry)
+    balance = (await repo.worker_balance(session, entry.owner_id, entry.worker_id)).balance
+    name = entry.worker.name if user.is_owner else None
+    await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi\n\n{drafts.balance_text(balance, name)}")
+    await call.answer("O'chirildi")
+    if not user.is_owner and entry.status == EntryStatus.APPROVED:
+        owner = await session.get(User, user.owner_id)
+        if owner is not None:
+            await notify_owner(
+                call.bot, session, user.owner_id,
+                f"🗑 {escape(user.name)} pul yozuvini o'chirdi:\n\n<s>{pay_text(entry, owner)}</s>\n\n"
+                + drafts.balance_text(balance, user.name),
+            )
+
+
+# --- Hisob-kitob: ishlar va olingan pul, qoldiq bilan --------------------------
+
+LEDGER_ROWS = 25
+LEDGER_BUDGET = 3300
+
+
+def _ledger_row(r: repo.LedgerRow, owner_view: bool) -> str:
+    e = r.entry
+    if r.kind == "work":
+        job = f" · {escape(e.job.name)}" if e.job else ""
+        pay = f" · +{fmt_totals(r.delta)}" if r.delta else " · narx yo'q"
+        text = f"🧵 {escape(e.model.name)} — {e.quantity} ta{job}{pay}"
+    else:
+        amount = fmt_money(abs(e.amount), e.currency)
+        text = drafts.pay_line(e.kind, amount, None, e.amount < 0, not e.amount, owner_view)
+        if e.note:
+            text += f" <i>({escape(e.note)})</i>"
+    return text + ("" if r.counted else " ⏳")
+
+
+async def ledger_text(session: AsyncSession, viewer: User, worker: User) -> str:
+    """SMS'dagidek: kunma-kun ishlar va pul, har kun oxirida qoldiq (eskisi tepada)."""
+    rows, more = await repo.worker_ledger(session, worker.owner_id, worker.id, limit=LEDGER_ROWS)
+    b = await repo.worker_balance(session, worker.owner_id, worker.id)
+    owner_view = viewer.is_owner
+    title = f"🧾 <b>Hisob-kitob · {escape(worker.name)}</b>" if owner_view else "🧾 <b>Hisob-kitobingiz</b>"
+    example = (
+        f"«{worker.name}ga 500 ming berdim», «{worker.name} bilan hisob yopildi», «{worker.name}ga 900 ming qarzman»"
+        if owner_view
+        else "«500 ming oldim», «200 ming qaytardim»"
+    )
+    if not rows:
+        return f"{title}\n\nHali yozuv yo'q.\n\n💡 Ovoz yoki matn bilan ayting: <i>{escape(example)}</i>"
+
+    days: list[tuple[object, list[repo.LedgerRow]]] = []
+    for r in reversed(rows):
+        if days and days[-1][0] == r.day:
+            days[-1][1].append(r)
+        else:
+            days.append((r.day, [r]))
+    blocks: list[str] = []
+    used = 0
+    for day, items in reversed(days):  # yangisidan boshlab, joy yetguncha
+        block = f"📅 <b>{fmt_date(day)}</b>\n" + "\n".join(_ledger_row(r, owner_view) for r in items)
+        block += f"\n   <i>= qoldiq {drafts.signed_hint(items[-1].balance)}</i>"
+        if blocks and used + len(block) > LEDGER_BUDGET:
+            more = True
+            break
+        blocks.append(block)
+        used += len(block)
+    blocks.reverse()
+
+    parts = [title]
+    if more:
+        parts.append("<i>… oldingi yozuvlar — ilovada</i>")
+    parts.extend(blocks)
+    summary = [drafts.balance_text(b.balance, worker.name if owner_view else None)]
+    since = f"{b.since.strftime('%d.%m')} dagi hisobdan" if b.since else "boshidan"
+    details = [f"ishlar: +{fmt_totals(b.earned)}"] if b.earned else []
+    if b.paid:
+        details.append(f"{'berildi' if owner_view else 'oldingiz'}: −{fmt_totals(b.paid)}")
+    if b.returned:
+        details.append(f"qaytdi: +{fmt_totals(b.returned)}")
+    if details:
+        summary.append(f"<i>({since}: {', '.join(details)})</i>")
+    parts.append("\n".join(summary))
+    parts.append(f"💡 Yozish: <i>{escape(example)}</i>")
+    return "\n\n".join(parts)
+
+
+@router.message(F.text == kbs.BTN_LEDGER)
+@router.message(Command("hisob"))
+async def ledger(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    if user.is_owner:
+        await message.answer("🧾 Ishchi hisob-kitobi — «👷 Ishchilar» bo'limida ishchini bosing.")
+        return
+    await message.answer(await ledger_text(session, user, user), reply_markup=kbs.app_kb("ledger"))

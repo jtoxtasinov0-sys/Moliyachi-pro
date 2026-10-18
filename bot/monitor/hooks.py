@@ -211,6 +211,7 @@ _VIEWS = {
     "/api/materials/entries": "Xom ashyo: xaridlar",
     "/api/entries": "Yozuvlar",
     "/api/activity": "Oxirgi yozuvlar",
+    "/api/ledger": "Hisob-kitob",
 }
 _ACTIONS = [
     ("POST", r"/api/advice/ai", "🤖 Shaxsiy maslahat so'radi"),
@@ -233,6 +234,10 @@ _ACTIONS = [
     ("PATCH", r"/api/jobs/\d+", "Kasb nomini o'zgartirdi"),
     ("DELETE", r"/api/jobs/\d+", "Kasbni o'chirdi"),
     ("DELETE", r"/api/materials/\d+", "Xom ashyo yozuvini o'chirdi"),
+    ("POST", r"/api/payments", "Ishchi bilan pul yozdi (ilovada)"),
+    ("DELETE", r"/api/payments/\d+", "Ishchi pul yozuvini o'chirdi"),
+    ("POST", r"/api/payments/\d+/approve", "Ishchi pul yozuvini tasdiqladi"),
+    ("POST", r"/api/payments/\d+/reject", "Ishchi pul yozuvini rad etdi"),
 ]
 OPEN_EVERY = 20 * 60  # ilovani ochish — 20 daqiqada bir marta yoziladi
 VIEW_EVERY = 10 * 60  # bir bo'limni ko'rish — 10 daqiqada bir marta

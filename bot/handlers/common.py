@@ -34,6 +34,8 @@ OWNER_HELP = """\
 • <i>Alisher A-12 modeldan 50 ta topshirdi</i>
 • <i>Kecha Vali B-5 dan 30 ta, C-7 dan 20 ta</i>
 • <i>Vali A-12 dan 40 ta brsovka qildi</i> — kasbi bilan
+• <i>Robiyaga 500 ming berdim</i> — ishchiga pul: uning qoldig'idan ayriladi
+• <i>Robiyaga 900 ming qarzman</i>, <i>Robiya bilan hisob yopildi</i> — ishchi bilan hisob holati
 • <i>A-12 modelga brsovka 2000dan, kroy 1500</i> — model narxi kasb bo'yicha
 • <i>10 millionlik teri oldim, nomi Shirin gul</i> — xom ashyo
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
@@ -61,7 +63,8 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
      kunlik limit, moliyaviy saboqlar va shaxsiy maslahat
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
 👷 Ishchilar — qo'shish, taklif havolasi, kasbi (kroychi, brsovkachi, tikuvchi,
-     tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb)
+     tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb), 🧾 hisob-kitobi: ishlari,
+     olgan puli va qoldig'i
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
 🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
 ⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
@@ -77,12 +80,15 @@ WORKER_HELP = """\
 • <i>A-12 modeldan 50 ta topshirdim</i>
 • <i>Kecha B-5 dan 30 ta</i>
 • <i>A-12 dan 40 ta brsovka qildim</i> — boshqa ish qilgan bo'lsangiz, ish turini ayting
+• <i>500 ming oldim</i> — pul olsangiz: hisobingizdan ayriladi
+• <i>15 loaf 15 sapog, 500 ming oldim</i> — ish va pul birga
 🖼 Daftaringiz rasmini yuborsangiz ham bo'ladi.
 
 Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 
 📊 Hisobot — o'z natijangiz va ish haqingiz
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
+🧾 Hisob-kitob — ishlaringiz, olgan pulingiz va qolgan haqqingiz
 """
 
 

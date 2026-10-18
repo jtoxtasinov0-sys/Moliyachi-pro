@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html import escape
 from typing import Awaitable, Callable
@@ -26,10 +26,12 @@ from bot.db.models import (
     Job,
     MaterialEntry,
     ModelPrice,
+    PayKind,
     PersonalEntry,
     PersonalKind,
     User,
     WorkEntry,
+    WorkerPayment,
 )
 from bot.monitor import report_error, track_api
 from bot.services import llm, stt
@@ -279,6 +281,7 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
         data["by_worker"] = _group(cur, "worker_id")
         data["by_job"] = _group(cur, "job_name")
         data["has_team"] = await repo.has_work(session, acc)
+        data["pending_pay"] = await repo.count_pending_payments(session, acc)
     return web.json_response(data)
 
 
@@ -486,7 +489,13 @@ async def delete_entry(request: web.Request, session: AsyncSession, user: User) 
 
 # --- Ishchilar --------------------------------------------------------------
 
-async def _worker_json(request: web.Request, w: User, stats: dict[int, dict], jobs: dict[int, Job]) -> dict:
+async def _worker_json(
+    request: web.Request,
+    w: User,
+    stats: dict[int, dict],
+    jobs: dict[int, Job],
+    balances: dict[int, repo.WorkerBalance],
+) -> dict:
     link = None
     if w.is_active and not w.tg_id and w.invite_token:
         bot_me = await request.app["bot"].me()
@@ -501,7 +510,15 @@ async def _worker_json(request: web.Request, w: User, stats: dict[int, dict], jo
         "invite_link": link,
         "month_qty": s["qty"],
         "month_pay": s["pay"],
+        "balance": _balance_json(balances.get(w.id)),
     }
+
+
+async def _one_worker_json(request: web.Request, session: AsyncSession, worker: User) -> dict:
+    owner_id = worker.owner_id
+    stats = await _month_stats(session, owner_id)
+    balances = await repo.worker_balances(session, owner_id, [worker.id])
+    return await _worker_json(request, worker, stats, await _jobs_by_id(session, owner_id), balances)
 
 
 async def _month_stats(session: AsyncSession, owner_id: int) -> dict[int, dict]:
@@ -533,7 +550,8 @@ async def workers(request: web.Request, session: AsyncSession, user: User) -> we
     stats = await _month_stats(session, user.id)
     jobs = await _jobs_by_id(session, user.id)
     workers_ = await repo.list_workers(session, user.id, active_only=False)
-    items = [await _worker_json(request, w, stats, jobs) for w in workers_]
+    balances = await repo.worker_balances(session, user.id)
+    items = [await _worker_json(request, w, stats, jobs, balances) for w in workers_]
     items.sort(key=lambda w: (not w["is_active"], -w["month_qty"], w["name"].lower()))
     return web.json_response({"items": items, "jobs": await _jobs_list(session, user.id)})
 
@@ -547,7 +565,7 @@ async def add_worker(request: web.Request, session: AsyncSession, user: User) ->
         raise ApiError(400, "Ism bo'sh bo'lmasin")
     job_id = await _job_arg(session, user.id, data.get("job_id"))
     worker = await repo.create_worker(session, user.id, name, job_id)
-    return web.json_response(await _worker_json(request, worker, {}, await _jobs_by_id(session, user.id)))
+    return web.json_response(await _worker_json(request, worker, {}, await _jobs_by_id(session, user.id), {}))
 
 
 async def _get_worker(request: web.Request, session: AsyncSession, user: User) -> User:
@@ -570,8 +588,7 @@ async def update_worker(request: web.Request, session: AsyncSession, user: User)
     if "job_id" in data:
         worker.job_id = await _job_arg(session, user.id, data["job_id"])
     await session.flush()
-    stats = await _month_stats(session, user.id)
-    return web.json_response(await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id)))
+    return web.json_response(await _one_worker_json(request, session, worker))
 
 
 @routes.post(r"/api/workers/{id:\d+}/toggle")
@@ -580,8 +597,7 @@ async def toggle_worker(request: web.Request, session: AsyncSession, user: User)
     worker = await _get_worker(request, session, user)
     worker.is_active = not worker.is_active
     await session.flush()
-    stats = await _month_stats(session, user.id)
-    return web.json_response(await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id)))
+    return web.json_response(await _one_worker_json(request, session, worker))
 
 
 @routes.post(r"/api/workers/{id:\d+}/invite")
@@ -592,8 +608,7 @@ async def reinvite_worker(request: web.Request, session: AsyncSession, user: Use
         raise ApiError(400, "Avval ishchini faollashtiring")
     await repo.new_invite_token(session, worker)
     # Yangi havola: avvalgi Telegram bog'lanishi saqlanadi, faqat tg_id bo'lmasa ko'rinadi
-    stats = await _month_stats(session, user.id)
-    data = await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id))
+    data = await _one_worker_json(request, session, worker)
     if data["invite_link"] is None:
         bot_me = await request.app["bot"].me()
         data["invite_link"] = f"https://t.me/{bot_me.username}?start=inv_{worker.invite_token}"
@@ -1166,9 +1181,175 @@ async def delete_material(request: web.Request, session: AsyncSession, user: Use
     return web.json_response({"ok": True})
 
 
+# --- Ishchi bilan hisob-kitob: avans, ish haqi, qaytarilgan pul, qoldiq ------------
+
+def _pay_json(e: WorkerPayment, viewer: User) -> dict:
+    return {
+        "id": e.id,
+        "date": e.entry_date.isoformat(),
+        "worker": {"id": e.worker_id, "name": e.worker.name},
+        "kind": e.kind,
+        "amount": abs(float(e.amount)),
+        # Hisob holatida: ishchi egasiga qarzdor (qoldiq manfiy)
+        "worker_owes": e.amount < 0,
+        "currency": e.currency,
+        "note": e.note,
+        "status": e.status,
+        "raw_text": e.raw_text,
+        "can_delete": viewer.is_owner or e.created_by == viewer.id,
+    }
+
+
+def _balance_json(b: repo.WorkerBalance | None) -> dict:
+    b = b or repo.WorkerBalance(worker_id=0)
+    return {
+        "amounts": _money(b.balance),
+        "since": b.since.isoformat() if b.since else None,
+        "start": _money(b.start),
+        "earned": _money(b.earned),
+        "paid": _money(b.paid),
+        "returned": _money(b.returned),
+        # Pul yoki hisob holati yozilganmi (yozilmagan bo'lsa qoldiq — hamma ishlari summasi)
+        "tracked": bool(b.since or b.paid or b.returned),
+    }
+
+
+def _ledger_json(r: repo.LedgerRow, viewer: User) -> dict:
+    # Ish yozuvlari «Yozuvlar» bo'limida tahrirlanadi va o'chiriladi
+    base = {**_entry_json(r.entry), "can_delete": False} if r.kind == "work" else _pay_json(r.entry, viewer)
+    return {
+        **base,
+        "type": "work" if r.kind == "work" else "pay",
+        "kind": r.kind,
+        "counted": r.counted,
+        "delta": _money(r.delta),
+        "balance": _money(r.balance),
+    }
+
+
+async def _ledger_worker(request: web.Request, session: AsyncSession, user: User, value) -> User:
+    """Egasi — tanlangan ishchi, ishchi — o'zi."""
+    if not user.is_owner:
+        return user
+    try:
+        worker_id = int(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, "Ishchini tanlang")
+    worker = await repo.get_worker(session, user.id, worker_id)
+    if worker is None:
+        raise ApiError(404, "Ishchi topilmadi")
+    return worker
+
+
+@routes.get("/api/ledger")
+@endpoint()
+async def ledger(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    worker = await _ledger_worker(request, session, user, request.query.get("worker_id"))
+    limit, offset = _paging(request)
+    rows, more = await repo.worker_ledger(session, user.account_id, worker.id, limit=limit, offset=offset)
+    balance = await repo.worker_balance(session, user.account_id, worker.id)
+    return web.json_response(
+        {
+            "worker": {"id": worker.id, "name": worker.name},
+            "balance": _balance_json(balance),
+            "items": [_ledger_json(r, user) for r in rows],
+            "has_more": more,
+            "pending": await repo.count_pending_payments(session, user.account_id, worker.id),
+        }
+    )
+
+
+@routes.post("/api/payments")
+@endpoint()
+async def add_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Tez yozish: {worker_id (egasida), kind: pay|return|balance, amount, worker_owes, whole}."""
+    data = await _json(request)
+    worker = await _ledger_worker(request, session, user, data.get("worker_id"))
+    kind = data.get("kind")
+    if kind not in (PayKind.PAY, PayKind.RETURN, PayKind.BALANCE):
+        raise ApiError(400, "Noto'g'ri tur")
+    if kind == PayKind.BALANCE and not user.is_owner:
+        raise ApiError(403, "Hisob holatini egangiz yozadi")
+    amount = _parse_price(data.get("amount"))
+    currency = (await repo.enabled_currencies(session, user.account_id))[0]
+    whole = kind == PayKind.PAY and bool(data.get("whole"))
+    if kind == PayKind.BALANCE:
+        amount = amount or Decimal(0)
+    elif not whole and not amount:
+        raise ApiError(400, "Summani yozing")
+    draft = {
+        "section": "work",
+        "entry_id": None,
+        "date": today().isoformat(),
+        "raw_text": "📱 Ilovada yozildi",
+        "created": datetime.now(timezone.utc).isoformat(),
+        "lines": [],
+        "pays": [
+            {
+                "worker_id": worker.id,
+                "worker_name": worker.name,
+                "worker_q": worker.name,
+                "kind": kind,
+                "amount": None if whole else drafts.dec_str(amount),
+                "whole": whole,
+                "worker_owes": kind == PayKind.BALANCE and bool(data.get("worker_owes")),
+                "currency": currency,
+                "note": None,
+                "date": None,
+            }
+        ],
+    }
+    await drafts.resolve(session, draft, user)
+    if draft["pays"][0]["amount"] is None:
+        raise ApiError(400, "Qoldiq yo'q — summani yozing")
+    try:
+        saved = await intake.save(session, request.app["bot"], user, draft)
+    except intake.IntakeError as e:
+        raise ApiError(400, e.message)
+    return web.json_response({"saved": "\n\n".join([saved.header, *(text for text, _ in saved.cards)])})
+
+
+async def _payment_for(request: web.Request, session: AsyncSession, user: User) -> WorkerPayment:
+    entry = await repo.get_payment(session, user.account_id, int(request.match_info["id"]))
+    if entry is None or not (user.is_owner or entry.worker_id == user.id):
+        raise ApiError(404, "Yozuv topilmadi")
+    return entry
+
+
+@routes.post(r"/api/payments/{id:\d+}/{action:approve|reject}")
+@endpoint(owner_only=True)
+async def review_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    from bot.handlers.entries import pay_text
+
+    entry = await _payment_for(request, session, user)
+    approve = request.match_info["action"] == "approve"
+    await repo.review_payment(session, entry, user, approve)
+    worker = entry.worker
+    if worker.tg_id and worker.id != user.id:
+        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        _notify(request, worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + pay_text(entry, worker))
+    return web.json_response(_pay_json(entry, user))
+
+
+@routes.delete(r"/api/payments/{id:\d+}")
+@endpoint()
+async def delete_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    from bot.handlers.entries import pay_text
+
+    entry = await _payment_for(request, session, user)
+    if not user.is_owner and entry.created_by != user.id:
+        raise ApiError(403, "Bu yozuvni egangiz kiritgan — faqat u o'chira oladi")
+    await repo.soft_delete(session, entry)
+    if not user.is_owner and entry.status == EntryStatus.APPROVED:
+        owner = await session.get(User, user.owner_id)
+        if owner and owner.tg_id:
+            _notify(request, owner.tg_id, f"🗑 {escape(user.name)} pul yozuvini o'chirdi:\n\n<s>{pay_text(entry, owner)}</s>")
+    return web.json_response({"ok": True})
+
+
 # --- Barcha harakatlar: xarajat, daromad, qarz, mijoz, xom ashyo va ish yozuvlari bitta lentada ---
 
-ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work")
+ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work", "pay")
 ACTIVITY_MAX = 1000
 
 
@@ -1200,6 +1381,9 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     if kind in (None, "work"):
         for e in await repo.list_work_entries(session, user.id, limit=need):
             items.append((e.work_date, e.created_at.timestamp(), {"type": "work", **_entry_json(e)}))
+    if kind in (None, "pay"):
+        for e in await repo.list_payments(session, user.id, limit=need):
+            items.append((e.entry_date, e.created_at.timestamp(), {"type": "pay", **_pay_json(e, user)}))
     items.sort(key=lambda x: (x[0], x[1]), reverse=True)
     page = [x[2] for x in items[offset : offset + limit]]
     return web.json_response({"items": page, "has_more": len(items) > offset + limit})
@@ -1330,11 +1514,17 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
             intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
         elif prefix == kbs.ClientKindCb.__prefix__:
             intake.set_client_kind(draft, kbs.ClientKindCb.unpack(value))
+        elif prefix == kbs.PayKindCb.__prefix__:
+            if intake.set_pay_kind(draft, kbs.PayKindCb.unpack(value)):
+                await drafts.resolve(session, draft, user)
         elif prefix == kbs.DraftCb.__prefix__:
             action = kbs.DraftCb.unpack(value).action
             if action in ("today", "yesterday"):
                 if not intake.set_date(draft, action):
                     return await _input_state(session, user, notice="Sana o'zgarmadi.")
+            elif action == "asdebt":
+                if intake.pays_to_debt(draft, user):
+                    await drafts.resolve(session, draft, user)
             elif action == "save":
                 saved = await intake.save(session, request.app["bot"], user, draft)
                 _drafts.pop(user.id, None)

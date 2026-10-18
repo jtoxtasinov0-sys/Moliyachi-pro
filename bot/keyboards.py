@@ -3,13 +3,14 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeybo
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 from bot.config import settings
-from bot.db.models import EntryStatus, User, WorkEntry
+from bot.db.models import EntryStatus, User, WorkEntry, WorkerPayment
 from bot.db.repo import SAVINGS_CHOICES
 
 # --- Asosiy menyu -----------------------------------------------------------
 
 BTN_REPORT = "📊 Hisobot"
 BTN_RECENT = "🕘 Oxirgi yozuvlar"
+BTN_LEDGER = "🧾 Hisob-kitob"
 BTN_EXPENSES = "💸 Xarajatlar"
 BTN_DEBTS = "🤝 Qarzlar"
 BTN_CLIENTS = "🛍 Mijozlar"
@@ -22,7 +23,7 @@ BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
-    BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
+    BTN_REPORT, BTN_RECENT, BTN_LEDGER, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
     BTN_MODELS, BTN_MATERIALS, BTN_SETTINGS, BTN_HELP,
 }
 
@@ -31,6 +32,8 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
     kb.button(text=BTN_REPORT)
     kb.button(text=BTN_RECENT)
+    if not user.is_owner:
+        kb.button(text=BTN_LEDGER)
     if user.is_owner:
         kb.button(text=BTN_CLIENTS)
         kb.button(text=BTN_EXPENSES)
@@ -49,17 +52,27 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
 # --- Callback ma'lumotlari --------------------------------------------------
 
 class DraftCb(CallbackData, prefix="d"):
-    action: str  # save | fix | cancel | today | yesterday
+    action: str  # save | fix | cancel | today | yesterday | asdebt (ishchi emas — qarz sifatida yozish)
 
 
 class ResolveCb(CallbackData, prefix="r"):
-    kind: str  # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb)
+    kind: str  # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb) | pworker (pul)
     line: int
     item_id: int  # 0 — yangi qo'shish
 
 
 class EntryCb(CallbackData, prefix="e"):
     action: str  # edit | del | del_yes | del_no | approve | reject
+    entry_id: int
+
+
+class PayKindCb(CallbackData, prefix="pk"):
+    line: int
+    kind: str  # pay | return
+
+
+class PayCb(CallbackData, prefix="wp"):
+    action: str  # approve | reject | del | del_yes | del_no
     entry_id: int
 
 
@@ -106,7 +119,7 @@ class SettingsCb(CallbackData, prefix="s"):
 
 
 class WorkerCb(CallbackData, prefix="wk"):
-    action: str  # list | open | add | link | toggle | job (value — kasb, 0 — kasbsiz) | newjob
+    action: str  # list | open | add | link | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger
     user_id: int = 0
     value: int = 0
 
@@ -126,7 +139,7 @@ class ModelCb(CallbackData, prefix="md"):
 
 def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
     """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries, clients,
-    materials)."""
+    materials, ledger)."""
     url = settings.webapp_url
     if url:
         url += f"?view={view}" if view else ""
@@ -192,6 +205,46 @@ def report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Shu hafta", callback_data=ReportCb(period="week"))
     kb.button(text="Shu oy", callback_data=ReportCb(period="month"))
     add_app_button(kb)
+    return kb.as_markup()
+
+
+def pay_worker_kb(line: int, options: list[tuple[int, str]], as_debt: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for item_id, name in options:
+        kb.button(text=name, callback_data=ResolveCb(kind="pworker", line=line, item_id=item_id))
+    if as_debt:
+        kb.button(text="🤝 Ishchi emas — qarz qilib yozish", callback_data=DraftCb(action="asdebt"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.adjust(*([2] * (len(options) // 2)), *([1] * (len(options) % 2)), *([1] * (2 if as_debt else 1)))
+    return kb.as_markup()
+
+
+def pay_kind_kb(line: int, owner: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💵 Men berdim" if owner else "💵 Oldim", callback_data=PayKindCb(line=line, kind="pay"))
+    kb.button(text="↩️ U qaytardi" if owner else "↩️ Qaytardim", callback_data=PayKindCb(line=line, kind="return"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.adjust(2, 1)
+    return kb.as_markup()
+
+
+def pay_entry_kb(entry: WorkerPayment, viewer: User, app: bool = False) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    if viewer.is_owner and entry.status == EntryStatus.PENDING:
+        kb.button(text="✅ Tasdiqlash", callback_data=PayCb(action="approve", entry_id=entry.id))
+        kb.button(text="🚫 Rad etish", callback_data=PayCb(action="reject", entry_id=entry.id))
+    if viewer.is_owner or entry.created_by == viewer.id:
+        kb.button(text="🗑 O'chirish", callback_data=PayCb(action="del", entry_id=entry.id))
+    kb.adjust(2)
+    if app:
+        add_app_button(kb, "ledger")
+    return kb.as_markup()
+
+
+def pay_confirm_delete_kb(entry_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 Ha, o'chirilsin", callback_data=PayCb(action="del_yes", entry_id=entry_id))
+    kb.button(text="↩️ Yo'q", callback_data=PayCb(action="del_no", entry_id=entry_id))
     return kb.as_markup()
 
 

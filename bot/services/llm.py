@@ -28,6 +28,16 @@ Currency = Literal["UZS", "USD", "KRW"]
 CurrencyOrEmpty = Literal["UZS", "USD", "KRW", ""]
 
 
+ITEM_DATE = (
+    "Shu yozuvning o'z sanasi YYYY-MM-DD — faqat yozuvlar turli kunlarga tegishli bo'lsa (masalan, bank "
+    "tarixida). Umumiy sana bilan bir xil yoki noma'lum bo'lsa null"
+)
+ITEM_DATE_TEXT = (
+    "Shu yozuvning o'z sanasi YYYY-MM-DD — faqat yozuvlar turli kunlarga tegishli bo'lsa (masalan, yozishma "
+    "skrinshotida). Umumiy sana bilan bir xil yoki noma'lum bo'lsa bo'sh satr"
+)
+
+
 class WorkItem(BaseModel):
     worker_name: str | None = Field(description="Ishchi ismi, aytilmagan bo'lsa null")
     model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
@@ -36,6 +46,7 @@ class WorkItem(BaseModel):
         "Brsovkachi, tikish — Tikuvchi...). Faqat ish turi aytilsa, aks holda bo'sh satr"
     )
     quantity: int | None = Field(description="Dona soni, aytilmagan bo'lsa null")
+    date: str = Field(description=ITEM_DATE_TEXT)
 
 
 class PriceItem(BaseModel):
@@ -62,6 +73,28 @@ class MaterialItem(BaseModel):
     supplier: str = Field(description="Kimdan yoki qayerdan olingani, aytilmasa bo'sh satr")
 
 
+class PayItem(BaseModel):
+    worker_name: str = Field(
+        description="Ishchi ismi \"Ishchilar\" ro'yxatidan; ishchi o'zi yozsa — uning ismi; aytilmasa bo'sh satr"
+    )
+    kind: Literal["pay", "return", "balance", ""] = Field(
+        description="pay — ishchiga pul berildi, ishchi pul oldi (avans, oylik, ish haqi); "
+        "return — ishchi pulni qaytardi; balance — pul berilmadi, faqat hisob holati (qoldiq) aytildi"
+    )
+    amount: float = Field(description="Summa, aytilmasa 0. balance da — qoldiq summasi, hisob yopilgan bo'lsa 0")
+    whole: bool = Field(
+        description="Faqat pay: summa aytilmay \"qolgan hamma pulini berdim\", \"hisobini to'liq berdim\" "
+        "deyilsa true, aks holda false"
+    )
+    worker_owes: bool = Field(
+        description="Faqat balance: true — ishchi egasiga qarzdor (ortiqcha olgan); false — egasi ishchiga "
+        "qarzdor (ishchining haqqi qolgan) yoki hisob yopilgan"
+    )
+    currency: CurrencyOrEmpty = Field(description="Aytilmasa bo'sh satr")
+    note: str = Field(description="Qisqa izoh (avans, oylik, bonus), bo'lmasa bo'sh satr")
+    date: str = Field(description=ITEM_DATE_TEXT)
+
+
 class ClientItem(BaseModel):
     client_name: str | None = Field(description="Mijoz ismi, aytilmagan bo'lsa null")
     kind: Literal["sale", "payment", "return"] | None = Field(
@@ -76,12 +109,6 @@ class ClientItem(BaseModel):
     total: float | None = Field(description="Umumiy summa (to'lovda — to'langan summa)")
     currency: Currency | None
     note: str | None = Field(description="Qisqa izoh, bo'lmasa null")
-
-
-ITEM_DATE = (
-    "Shu yozuvning o'z sanasi YYYY-MM-DD — faqat yozuvlar turli kunlarga tegishli bo'lsa (masalan, bank "
-    "tarixida). Umumiy sana bilan bir xil yoki noma'lum bo'lsa null"
-)
 
 
 class PersonalItem(BaseModel):
@@ -115,9 +142,10 @@ class DebtItem(BaseModel):
 
 
 class Extraction(BaseModel):
-    section: Literal["work", "price", "material", "client", "personal", "debt", "unknown"]
+    section: Literal["work", "pay", "price", "material", "client", "personal", "debt", "unknown"]
     date: str | None = Field(description="YYYY-MM-DD. Sana aytilmagan bo'lsa null")
     work: list[WorkItem]
+    pays: list[PayItem]
     prices: list[PriceItem]
     materials: list[MaterialItem]
     client: list[ClientItem]
@@ -145,6 +173,9 @@ Vazifang: matndan yozuvlarni ajratib, berilgan JSON sxemada qaytarish.
 Bo'limlar:
 - work — ishchi ish topshirdi: "Alisher A-12 dan 50 ta topshirdi", "bugun B5 modeldan 30 ta tikdim", \
 "Vali A-12 dan 40 ta brsovka qildi", "kecha 100 ta kroy qildim A-12".
+- pay — ishchi bilan pul hisob-kitobi: ishchiga avans yoki ish haqi berildi, ishchi pul oldi yoki \
+qaytardi, ishchi bilan hisob holati aytildi: "Robiyaga 500 ming berdim", "Robiya 500 ming avans oldi", \
+"Robiya 200 ming qaytardi", "Robiyaga 900 ming qarzman", "Robiya bilan hisob yopildi".
 - price — egasi model uchun bir dona ish haqi narxini belgilaydi (kasb bo'yicha yoki umumiy): \
 "A-12 modelga brsovka 2000dan", "A-12: kroy 1500, tikuv 5000, tortish 3000", "B-5 narxi 4000 bo'lsin". \
 Ishchi ismi va dona soni aytilmaydi.
@@ -165,6 +196,18 @@ Qoidalar:
 - Faqat tegishli bo'lim ro'yxatini to'ldir, qolganlari bo'sh bo'lsin. Istisno: bitta xabarda ham \
 xarajat/daromad, ham qarz bo'lsa — personal va debt ikkalasini to'ldir, section esa asosiysi.
 - Bitta xabarda bir nechta yozuv bo'lishi mumkin ("A-12 dan 50, B-5 dan 30") — har birini alohida element qil.
+- Xabar SMS kabi qisqa bo'lishi mumkin: "15 loaf 15 sapog", "loaf 20, sapog 10" — model nomi va dona soni \
+(har biri alohida work elementi); "500.000 berdim", "500 000 oldim" — pul.
+- Ishchi bilan pul (pay):
+  * "Ishchilar" ro'yxatidagi odamga pul berilsa, undan pul olinsa yoki u bilan hisob aytilsa — pay, debt emas. \
+Ishchi ro'yxatda bo'lmasa — debt.
+  * Egasi tilidan: "Robiyaga 500 ming berdim", "Robiyaga avans berdim", "Robiya 500 ming oldi" — pay; \
+"Robiya 200 ming qaytardi", "Robiyadan 200 ming oldim" — return.
+  * Hisob holati (pul berilmagan) — balance: "Robiyaga 900 ming qarzman", "Robiyaning 900 ming haqqi bor", \
+"Robiya bilan hisob 900 ming, men qarz" — worker_owes=false; "Robiya menga 200 ming qarz", "Robiya 200 ming \
+ortiqcha olgan" — worker_owes=true; "Robiya bilan hisob yopildi", "hisob-kitob qildik, qarz yo'q" — amount=0.
+  * Ish va pul bitta xabarda bo'lsa ("Robiya 15 ta loaf qildi, 500 ming berdim") — work va pays ikkalasini \
+to'ldir, section=work. Faqat pul bo'lsa — section=pay.
 - Kasb (job) — ishchi qanday ish qilgani yoki narx qaysi ish uchunligi. "Kasblar" ro'yxatidagi eng mos nomni \
 yoz: kroy, kroyka, kesish, bichish — Kroychi; brsovka, brsovshi, brsovkachi, shilish (tikishga tayyorlab \
 shilish) — Brsovkachi; tikish, tikuv — Tikuvchi; tortish, padosh (tag) yopishtirish — Tortuvchi; pardoz, \
@@ -201,7 +244,8 @@ xarajat — {", ".join(EXPENSE_CATEGORIES)}; daromad — {", ".join(INCOME_CATEG
 Benzin, moy, avtoservis, jarima, parkovka — Mashina.
 - Ism, model va kasb nomlarini "Ma'lum nomlar" ro'yxatidagi eng mos yozuvga keltir; mos keladigani \
 bo'lmasa, eshitilgancha lotin yozuvida, bosh harf bilan yoz. O'zingdan ism yoki son to'qima.
-- Sonlarni raqamga aylantir: "ellik" -> 50, "bir yarim million" -> 1500000, "200 ming" -> 200000.
+- Sonlarni raqamga aylantir: "ellik" -> 50, "bir yarim million" -> 1500000, "200 ming" -> 200000, \
+"500.000" yoki "500,000" -> 500000 (nuqta va vergul — minglik ajratgich).
 - Valyuta: so'm -> UZS, dollar/$ -> USD, von/won/₩ -> KRW. Aytilmasa null.
 - Sanani bugungi sanaga nisbatan hisobla: "kecha", "o'tgan juma", "5-oktabr". Aytilmasa null.
 """
@@ -360,8 +404,11 @@ async def _call(
 
 def _worker_rules(worker_name: str) -> str:
     return (
-        f"Bu xabarni ishchi {worker_name} yozdi. Bo'lim faqat work bo'lishi mumkin "
-        f"(yoki tushunarsiz bo'lsa unknown). worker_name har doim \"{worker_name}\"."
+        f"Bu xabarni ishchi {worker_name} yozdi. Bo'lim faqat work yoki pay bo'lishi mumkin "
+        f"(yoki tushunarsiz bo'lsa unknown). worker_name har doim \"{worker_name}\". "
+        "Ishchi tilidan: \"500 ming oldim\", \"avans oldim\", \"oylikni oldim\" — pay; \"200 ming qaytardim\", "
+        "\"200 ming berdim\" — return; \"egam menga 900 ming qarz\", \"900 ming haqqim bor\" — balance, "
+        "worker_owes=false; \"men 200 ming qarzman\" — balance, worker_owes=true."
     )
 
 
@@ -437,6 +484,10 @@ va bonus ballar, bekor qilingan, rad etilgan yoki o'tmagan to'lovlar ("Bekor qil
 
 Qo'lda yozilgan daftar yoki boshqa matnli rasm — undagi yozuvlarni oddiy xabar kabi yuqoridagi qoidalar \
 bilan ajrat. Korxona uchun xom ashyo (teri, kley, padosh...) xaridi cheki yoki daftari — section=material.
+Ishchi bilan yozishma (SMS yoki Telegram chat skrinshoti): tepadagi suhbatdosh ismi — odatda ishchi, o'ng \
+tomondagi (yuborilgan) xabarlarni foydalanuvchining o'zi yozgan. "15 loaf 15 sapog" — ish (work), \
+"500.000 berdim" — pul (pays), "900.000 men qarz" — hisob holati (balance). Har bir xabarning sanasi \
+(kun sarlavhasi: "среда, 7 октября", "7-oktabr") — date maydoniga, section=work.
 Rasmda moliyaviy yozuv bo'lmasa — section=unknown, question'da rasmda nima ko'ringanini qisqa ayt.
 Foydalanuvchi izohi berilsa — undagi ko'rsatmaga amal qil (masalan, sana yoki qaysi yozuvlar kerakligi)."""
 

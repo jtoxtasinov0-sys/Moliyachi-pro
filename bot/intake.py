@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import advisor, drafts
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ClientKind, EntryStatus, User
+from bot.db.models import ClientKind, DebtDirection, EntryStatus, PayKind, User, WorkerPayment
 from bot.services import llm
 from bot.services.utils import fmt_money, today
 
@@ -90,18 +90,19 @@ async def _build(
     special = user.is_owner and (
         drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext) or drafts.is_material(ext)
     )
-    if not special and (ext.section != "work" or not ext.work):
+    if not special and (ext.section not in ("work", "pay") or not (ext.work or ext.pays)):
         example = (
-            "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan» yoki «A-12 modeldan 50 ta»"
+            "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «A-12 modeldan 50 ta» "
+            "yoki «Robiyaga 500 ming berdim»"
             if user.is_owner
-            else "«A-12 modeldan 50 ta topshirdim»"
+            else "«A-12 modeldan 50 ta topshirdim» yoki «500 ming oldim»"
         )
         hint = ext.question or f"Tushunmadim. Masalan: {example}."
         raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
 
     currency = (await repo.enabled_currencies(session, user.account_id))[0]
     new_draft = drafts.from_extraction(ext, raw, entry_id=entry_id, default_currency=currency, set_size=set_size)
-    if entry_id and (new_draft["section"] != "work" or len(new_draft["lines"]) != 1):
+    if entry_id and (new_draft["section"] != "work" or len(new_draft["lines"]) != 1 or new_draft.get("pays")):
         raise IntakeError("Tahrirlashda faqat bitta yozuv bo'lishi kerak. Qaytadan ayting.")
     if source:
         new_draft["source"] = source
@@ -131,19 +132,18 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
         return await _choose_client(session, user, draft, cb)
     if draft["section"] == "price":
         return await _choose_price(session, user, draft, cb)
+    if draft["section"] == "work" and cb.kind == "pworker":
+        if not user.is_owner or cb.line >= len(draft.get("pays", [])):
+            return False
+        await _pick_worker(session, user, draft, draft["pays"][cb.line], cb.item_id)
+        await drafts.resolve(session, draft, user)
+        return True
     if draft["section"] != "work" or cb.line >= len(draft["lines"]):
         return False
     line = draft["lines"][cb.line]
-    acc = user.account_id
 
     if cb.kind == "worker" and user.is_owner:
-        workers = {w.id: w for w in await repo.list_workers(session, acc)}
-        worker = workers.get(cb.item_id)
-        if worker is None:
-            raise IntakeError("Ishchi topilmadi.")
-        if line["worker_q"] and line["worker_q"].lower() != worker.name.lower():
-            await repo.save_alias(session, acc, "worker", worker.id, line["worker_q"])
-        line["worker_id"], line["worker_name"] = worker.id, worker.name
+        await _pick_worker(session, user, draft, line, cb.item_id)
     elif cb.kind == "model":
         model = await _pick_model(session, user, line, cb.item_id)
         if model is None:
@@ -159,6 +159,19 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
     # Ishchi almashsa — uning kasbi, model yoki kasb almashsa — narx yangilanadi
     await drafts.resolve(session, draft, user)
     return True
+
+
+async def _pick_worker(session: AsyncSession, user: User, draft: dict, item: dict, worker_id: int) -> None:
+    """Tugmada tanlangan ishchi. Ismi aytilmagan bo'lsa — ismi aytilmagan boshqa qatorlar ham shu ishchiga."""
+    acc = user.account_id
+    worker = await repo.get_worker(session, acc, worker_id)
+    if worker is None or not worker.is_active:
+        raise IntakeError("Ishchi topilmadi.")
+    if item["worker_q"] and item["worker_q"].lower() != worker.name.lower():
+        await repo.save_alias(session, acc, "worker", worker.id, item["worker_q"])
+    item["worker_id"], item["worker_name"] = worker.id, worker.name
+    if not item["worker_q"]:
+        drafts.share_worker(draft, worker.id, worker.name)
 
 
 async def _pick_model(session: AsyncSession, user: User, item: dict, item_id: int):
@@ -239,6 +252,44 @@ def set_client_kind(draft: dict, cb: kbs.ClientKindCb) -> bool:
     return True
 
 
+def set_pay_kind(draft: dict, cb: kbs.PayKindCb) -> bool:
+    pays = draft.get("pays", [])
+    if draft["section"] != "work" or cb.line >= len(pays) or cb.kind not in (PayKind.PAY, PayKind.RETURN):
+        return False
+    pays[cb.line]["kind"] = cb.kind
+    return True
+
+
+def pays_to_debt(draft: dict, user: User) -> bool:
+    """«Ishchi emas — qarz qilib yozish»: faqat pul bo'lgan qoralama oddiy qarzga aylanadi."""
+    if not user.is_owner or draft["section"] != "work" or draft["lines"] or not draft.get("pays"):
+        return False
+    debt = []
+    for p in draft["pays"]:
+        stated = p["kind"] == PayKind.BALANCE
+        if stated:
+            direction = DebtDirection.OUT if p["worker_owes"] else DebtDirection.IN
+        elif p["kind"] in (PayKind.PAY, PayKind.RETURN):
+            direction = DebtDirection.OUT if p["kind"] == PayKind.PAY else DebtDirection.IN
+        else:
+            direction = None
+        debt.append(
+            {
+                "person": p["worker_q"] or p["worker_name"],
+                "direction": direction,
+                "stated": stated,
+                "amount": p["amount"] if p["amount"] != "0" else None,
+                "currency": p["currency"],
+                "note": p["note"],
+                "date": p["date"],
+            }
+        )
+    for key in ("lines", "pays", "balances", "by_owner", "auto_ok"):
+        draft.pop(key, None)
+    draft.update(section="money", personal=[], debt=debt)
+    return True
+
+
 def set_direction(draft: dict, cb: kbs.DebtDirCb) -> bool:
     if draft["section"] != "money" or cb.line >= len(draft["debt"]) or cb.direction not in ("in", "out"):
         return False
@@ -249,7 +300,7 @@ def set_direction(draft: dict, cb: kbs.DebtDirCb) -> bool:
 def set_date(draft: dict, action: str) -> bool:
     """«Bugun» / «Kecha» tugmasi — hamma yozuvlar shu kunga. False — sana o'zgarmadi."""
     d = today() if action == "today" else today() - timedelta(days=1)
-    items = [*draft.get("personal", []), *draft.get("debt", [])]
+    items = [*draft.get("personal", []), *draft.get("debt", []), *draft.get("lines", []), *draft.get("pays", [])]
     if draft["date"] == d.isoformat() and not any(item.get("date") for item in items):
         return False
     draft["date"] = d.isoformat()
@@ -267,7 +318,7 @@ class Saved:
 
 async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
     """Qoralamani bazaga yozadi. Ishchi yozuvi tasdiq kutsa — egaga xabar yuboriladi."""
-    from bot.handlers.entries import entry_text, notify_owner_pending  # aylanma importdan qochish uchun
+    from bot.handlers.entries import entry_text, notify_owner_pending, pay_text  # aylanma importdan qochish uchun
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
@@ -284,7 +335,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     acc = user.account_id
     needs_approval = not user.is_owner and await repo.require_approval(session, acc)
-    work_date = date.fromisoformat(draft["date"])
+    payments: list[WorkerPayment] = []
 
     if draft["entry_id"]:
         entry = await repo.get_work_entry(session, acc, draft["entry_id"])
@@ -298,7 +349,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
             if model is not None:
                 await repo.reprice_entry(session, entry, model, line["job_id"])
         entry.quantity = line["quantity"]
-        entry.work_date = work_date
+        entry.work_date = date.fromisoformat(drafts.item_date(draft, line))
         entry.raw_text = draft["raw_text"]
         if needs_approval:
             entry.status = EntryStatus.PENDING
@@ -317,21 +368,95 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
                     model_id=line["model_id"],
                     job_id=line["job_id"],
                     quantity=line["quantity"],
-                    work_date=work_date,
+                    work_date=date.fromisoformat(drafts.item_date(draft, line)),
                     status=EntryStatus.PENDING if needs_approval else EntryStatus.APPROVED,
                     raw_text=draft["raw_text"],
                     created_by=user.id,
                 )
             )
+        for p in draft.get("pays", []):
+            payments.append(await _save_pay(session, user, draft, p))
         header = "✅ <b>Saqlandi</b>"
 
-    if needs_approval:
-        header += "\n⏳ Egasining tasdig'ini kutmoqda."
+    if needs_approval and saved:
+        header += "\n⏳ Ish yozuvlari egasining tasdig'ini kutmoqda."
         for entry in saved:
             await notify_owner_pending(bot, session, entry)
-    last = len(saved) - 1
-    cards = [(entry_text(e), kbs.entry_kb(e, user, app=i == last)) for i, e in enumerate(saved)]
+    if payments:
+        header += "\n\n" + "\n".join(await _balance_lines(session, user, [p.worker for p in payments]))
+        await _notify_payments(bot, session, user, payments)
+    cards = [(entry_text(e), kbs.entry_kb(e, user)) for e in saved]
+    cards += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in payments]
+    if cards:
+        # «Ilovani ochish» — oxirgi kartochkada
+        last_text, _ = cards[-1]
+        last = payments[-1] if payments else saved[-1]
+        kb = kbs.pay_entry_kb(last, user, app=True) if payments else kbs.entry_kb(last, user, app=True)
+        cards[-1] = (last_text, kb)
     return Saved(header, cards)
+
+
+async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> WorkerPayment:
+    """Ishchi «oldim» desa — darhol hisobga kiradi; «qaytardim» — tasdiqlash yoqilgan bo'lsa egasi tasdiqlagach;
+    hisob holatini ishchi yozsa — har doim egasi tasdiqlagach."""
+    acc = user.account_id
+    worker = await repo.get_worker(session, acc, p["worker_id"])
+    if worker is None or (not user.is_owner and worker.id != user.id):
+        raise IntakeError("⚠️ Ishchi topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
+    approved = user.is_owner or p["kind"] == PayKind.PAY
+    if not approved and p["kind"] == PayKind.RETURN:
+        approved = not await repo.require_approval(session, acc)
+    amount = Decimal(p["amount"])
+    if p["kind"] == PayKind.BALANCE and p["worker_owes"]:
+        amount = -amount
+    return await repo.create_payment(
+        session,
+        owner_id=acc,
+        worker_id=worker.id,
+        kind=p["kind"],
+        amount=amount,
+        currency=p["currency"],
+        note=p["note"],
+        entry_date=date.fromisoformat(drafts.item_date(draft, p)),
+        status=EntryStatus.APPROVED if approved else EntryStatus.PENDING,
+        raw_text=draft["raw_text"],
+        created_by=user.id,
+    )
+
+
+async def _balance_lines(session: AsyncSession, viewer: User, workers: list[User]) -> list[str]:
+    unique = list({w.id: w for w in workers}.values())
+    balances = await repo.worker_balances(session, viewer.account_id, [w.id for w in unique])
+    rows = []
+    for w in unique:
+        balance = balances[w.id].balance if w.id in balances else {}
+        rows.append(drafts.balance_text(balance, w.name if viewer.is_owner else None))
+    return rows
+
+
+async def _notify_payments(bot: Bot, session: AsyncSession, user: User, payments: list[WorkerPayment]) -> None:
+    """Egasi yozsa — ishchiga, ishchi yozsa — egasiga xabar (tasdiq kerak bo'lsa tugmalari bilan)."""
+    from bot.handlers.entries import notify_owner, notify_user, pay_text
+
+    if user.is_owner:
+        for e in payments:
+            worker = e.worker
+            if worker.tg_id and worker.is_active and worker.id != user.id:
+                balance = (await repo.worker_balance(session, e.owner_id, worker.id)).balance
+                text = f"🧾 <b>Hisob-kitob</b> (egangiz yozdi)\n\n{pay_text(e, worker)}\n\n{drafts.balance_text(balance)}"
+                await notify_user(bot, worker.tg_id, text, kbs.app_kb("ledger"))
+        return
+    owner = await session.get(User, user.owner_id)
+    if owner is None:
+        return
+    for e in payments:
+        balance = (await repo.worker_balance(session, e.owner_id, user.id)).balance
+        title = "🔔 <b>Tasdiq kutmoqda</b>" if e.status == EntryStatus.PENDING else "🧾 <b>Hisob-kitob</b>"
+        text = (
+            f"{title} — {escape(user.name)} yozdi\n\n{pay_text(e, owner)}\n\n"
+            f"{drafts.balance_text(balance, user.name)}"
+        )
+        await notify_owner(bot, session, e.owner_id, text, markup=kbs.pay_entry_kb(e, owner))
 
 
 async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:

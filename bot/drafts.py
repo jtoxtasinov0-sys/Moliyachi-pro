@@ -12,6 +12,15 @@ Qoralama FSM holatida oddiy dict sifatida saqlanadi. Ish topshirish:
 }
 job_q — xabarda aytilgan kasb («brsovka»). Aytilmasa va job_auto bo'lsa — ishchining o'z kasbi olinadi.
 Narx (price) — model va kasb bo'yicha: kasb narxi, u bo'lmasa modelning umumiy narxi.
+date — qatorning o'z sanasi (yozishma skrinshotida har xil kunlar), None — umumiy sana.
+Ishchi bilan pul (avans, ish haqi, qaytarilgan pul, hisob holati) — shu qoralamada "pays" (ish bo'lmasa ham):
+{
+  ..., "pays": [{worker_id, worker_name, worker_q, kind, amount, whole, worker_owes, currency, note, date}],
+       "balances": {"worker_id": {valyuta: qoldiq}},  # ishchilarning hozirgi qoldig'i (resolve da)
+       "by_owner": bool, "auto_ok": bool,  # egasi yozdimi; ishchi yozuvi tasdiqsiz hisobga kiradimi
+}
+kind — PayKind; BALANCE da amount — qoldiq ("0" — hisob yopildi), worker_owes — ishchi qarzdor.
+whole — «qolgan hamma pulini berdim»: summa qoldiqdan olinadi.
 Model narxini belgilash — "section": "price":
 {
   ..., "prices": [{model_id, model_name, model_q, job_id, job_name, job_q,
@@ -49,7 +58,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ClientKind, DebtDirection, ItemModel, PersonalKind, PriceUnit, User, WorkEntry
+from bot.db.models import (
+    ClientKind,
+    DebtDirection,
+    ItemModel,
+    PayKind,
+    PersonalKind,
+    PriceUnit,
+    User,
+    WorkEntry,
+)
 from bot.services import matcher
 from bot.services.llm import Extraction
 from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, today
@@ -62,7 +80,7 @@ def _empty_line() -> dict:
         "worker_id": None, "worker_name": None, "worker_q": None,
         "model_id": None, "model_name": None, "model_q": None,
         "job_id": None, "job_name": None, "job_q": None, "job_auto": True,
-        "quantity": None, "price": None, "currency": None,
+        "quantity": None, "price": None, "currency": None, "date": None,
     }
 
 
@@ -140,6 +158,36 @@ def material_total(item: dict) -> None:
         item["total"] = _amount(float(Decimal(item["price"]) * qty))
     elif item["total"] and not item["price"]:
         item["price"] = _amount(float(Decimal(item["total"]) / qty))
+
+
+PAY_KINDS = (PayKind.PAY, PayKind.RETURN, PayKind.BALANCE)
+
+
+def _pay_items(ext: Extraction, default_currency: str, draft_date: str) -> list[dict]:
+    items = []
+    for p in ext.pays:
+        kind = p.kind or None
+        balance = kind == PayKind.BALANCE
+        value = p.amount or 0
+        owes = bool(p.worker_owes) and balance
+        if value < 0:
+            value, owes = -value, balance
+        items.append(
+            {
+                "worker_id": None,
+                "worker_name": None,
+                "worker_q": _name(p.worker_name, 100),
+                "kind": kind,
+                # Hisob holatida summa aytilmasa — hisob yopildi (qoldiq 0)
+                "amount": "0" if balance and not value else _amount(value),
+                "whole": bool(p.whole) and kind == PayKind.PAY,
+                "worker_owes": owes,
+                "currency": p.currency or default_currency,
+                "note": _name(p.note, 200),
+                "date": _item_date(p.date, draft_date),
+            }
+        )
+    return items
 
 
 def _count(value: int | None) -> int | None:
@@ -285,8 +333,11 @@ def from_extraction(
         # Saqlangan yozuvni tahrirlashda kasb ishchiga qarab o'zgarib ketmasin — faqat aytilsa
         line["job_auto"] = entry_id is None
         line["quantity"] = item.quantity if item.quantity and item.quantity > 0 else None
+        line["date"] = _item_date(item.date, draft["date"])
         lines.append(line)
     draft["lines"] = lines
+    said = {p.currency for p in ext.pays if p.currency}
+    draft["pays"] = _pay_items(ext, said.pop() if len(said) == 1 else default_currency, draft["date"])
     return draft
 
 
@@ -308,6 +359,7 @@ def from_entry(entry: WorkEntry) -> dict:
         "raw_text": entry.raw_text or "",
         "created": datetime.now(timezone.utc).isoformat(),
         "lines": [line],
+        "pays": [],
     }
 
 
@@ -389,8 +441,22 @@ def for_llm(draft: dict) -> dict:
                 # Ishchining o'z kasbi (aytilmagan) yuborilmaydi: ishchi almashsa, kasb ham almashadi
                 "job": (ln["job_name"] or ln["job_q"]) if ln["job_q"] else None,
                 "quantity": ln["quantity"],
+                "date": ln.get("date") or "",
             }
             for ln in draft["lines"]
+        ],
+        "pays": [
+            {
+                "worker_name": p["worker_name"] or p["worker_q"] or "",
+                "kind": p["kind"] or "",
+                "amount": _num(p["amount"]) or 0,
+                "whole": p["whole"],
+                "worker_owes": p["worker_owes"],
+                "currency": p["currency"],
+                "note": p["note"] or "",
+                "date": p["date"] or "",
+            }
+            for p in draft.get("pays", [])
         ],
     }
 
@@ -467,15 +533,21 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     workers_by_id = {w.id: w for w in workers}
     workers_by_id[user.id] = user
 
-    for line in draft["lines"]:
+    pays = draft.setdefault("pays", [])
+    for item in [*draft["lines"], *pays]:
         if not user.is_owner:
-            line["worker_id"], line["worker_name"] = user.id, user.name
-        elif line["worker_id"] is None and line["worker_q"]:
-            res = matcher.match(line["worker_q"], [(w.id, w.name) for w in workers], worker_aliases)
+            item["worker_id"], item["worker_name"] = user.id, user.name
+        elif item["worker_id"] is None and item["worker_q"]:
+            res = matcher.match(item["worker_q"], [(w.id, w.name) for w in workers], worker_aliases)
             if res.exact_id:
-                line["worker_id"] = res.exact_id
-                line["worker_name"] = next(w.name for w in workers if w.id == res.exact_id)
+                item["worker_id"] = res.exact_id
+                item["worker_name"] = workers_by_id[res.exact_id].name
+    # «Robiya 15 ta loaf qildi, 500 ming berdim» — ismi aytilmagan qatorlar ham shu ishchiga
+    named = {(i["worker_id"], i["worker_name"]) for i in [*draft["lines"], *pays] if i["worker_id"]}
+    if len(named) == 1:
+        share_worker(draft, *named.pop())
 
+    for line in draft["lines"]:
         if line["model_id"] is None and line["model_q"]:
             res = matcher.match(line["model_q"], [(m.id, m.name) for m in models], model_aliases)
             if res.exact_id:
@@ -494,6 +566,80 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
             line["job_id"], line["job_name"] = (job.id, job.name) if job else (None, None)
 
     await price_lines(session, draft, acc)
+    await _pay_balances(session, draft, user)
+
+
+def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
+    """Ismi aytilmagan ish va pul qatorlari — shu ishchiga."""
+    for item in [*draft.get("lines", []), *draft.get("pays", [])]:
+        if item["worker_id"] is None and not item["worker_q"]:
+            item["worker_id"], item["worker_name"] = worker_id, worker_name
+
+
+def pay_counted(draft: dict, p: dict) -> bool:
+    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» desa — ha (egasiga
+    zarar yo'q); «qaytardim» — tasdiqlash o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
+    if draft.get("by_owner", True) or p["kind"] == PayKind.PAY:
+        return True
+    return p["kind"] == PayKind.RETURN and draft.get("auto_ok", False)
+
+
+def dec_str(value: Decimal) -> str:
+    return str(int(value)) if value == value.to_integral_value() else str(value)
+
+
+def project_balances(draft: dict) -> dict[int, tuple[dict[str, Decimal], dict[str, Decimal]]]:
+    """Ishchi -> (hozirgi qoldiq, saqlangandan keyingi qoldiq). «Qolgan hammasini berdim» summasi shu yerda
+    qo'yiladi (summa aytilmagan bo'lsa)."""
+    out: dict[int, tuple[dict[str, Decimal], dict[str, Decimal]]] = {}
+
+    def get(worker_id: int):
+        if worker_id not in out:
+            before = {c: Decimal(v) for c, v in draft.get("balances", {}).get(str(worker_id), {}).items()}
+            out[worker_id] = (before, dict(before))
+        return out[worker_id][1]
+
+    pays = draft.get("pays", [])
+    if not pays:
+        return out
+    work_ok = draft.get("by_owner", True) or draft.get("auto_ok", False)
+    for ln in draft["lines"]:
+        if work_ok and ln["worker_id"] and ln["price"] and ln["quantity"]:
+            after = get(ln["worker_id"])
+            after[ln["currency"]] = after.get(ln["currency"], Decimal(0)) + Decimal(ln["price"]) * ln["quantity"]
+    for p in pays:
+        if not p["worker_id"] or p["kind"] not in PAY_KINDS:
+            continue
+        after = get(p["worker_id"])
+        if p["kind"] == PayKind.PAY and p["whole"] and p["amount"] is None:
+            due = after.get(p["currency"], Decimal(0))
+            if due > 0:
+                p["amount"] = dec_str(due)
+        if p["amount"] is None or not pay_counted(draft, p):
+            continue
+        value = Decimal(p["amount"])
+        if p["kind"] == PayKind.BALANCE:
+            after.clear()
+            if value:
+                after[p["currency"]] = -value if p["worker_owes"] else value
+        else:
+            sign = -1 if p["kind"] == PayKind.PAY else 1
+            after[p["currency"]] = after.get(p["currency"], Decimal(0)) + sign * value
+    return out
+
+
+async def _pay_balances(session: AsyncSession, draft: dict, user: User) -> None:
+    """Pul qatoridagi ishchilarning hozirgi qoldig'i (qoralamada «900 000 → 400 000» ko'rsatish uchun)."""
+    pays = draft.get("pays", [])
+    ids = sorted({p["worker_id"] for p in pays if p["worker_id"]})
+    acc = user.account_id
+    balances = await repo.worker_balances(session, acc, ids) if ids else {}
+    draft["balances"] = {
+        str(w): {c: str(v) for c, v in balances[w].balance.items()} if w in balances else {} for w in ids
+    }
+    draft["by_owner"] = user.is_owner
+    draft["auto_ok"] = user.is_owner or not await repo.require_approval(session, acc)
+    project_balances(draft)
 
 
 async def _resolve_prices(session: AsyncSession, draft: dict, acc: int) -> None:
@@ -625,6 +771,13 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
             return "job", i
         if not line["quantity"]:
             return "quantity", i
+    for i, p in enumerate(draft.get("pays", [])):
+        if p["worker_id"] is None:
+            return "pworker", i
+        if p["kind"] not in PAY_KINDS:
+            return "pkind", i
+        if p["amount"] is None:
+            return "pamount", i
     return None
 
 
@@ -638,22 +791,26 @@ def _short_raw(draft: dict) -> str | None:
     return f"🗣 <i>«{escape(short)}»</i>"
 
 
-def _render(draft: dict) -> str:
-    title = (
-        f"✏️ <b>Yozuv #{draft['entry_id']} — tahrirlash</b>"
-        if draft["entry_id"]
-        else "📝 <b>Ish topshirish</b>"
-    )
+def _render(draft: dict, owner: bool = True) -> str:
+    lines = draft["lines"]
+    pays = draft.get("pays", [])
+    if draft["entry_id"]:
+        title = f"✏️ <b>Yozuv #{draft['entry_id']} — tahrirlash</b>"
+    elif pays and lines:
+        title = "📝 <b>Ish va pul</b>"
+    elif pays:
+        title = "💵 <b>Ishchi bilan hisob-kitob</b>" if owner else "💵 <b>Hisob-kitob</b>"
+    else:
+        title = "📝 <b>Ish topshirish</b>"
     parts = [title]
     if raw := _short_raw(draft):
         parts.append(raw)
     parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
 
-    lines = draft["lines"]
-    worker_ids = {ln["worker_id"] for ln in lines}
+    worker_ids = {item["worker_id"] for item in [*lines, *pays]}
     one_worker = len(worker_ids) == 1 and None not in worker_ids
-    if one_worker:
-        parts.append(f"👷 Ishchi: <b>{escape(lines[0]['worker_name'])}</b>")
+    if one_worker and (owner or lines):
+        parts.append(f"👷 Ishchi: <b>{escape((lines or pays)[0]['worker_name'])}</b>")
 
     totals: dict[str, Decimal] = {}
     rows = []
@@ -671,11 +828,97 @@ def _render(draft: dict) -> str:
             pay = Decimal(ln["price"]) * ln["quantity"]
             totals[ln["currency"]] = totals.get(ln["currency"], Decimal(0)) + pay
             row += f" × {fmt_money(Decimal(ln['price']), ln['currency'])}"
-        rows.append(row)
-    parts.append("\n".join(rows))
+        rows.append(row + _day_mark(ln))
+    if rows:
+        parts.append("\n".join(rows))
     if totals:
         parts.append(f"💰 Ish haqi: <b>{fmt_totals(totals)}</b>")
+
+    if pays:
+        pay_rows = []
+        for p in pays:
+            # Ishchi hali aniqlanmagan bo'lsa — qisqa ko'rinish va aytilgan ism so'roq bilan
+            who = p["worker_name"] if owner else None
+            amount = _money_amount(p["amount"], p["currency"])
+            row = "• " + pay_line(p["kind"], amount, who, p["worker_owes"], p["amount"] == "0", owner)
+            if owner and not p["worker_id"]:
+                row += f" · 👷 {escape(p['worker_q'])}?" if p["worker_q"] else " · 👷 ?"
+            if p["note"]:
+                row += f" <i>({escape(p['note'])})</i>"
+            if p["amount"] is not None and p["kind"] in PAY_KINDS and not pay_counted(draft, p):
+                row += " · ⏳ egasi tasdiqlagach"
+            pay_rows.append(row + _day_mark(p))
+        parts.append("\n".join(pay_rows))
+        names = {i["worker_id"]: i["worker_name"] for i in [*lines, *pays] if i["worker_id"]}
+        projected = []
+        for worker_id, (before, after) in project_balances(draft).items():
+            label = f"🧾 {escape(names.get(worker_id) or '')} — qoldiq" if owner and not one_worker else "🧾 Qoldiq"
+            if before == after:
+                projected.append(f"{label}: <b>{signed_hint(after)}</b>")
+            else:
+                projected.append(f"{label}: {fmt_signed(before)} → <b>{signed_hint(after)}</b>")
+        if projected:
+            parts.append("\n".join(projected))
     return "\n\n".join(parts)
+
+
+def fmt_signed(totals: dict[str, Decimal]) -> str:
+    """Qoldiq: {"UZS": 400000} -> «400 000 so'm», manfiy — «−200 000 so'm», bo'sh — «0»."""
+    parts = [("−" if v < 0 else "") + fmt_money(abs(v), c) for c, v in totals.items() if v]
+    return " + ".join(parts) if parts else "0"
+
+
+def signed_hint(totals: dict[str, Decimal]) -> str:
+    """fmt_signed, manfiy bo'lsa — «(avans)»: ishchi ishlaganidan ko'p olgan."""
+    return fmt_signed(totals) + (" <i>(avans)</i>" if any(v < 0 for v in totals.values()) else "")
+
+
+def balance_text(balance: dict[str, Decimal], name: str | None = None) -> str:
+    """Ishchi qoldig'i. name — egasiga ko'rsatiladi («Robiyaga berishingiz kerak»), None — ishchining o'ziga."""
+    due = {c: v for c, v in balance.items() if v > 0}
+    over = {c: -v for c, v in balance.items() if v < 0}
+    who = escape(name) if name else None
+    rows = []
+    if due:
+        label = f"💰 {who}ga berishingiz kerak" if who else "💰 Olishingiz kerak"
+        rows.append(f"{label}: <b>{fmt_totals(due)}</b>")
+    if over:
+        label = f"📌 {who} ortiqcha olgan (avans)" if who else "📌 Ortiqcha olgansiz (avans)"
+        rows.append(f"{label}: <b>{fmt_totals(over)}</b>")
+    if not rows:
+        rows.append(f"✅ {who} bilan hisob yopilgan" if who else "✅ Hisob yopilgan")
+    return "\n".join(rows)
+
+
+def pay_line(
+    kind: str | None,
+    amount: str,
+    who: str | None = None,
+    worker_owes: bool = False,
+    zero: bool = False,
+    owner: bool = True,
+) -> str:
+    """Ishchi bilan pul harakati. owner — egasiga ko'rsatiladi (who — ishchi ismi, bo'lmasa qisqa:
+    «Berildi»), aks holda — ishchining o'ziga («Oldingiz»)."""
+    name = escape(who) if who else None
+    if kind == PayKind.BALANCE:
+        if zero:
+            text = f"🧾 {name} bilan hisob yopildi" if name else "🧾 Hisob yopildi"
+            return text + " (qoldiq 0)"
+        if owner:
+            if worker_owes:
+                text = f"🧾 Hisob: {name} sizga qarzdor" if name else "🧾 Hisob: ishchi sizga qarzdor"
+            else:
+                text = f"🧾 Hisob: siz {name}ga qarzdorsiz" if name else "🧾 Hisob: siz qarzdorsiz"
+        else:
+            text = "🧾 Hisob: siz qarzdorsiz" if worker_owes else "🧾 Hisob: egangiz sizga qarzdor"
+    elif kind == PayKind.PAY:
+        text = (f"💵 {name}ga berildi" if name else "💵 Berildi") if owner else "💵 Oldingiz"
+    elif kind == PayKind.RETURN:
+        text = (f"↩️ {name} qaytardi" if name else "↩️ Qaytardi") if owner else "↩️ Qaytardingiz"
+    else:
+        text = f"❔ {name}" if name else "❔ Pul"
+    return f"{text} — {amount}"
 
 
 def _money_amount(amount: str | None, currency: str) -> str:
@@ -902,6 +1145,34 @@ async def _present_price(session: AsyncSession, draft: dict, user: User) -> tupl
     return text + f"\n\n❓ <b>{who} — {job}</b>: bir donasi qancha? Yozing yoki ayting.", kbs.cancel_only_kb()
 
 
+async def _present_pay(
+    session: AsyncSession, draft: dict, user: User, text: str, kind: str, i: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    p = draft["pays"][i]
+    if kind == "pworker":
+        acc = user.account_id
+        items = [(w.id, w.name) for w in await repo.list_workers(session, acc)]
+        # Faqat pul bo'lsa — bu ishchi emas, oddiy qarz bo'lishi mumkin
+        as_debt = not draft["lines"] and bool(p["worker_q"])
+        if not items and not as_debt:
+            return text + "\n\n⚠️ Avval «👷 Ishchilar» bo'limida ishchi qo'shing.", kbs.cancel_only_kb()
+        options = []
+        if p["worker_q"]:
+            aliases = await repo.get_aliases(session, acc, "worker")
+            options = [(o[0], o[1]) for o in matcher.match(p["worker_q"], items, aliases).options]
+        question = f"❓ «{escape(p['worker_q'])}» — qaysi ishchi?" if p["worker_q"] else "❓ Qaysi ishchi?"
+        return text + f"\n\n{question}", kbs.pay_worker_kb(i, options or items[:20], as_debt)
+    who = escape(p["worker_name"] or "")
+    if kind == "pkind":
+        question = (
+            f"❓ <b>{who}</b> — pul berdingizmi yoki u qaytardimi?" if user.is_owner
+            else "❓ Pulni oldingizmi yoki qaytardingizmi?"
+        )
+        return text + f"\n\n{question}", kbs.pay_kind_kb(i, user.is_owner)
+    question = f"❓ <b>{who}</b> — qancha? Summani yozing yoki ayting." if user.is_owner else "❓ Qancha? Summani yozing yoki ayting."
+    return text + f"\n\n{question}", kbs.cancel_only_kb()
+
+
 CLIENT_KIND_LABELS = {
     ClientKind.SALE: "📦 Mol berildi",
     ClientKind.PAYMENT: "💵 To'lov olindi",
@@ -996,13 +1267,15 @@ async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, 
         return _present_money(draft)
 
     acc = user.account_id
-    text = _render(draft)
+    text = _render(draft, user.is_owner)
     missing = next_missing(draft)
 
     if missing is None:
         return text + "\n\n<b>To'g'rimi?</b>", kbs.draft_kb(with_date_buttons=True)
 
     kind, i = missing
+    if kind in ("pworker", "pkind", "pamount"):
+        return await _present_pay(session, draft, user, text, kind, i)
     line = draft["lines"][i]
 
     if kind == "quantity":
