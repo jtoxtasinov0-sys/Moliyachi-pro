@@ -39,6 +39,12 @@ _NEW_COLUMNS = {
     "debt_entries": {
         "stated": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
+    "users": {
+        "job_id": "INTEGER",
+    },
+    "work_entries": {
+        "job_id": "INTEGER",
+    },
 }
 
 

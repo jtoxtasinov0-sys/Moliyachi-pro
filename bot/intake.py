@@ -17,7 +17,7 @@ from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ClientKind, EntryStatus, User
 from bot.services import llm
-from bot.services.utils import today
+from bot.services.utils import fmt_money, today
 
 
 CLIENT_KINDS = (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN)
@@ -87,7 +87,7 @@ async def _build(
     entry_id: int | None = None,
     source: str | None = None,
 ) -> dict:
-    special = user.is_owner and (drafts.is_money(ext) or drafts.is_client(ext))
+    special = user.is_owner and (drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext))
     if not special and (ext.section != "work" or not ext.work):
         example = (
             "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan» yoki «A-12 modeldan 50 ta»"
@@ -124,9 +124,11 @@ async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
 
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
-    """Ishchi, model yoki mijozni tanlash tugmasi. False — o'zgarish yo'q."""
+    """Ishchi, model, kasb yoki mijozni tanlash tugmasi. False — o'zgarish yo'q."""
     if draft["section"] == "client":
         return await _choose_client(session, user, draft, cb)
+    if draft["section"] == "price":
+        return await _choose_price(session, user, draft, cb)
     if draft["section"] != "work" or cb.line >= len(draft["lines"]):
         return False
     line = draft["lines"][cb.line]
@@ -140,25 +142,72 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
         if line["worker_q"] and line["worker_q"].lower() != worker.name.lower():
             await repo.save_alias(session, acc, "worker", worker.id, line["worker_q"])
         line["worker_id"], line["worker_name"] = worker.id, worker.name
-        return True
-
-    if cb.kind == "model":
-        if cb.item_id == 0:
-            if not user.is_owner or not line["model_q"]:
-                return False
-            model = await repo.get_model_by_name(session, acc, line["model_q"]) or await repo.create_model(
-                session, acc, line["model_q"].strip()
-            )
-        else:
-            models = {m.id: m for m in await repo.list_models(session, acc)}
-            model = models.get(cb.item_id)
-            if model is None:
-                raise IntakeError("Model topilmadi.")
-            if line["model_q"] and line["model_q"].lower() != model.name.lower():
-                await repo.save_alias(session, acc, "model", model.id, line["model_q"])
+    elif cb.kind == "model":
+        model = await _pick_model(session, user, line, cb.item_id)
+        if model is None:
+            return False
         drafts.set_model(line, model)
-        return True
-    return False
+    elif cb.kind == "job":
+        job = await _pick_job(session, user, line["job_q"], cb.item_id)
+        if job is None:
+            return False
+        line["job_id"], line["job_name"] = job.id, job.name
+    else:
+        return False
+    # Ishchi almashsa — uning kasbi, model yoki kasb almashsa — narx yangilanadi
+    await drafts.resolve(session, draft, user)
+    return True
+
+
+async def _pick_model(session: AsyncSession, user: User, item: dict, item_id: int):
+    """Tugmada tanlangan model; item_id=0 — aytilgan nom bilan yangi model (faqat egasi)."""
+    acc = user.account_id
+    if item_id == 0:
+        if not user.is_owner or not item["model_q"]:
+            return None
+        return await repo.get_model_by_name(session, acc, item["model_q"]) or await repo.create_model(
+            session, acc, item["model_q"].strip()
+        )
+    models = {m.id: m for m in await repo.list_models(session, acc)}
+    model = models.get(item_id)
+    if model is None:
+        raise IntakeError("Model topilmadi.")
+    if item["model_q"] and item["model_q"].lower() != model.name.lower():
+        await repo.save_alias(session, acc, "model", model.id, item["model_q"])
+    return model
+
+
+async def _pick_job(session: AsyncSession, user: User, query: str | None, item_id: int):
+    """Tugmada tanlangan kasb; item_id=0 — aytilgan nom bilan yangi kasb (faqat egasi)."""
+    acc = user.account_id
+    if item_id == 0:
+        if not user.is_owner or not query:
+            return None
+        return await repo.create_job(session, acc, query)
+    job = await repo.get_job(session, acc, item_id)
+    if job is None:
+        raise IntakeError("Kasb topilmadi.")
+    if query and query.lower() != job.name.lower():
+        await repo.save_alias(session, acc, "job", job.id, query)
+    return job
+
+
+async def _choose_price(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
+    if cb.kind not in ("pmodel", "pjob") or not user.is_owner or cb.line >= len(draft["prices"]):
+        return False
+    item = draft["prices"][cb.line]
+    if cb.kind == "pmodel":
+        model = await _pick_model(session, user, item, cb.item_id)
+        if model is None:
+            return False
+        item["model_id"], item["model_name"] = model.id, model.name
+    else:
+        job = await _pick_job(session, user, item["job_q"], cb.item_id)
+        if job is None:
+            return False
+        item["job_id"], item["job_name"] = job.id, job.name
+    await drafts.resolve(session, draft, user)
+    return True
 
 
 async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
@@ -220,11 +269,13 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
-    if draft["section"] in ("money", "client"):
+    if draft["section"] in ("money", "client", "price"):
         if not user.is_owner:
             raise IntakeError("Ruxsat yo'q.", drop=True)
         if draft["section"] == "client":
             return await _save_client(session, user, draft)
+        if draft["section"] == "price":
+            return await _save_prices(session, user, draft)
         return await _save_money(session, user, draft)
 
     acc = user.account_id
@@ -237,17 +288,18 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
             raise IntakeError("⚠️ Yozuv topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
         line = draft["lines"][0]
         entry.worker_id = line["worker_id"]
-        if entry.model_id != line["model_id"]:
+        # Model yoki kasb o'zgarmasa — yozilgan paytdagi narx qoladi
+        if (entry.model_id, entry.job_id) != (line["model_id"], line["job_id"]):
             model = await repo.get_model(session, acc, line["model_id"])
             if model is not None:
-                repo.apply_model_price(entry, model)
+                await repo.reprice_entry(session, entry, model, line["job_id"])
         entry.quantity = line["quantity"]
         entry.work_date = work_date
         entry.raw_text = draft["raw_text"]
         if needs_approval:
             entry.status = EntryStatus.PENDING
         await session.flush()
-        await session.refresh(entry, ["worker", "model"])
+        await session.refresh(entry, ["worker", "model", "job"])
         saved = [entry]
         header = "✅ <b>Yozuv yangilandi</b>"
     else:
@@ -259,6 +311,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
                     owner_id=acc,
                     worker_id=line["worker_id"],
                     model_id=line["model_id"],
+                    job_id=line["job_id"],
                     quantity=line["quantity"],
                     work_date=work_date,
                     status=EntryStatus.PENDING if needs_approval else EntryStatus.APPROVED,
@@ -275,6 +328,24 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
     last = len(saved) - 1
     cards = [(entry_text(e), kbs.entry_kb(e, user, app=i == last)) for i, e in enumerate(saved)]
     return Saved(header, cards)
+
+
+async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
+    rows = []
+    for p in draft["prices"]:
+        model = await repo.get_model(session, user.id, p["model_id"])
+        job = await repo.get_job(session, user.id, p["job_id"]) if p["job_id"] else None
+        if model is None or (p["job_id"] and job is None):
+            raise IntakeError("⚠️ Model yoki kasb topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
+        price = Decimal(p["price"])
+        await repo.set_model_price(session, model, job.id if job else None, price, p["currency"])
+        what = escape(job.name) if job else "umumiy narx"
+        rows.append(f"• {escape(model.name)} — {what}: <b>{fmt_money(price, p['currency'])}</b>")
+    header = (
+        "✅ <b>Narx saqlandi</b> (bir dona uchun)\n\n" + "\n".join(rows)
+        + "\n\nYangi narx shu paytdan keyingi yozuvlarga qo'llanadi. Hamma narxlar — «🧵 Modellar»da."
+    )
+    return Saved(header)
 
 
 async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:

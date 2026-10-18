@@ -222,12 +222,16 @@ async def on_fix(call: CallbackQuery, state: FSMContext) -> None:
     if draft is None:
         return
     await call.answer()
-    if draft["section"] == "client":
+    if draft["section"] == "price":
+        examples = "• <i>2500 bo'lsin</i>\n• <i>model B-5</i>\n• <i>brsovka emas, kroy</i>\n• <i>dollarda</i>"
+    elif draft["section"] == "client":
         examples = "• <i>12 komplekt</i>\n• <i>150 mingdan</i>\n• <i>mijoz Tohir emas, Toxir aka</i>\n• <i>kecha edi</i>"
     elif draft["section"] == "money":
         examples = "• <i>summa 45 ming</i>\n• <i>dollarda</i>\n• <i>kategoriya Mashina</i>\n• <i>kecha edi</i>"
     else:
-        examples = "• <i>soni 45 ta</i>\n• <i>model B-12</i>\n• <i>kecha edi</i>\n• <i>ishchi Vali</i>"
+        examples = (
+            "• <i>soni 45 ta</i>\n• <i>model B-12</i>\n• <i>brsovka qilgan</i>\n• <i>kecha edi</i>\n• <i>ishchi Vali</i>"
+        )
     await call.message.answer(f"✏️ Nimani o'zgartiramiz? Ovoz yoki matn bilan ayting, masalan:\n{examples}")
 
 

@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=15">
+  <link rel="stylesheet" href="static/style.css?v=16">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -151,6 +151,11 @@
         <div class="card" id="workersCard" hidden>
           <div class="card-head"><h3>Ishchilar reytingi</h3><span class="muted" id="workerCount"></span></div>
           <ol class="rank" id="workerRank"></ol>
+        </div>
+
+        <div class="card" id="jobsStatCard" hidden>
+          <div class="card-head"><h3>Kasblar bo'yicha</h3></div>
+          <ol class="rank" id="jobRank"></ol>
         </div>
         </div>
       </section>
@@ -289,6 +294,11 @@
           <button class="pill-btn" id="addWorkerBtn">+ Qo'shish</button>
         </div>
         <div id="workerList"></div>
+        <div class="card">
+          <div class="card-head"><h3>🏷 Kasblar</h3></div>
+          <div class="pick" id="jobChips"></div>
+          <p class="muted small hint" style="margin:12px 0 0">Kasbni bosing — nomini o'zgartirish yoki o'chirish. Har bir modelga kasb bo'yicha narx «Modellar»da qo'yiladi.</p>
+        </div>
       </section>
 
       <!-- Modellar -->
@@ -301,7 +311,7 @@
           <h2 class="page-title" id="modelsTitle">Modellar</h2>
           <button class="pill-btn" id="addModelBtn" hidden>+ Qo'shish</button>
         </div>
-        <p class="muted small" id="modelsHint">Narx — bir dona uchun ish haqi</p>
+        <p class="muted small" id="modelsHint">Bir dona uchun ish haqi — har bir kasb uchun alohida yoki umumiy narx</p>
         <div id="modelList"></div>
       </section>
 
@@ -313,6 +323,8 @@
           <p>Pastdagi o'rtadagi 🎤 tugmani bosing va gapiring yoki yozing:</p>
           <p class="quote">«A-12 modeldan 50 ta topshirdim»</p>
           <p class="quote">«Kecha B-5 dan 30 ta»</p>
+          <p class="quote">«A-12 dan 40 ta brsovka qildim»</p>
+          <p>Boshqa ish qilgan bo'lsangiz — ish turini ayting (kroy, brsovka, tikuv, tortish, pardoz). Aytilmasa — o'z kasbingiz bo'yicha hisoblanadi.</p>
           <p>Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.</p>
         </div>
         <div class="card help">
@@ -381,6 +393,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=15"></script>
+  <script src="static/app.js?v=16"></script>
 </body>
 </html>

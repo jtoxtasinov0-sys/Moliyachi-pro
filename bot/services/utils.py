@@ -1,6 +1,7 @@
 """Sana va pul bilan ishlash uchun yordamchilar."""
+import re
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from bot.config import settings
 
@@ -53,3 +54,41 @@ def fmt_totals(totals: dict[str, Decimal]) -> str:
     """{'UZS': 100, 'USD': 5} -> "100 so'm + 5 $"."""
     parts = [fmt_money(v, c) for c, v in totals.items() if v]
     return " + ".join(parts) if parts else "—"
+
+
+_CURRENCY_WORDS = {
+    "UZS": ("so'm", "som", "sum", "сўм", "сум", "uzs"),
+    "USD": ("$", "usd", "dollar", "доллар"),
+    "KRW": ("won", "von", "krw", "₩", "вон"),
+}
+_MULTIPLIERS = {"ming": 1_000, "минг": 1_000, "k": 1_000, "mln": 1_000_000, "million": 1_000_000, "млн": 1_000_000}
+
+
+def parse_price(text: str, default_currency: str) -> tuple[Decimal, str] | None:
+    """"5000", "5 000 so'm", "2.5$", "3 ming", "1,5 mln" -> (summa, valyuta)."""
+    t = text.lower().replace("‘", "'").replace("’", "'").replace("ʻ", "'")
+    # «2000dan», «2 mingdan», «5 ming so'mdan» — «-dan» qo'shimchasi narxga ta'sir qilmaydi
+    t = re.sub(r"(?<=[\w'$₩])(dan|дан)\b", "", t)
+    currency = default_currency
+    for code, words in _CURRENCY_WORDS.items():
+        if any(w in t for w in words):
+            currency = code
+            for w in words:
+                t = t.replace(w, " ")
+    multiplier = 1
+    for word, mult in _MULTIPLIERS.items():
+        if re.search(rf"\d\s*{re.escape(word)}\b", t):
+            multiplier = mult
+            t = re.sub(rf"\s*{re.escape(word)}\b", " ", t)
+            break
+    m = re.search(r"\d[\d\s]*(?:[.,]\d+)?", t)
+    if not m:
+        return None
+    number = m.group(0).replace(" ", "").replace(",", ".")
+    try:
+        value = Decimal(number) * multiplier
+    except InvalidOperation:
+        return None
+    if value < 0:
+        return None
+    return value, currency

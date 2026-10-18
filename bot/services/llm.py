@@ -28,7 +28,20 @@ Currency = Literal["UZS", "USD", "KRW"]
 class WorkItem(BaseModel):
     worker_name: str | None = Field(description="Ishchi ismi, aytilmagan bo'lsa null")
     model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
+    job: str | None = Field(
+        description="Qanday ish qilingani — kasb nomi \"Kasblar\" ro'yxatidan (kroy — Kroychi, brsovka — "
+        "Brsovkachi, tikish — Tikuvchi...). Faqat ish turi aytilsa, aks holda null"
+    )
     quantity: int | None = Field(description="Dona soni, aytilmagan bo'lsa null")
+
+
+class PriceItem(BaseModel):
+    model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
+    job: str | None = Field(
+        description="Qaysi kasb uchun narx — \"Kasblar\" ro'yxatidan. Kasb aytilmasa (umumiy narx) null"
+    )
+    price: float | None = Field(description="Bir dona uchun ish haqi")
+    currency: Currency | None
 
 
 class ClientItem(BaseModel):
@@ -84,9 +97,10 @@ class DebtItem(BaseModel):
 
 
 class Extraction(BaseModel):
-    section: Literal["work", "client", "personal", "debt", "unknown"]
+    section: Literal["work", "price", "client", "personal", "debt", "unknown"]
     date: str | None = Field(description="YYYY-MM-DD. Sana aytilmagan bo'lsa null")
     work: list[WorkItem]
+    prices: list[PriceItem]
     client: list[ClientItem]
     personal: list[PersonalItem]
     debt: list[DebtItem]
@@ -102,14 +116,19 @@ EXPENSE_CATEGORIES = (
 INCOME_CATEGORIES = ("Oylik", "Biznes", "Sovg'a", "Boshqa")
 
 SYSTEM_PROMPT = f"""\
-Sen moliyaviy hisob botisan: tikuv korxonasi hisobi va egasining shaxsiy hamyoni. Foydalanuvchi \
-o'zbek tilida (lotin yoki kirill, og'zaki, ba'zan xato bilan) yozadi yoki gapiradi. Matn ovozdan \
-avtomatik o'girilgan bo'lishi mumkin, shuning uchun ism va model nomlari biroz buzilgan bo'lishi mumkin.
+Sen moliyaviy hisob botisan: tikuv korxonasi (kiyim yoki oyoq kiyim) hisobi va egasining shaxsiy \
+hamyoni. Foydalanuvchi o'zbek tilida (lotin yoki kirill, og'zaki, ba'zan xato bilan) yozadi yoki \
+gapiradi. Matn ovozdan avtomatik o'girilgan bo'lishi mumkin, shuning uchun ism, model va kasb nomlari \
+biroz buzilgan bo'lishi mumkin.
 
 Vazifang: matndan yozuvlarni ajratib, berilgan JSON sxemada qaytarish.
 
 Bo'limlar:
-- work — ishchi ish topshirdi: "Alisher A-12 dan 50 ta topshirdi", "bugun B5 modeldan 30 ta tikdim".
+- work — ishchi ish topshirdi: "Alisher A-12 dan 50 ta topshirdi", "bugun B5 modeldan 30 ta tikdim", \
+"Vali A-12 dan 40 ta brsovka qildi", "kecha 100 ta kroy qildim A-12".
+- price — egasi model uchun bir dona ish haqi narxini belgilaydi (kasb bo'yicha yoki umumiy): \
+"A-12 modelga brsovka 2000dan", "A-12: kroy 1500, tikuv 5000, tortish 3000", "B-5 narxi 4000 bo'lsin". \
+Ishchi ismi va dona soni aytilmaydi.
 - client — korxona mijozlar bilan optom savdo qiladi: mijozga mol (komplekt yoki dona) berish/sotish, \
 mijozning to'lovi, mijoz molni qaytarishi: "Tohirga 10 komplekt maksima berdim, 140 mingdan", \
 "Tohir 2 million to'ladi", "Tohir 3 komplekt qaytardi".
@@ -123,6 +142,14 @@ Qoidalar:
 - Faqat tegishli bo'lim ro'yxatini to'ldir, qolganlari bo'sh bo'lsin. Istisno: bitta xabarda ham \
 xarajat/daromad, ham qarz bo'lsa — personal va debt ikkalasini to'ldir, section esa asosiysi.
 - Bitta xabarda bir nechta yozuv bo'lishi mumkin ("A-12 dan 50, B-5 dan 30") — har birini alohida element qil.
+- Kasb (job) — ishchi qanday ish qilgani yoki narx qaysi ish uchunligi. "Kasblar" ro'yxatidagi eng mos nomni \
+yoz: kroy, kroyka, kesish, bichish — Kroychi; brsovka, brsovshi, brsovkachi, shilish (tikishga tayyorlab \
+shilish) — Brsovkachi; tikish, tikuv — Tikuvchi; tortish, padosh (tag) yopishtirish — Tortuvchi; pardoz, \
+sotuvga tayyorlash — Pardozchi. Ro'yxatda mosi bo'lmasa — eshitilgancha, bosh harf bilan. Ish turi \
+aytilmasa — null (o'zingdan qo'shma).
+- price: har bir model va kasb juftligi — alohida element ("A-12 ga kroy 1500, brsovka 2000" — ikkita). \
+"2000dan", "2 mingdan", "2 ming so'm" — price. Kasb aytilmasa job=null (umumiy narx). \
+work va price farqi: ishchi ismi yoki dona soni bo'lsa — work, faqat model, kasb va narx bo'lsa — price.
 - Mijoz bilan savdo (client):
   * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
 ro'yxatida bo'lmasa ham (yangi mijoz).
@@ -144,7 +171,7 @@ so'rama, faqat ismini yoz. "undan oldim" -> in, "unga berdim"/"qaytardim" -> out
 - personal kategoriyasi: avval "Kategoriyalar" ro'yxatidan mosini tanla, bo'lmasa quyidagilardan: \
 xarajat — {", ".join(EXPENSE_CATEGORIES)}; daromad — {", ".join(INCOME_CATEGORIES)}. \
 Benzin, moy, avtoservis, jarima, parkovka — Mashina.
-- Ism va model nomlarini "Ma'lum nomlar" ro'yxatidagi eng mos yozuvga keltir; mos keladigani \
+- Ism, model va kasb nomlarini "Ma'lum nomlar" ro'yxatidagi eng mos yozuvga keltir; mos keladigani \
 bo'lmasa, eshitilgancha lotin yozuvida, bosh harf bilan yoz. O'zingdan ism yoki son to'qima.
 - Sonlarni raqamga aylantir: "ellik" -> 50, "bir yarim million" -> 1500000, "200 ming" -> 200000.
 - Valyuta: so'm -> UZS, dollar/$ -> USD, von/won/₩ -> KRW. Aytilmasa null.
@@ -154,6 +181,7 @@ bo'lmasa, eshitilgancha lotin yozuvida, bosh harf bilan yoz. O'zingdan ism yoki 
 _LABELS = {
     "workers": "Ishchilar",
     "models": "Modellar",
+    "jobs": "Kasblar",
     "clients": "Mijozlar",
     "categories": "Kategoriyalar",
     "people": "Qarz bo'yicha odamlar",

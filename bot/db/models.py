@@ -52,6 +52,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     # Ishchi taklif havolasi orqali ulanmaguncha shu token saqlanadi
     invite_token: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # Ishchining kasbi (kroychi, tikuvchi...) — ish yozuvida kasb aytilmasa shu olinadi.
+    # jobs jadvali users ga bog'langan, aylana bog'lanish bo'lmasin deb tashqi kalitsiz
+    job_id: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property
@@ -79,6 +82,32 @@ class ItemModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Job(Base):
+    """Kasb (ish turi): Kroychi, Brsovkachi, Tikuvchi... Egasi o'zi qo'shadi va nomini o'zgartiradi."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(50))
+    position: Mapped[int] = mapped_column(default=0)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ModelPrice(Base):
+    """Model bo'yicha kasb narxi: A-12 — Brsovkachi uchun bir dona 2000 so'm.
+    Kasb narxi bo'lmasa — modelning umumiy narxi (ItemModel.price) olinadi."""
+
+    __tablename__ = "model_prices"
+
+    model_id: Mapped[int] = mapped_column(ForeignKey("item_models.id"), primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+
+
 class Alias(Base):
     """Ovozdan noto'g'ri chiqqan ismlarni eslab qolish: "alishir" -> Alisher."""
 
@@ -87,7 +116,7 @@ class Alias(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    entity_type: Mapped[str] = mapped_column(String(20))  # worker | model | client
+    entity_type: Mapped[str] = mapped_column(String(20))  # worker | model | client | job
     entity_id: Mapped[int]
     alias: Mapped[str] = mapped_column(String(100))
 
@@ -115,6 +144,8 @@ class WorkEntry(TimestampMixin, Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     worker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     model_id: Mapped[int] = mapped_column(ForeignKey("item_models.id"))
+    # Qaysi kasb bo'yicha ish (kroy, brsovka, tikuv...), bo'lmasa — umumiy
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"))
     quantity: Mapped[int]
     work_date: Mapped[date] = mapped_column(Date, index=True)
     # Saqlangan paytdagi narx: model narxi keyin o'zgarsa, eski hisob buzilmaydi
@@ -129,6 +160,7 @@ class WorkEntry(TimestampMixin, Base):
 
     worker: Mapped[User] = relationship(foreign_keys=[worker_id], lazy="joined")
     model: Mapped[ItemModel] = relationship(lazy="joined")
+    job: Mapped[Job | None] = relationship(lazy="joined")
 
 
 # --- 2. Mijozlar: optom savdo ---------------------------------------------

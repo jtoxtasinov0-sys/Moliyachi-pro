@@ -23,6 +23,8 @@ from bot.db.models import (
     DebtEntry,
     EntryStatus,
     ItemModel,
+    Job,
+    ModelPrice,
     PersonalEntry,
     PersonalKind,
     User,
@@ -274,6 +276,7 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
     }
     if user.is_owner:
         data["by_worker"] = _group(cur, "worker_id")
+        data["by_job"] = _group(cur, "job_name")
         data["has_team"] = await repo.has_work(session, acc)
     return web.json_response(data)
 
@@ -285,12 +288,14 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
 async def me(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     bot: Bot = request.app["bot"]
     bot_me = await bot.me()
+    job = await repo.get_job(session, user.account_id, user.job_id)
     return web.json_response(
         {
             "id": user.id,
             "name": user.name,
             "role": user.role,
             "is_owner": user.is_owner,
+            "job": _job_ref(job),
             "bot_username": bot_me.username,
             "currencies": await repo.enabled_currencies(session, user.account_id),
             "require_approval": await repo.require_approval(session, user.account_id),
@@ -405,6 +410,10 @@ async def advice_ai(request: web.Request, session: AsyncSession, user: User) -> 
 
 # --- Yozuvlar ---------------------------------------------------------------
 
+def _job_ref(job: Job | None) -> dict | None:
+    return {"id": job.id, "name": job.name} if job is not None else None
+
+
 def _entry_json(e: WorkEntry) -> dict:
     total = e.unit_price * e.quantity if e.unit_price is not None else None
     return {
@@ -412,6 +421,7 @@ def _entry_json(e: WorkEntry) -> dict:
         "date": e.work_date.isoformat(),
         "worker": {"id": e.worker_id, "name": e.worker.name},
         "model": e.model.name,
+        "job": e.job.name if e.job else None,
         "qty": e.quantity,
         "unit_price": _num(e.unit_price),
         "currency": e.price_currency,
@@ -475,7 +485,7 @@ async def delete_entry(request: web.Request, session: AsyncSession, user: User) 
 
 # --- Ishchilar --------------------------------------------------------------
 
-async def _worker_json(request: web.Request, w: User, stats: dict[int, dict]) -> dict:
+async def _worker_json(request: web.Request, w: User, stats: dict[int, dict], jobs: dict[int, Job]) -> dict:
     link = None
     if w.is_active and not w.tg_id and w.invite_token:
         bot_me = await request.app["bot"].me()
@@ -484,6 +494,7 @@ async def _worker_json(request: web.Request, w: User, stats: dict[int, dict]) ->
     return {
         "id": w.id,
         "name": w.name,
+        "job": _job_ref(jobs.get(w.job_id)),
         "is_active": w.is_active,
         "linked": w.tg_id is not None,
         "invite_link": link,
@@ -498,24 +509,44 @@ async def _month_stats(session: AsyncSession, owner_id: int) -> dict[int, dict]:
     return {g["id"]: g for g in _group(rows, "worker_id")}
 
 
+async def _jobs_by_id(session: AsyncSession, owner_id: int) -> dict[int, Job]:
+    return {j.id: j for j in await repo.list_jobs(session, owner_id)}
+
+
+async def _job_arg(session: AsyncSession, owner_id: int, value) -> int | None:
+    """So'rovdagi job_id: bo'sh — kasbsiz, aks holda shu kabinetdagi faol kasb bo'lishi shart."""
+    if value in (None, "", 0):
+        return None
+    try:
+        job_id = int(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, "Kasb noto'g'ri")
+    if await repo.get_job(session, owner_id, job_id) is None:
+        raise ApiError(400, "Kasb topilmadi")
+    return job_id
+
+
 @routes.get("/api/workers")
 @endpoint(owner_only=True)
 async def workers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     stats = await _month_stats(session, user.id)
+    jobs = await _jobs_by_id(session, user.id)
     workers_ = await repo.list_workers(session, user.id, active_only=False)
-    items = [await _worker_json(request, w, stats) for w in workers_]
+    items = [await _worker_json(request, w, stats, jobs) for w in workers_]
     items.sort(key=lambda w: (not w["is_active"], -w["month_qty"], w["name"].lower()))
-    return web.json_response({"items": items})
+    return web.json_response({"items": items, "jobs": await _jobs_list(session, user.id)})
 
 
 @routes.post("/api/workers")
 @endpoint(owner_only=True)
 async def add_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    name = str((await _json(request)).get("name") or "").strip()[:100]
+    data = await _json(request)
+    name = str(data.get("name") or "").strip()[:100]
     if not name:
         raise ApiError(400, "Ism bo'sh bo'lmasin")
-    worker = await repo.create_worker(session, user.id, name)
-    return web.json_response(await _worker_json(request, worker, {}))
+    job_id = await _job_arg(session, user.id, data.get("job_id"))
+    worker = await repo.create_worker(session, user.id, name, job_id)
+    return web.json_response(await _worker_json(request, worker, {}, await _jobs_by_id(session, user.id)))
 
 
 async def _get_worker(request: web.Request, session: AsyncSession, user: User) -> User:
@@ -525,13 +556,31 @@ async def _get_worker(request: web.Request, session: AsyncSession, user: User) -
     return worker
 
 
+@routes.patch(r"/api/workers/{id:\d+}")
+@endpoint(owner_only=True)
+async def update_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    worker = await _get_worker(request, session, user)
+    data = await _json(request)
+    if "name" in data:
+        name = str(data["name"] or "").strip()[:100]
+        if not name:
+            raise ApiError(400, "Ism bo'sh bo'lmasin")
+        worker.name = name
+    if "job_id" in data:
+        worker.job_id = await _job_arg(session, user.id, data["job_id"])
+    await session.flush()
+    stats = await _month_stats(session, user.id)
+    return web.json_response(await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id)))
+
+
 @routes.post(r"/api/workers/{id:\d+}/toggle")
 @endpoint(owner_only=True)
 async def toggle_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     worker = await _get_worker(request, session, user)
     worker.is_active = not worker.is_active
     await session.flush()
-    return web.json_response(await _worker_json(request, worker, await _month_stats(session, user.id)))
+    stats = await _month_stats(session, user.id)
+    return web.json_response(await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id)))
 
 
 @routes.post(r"/api/workers/{id:\d+}/invite")
@@ -542,17 +591,95 @@ async def reinvite_worker(request: web.Request, session: AsyncSession, user: Use
         raise ApiError(400, "Avval ishchini faollashtiring")
     await repo.new_invite_token(session, worker)
     # Yangi havola: avvalgi Telegram bog'lanishi saqlanadi, faqat tg_id bo'lmasa ko'rinadi
-    data = await _worker_json(request, worker, await _month_stats(session, user.id))
+    stats = await _month_stats(session, user.id)
+    data = await _worker_json(request, worker, stats, await _jobs_by_id(session, user.id))
     if data["invite_link"] is None:
         bot_me = await request.app["bot"].me()
         data["invite_link"] = f"https://t.me/{bot_me.username}?start=inv_{worker.invite_token}"
     return web.json_response(data)
 
 
+# --- Kasblar ----------------------------------------------------------------
+
+def _job_json(j: Job, counts: dict[int, int]) -> dict:
+    return {"id": j.id, "name": j.name, "workers": counts.get(j.id, 0)}
+
+
+async def _jobs_list(session: AsyncSession, owner_id: int) -> list[dict]:
+    counts = await repo.job_worker_counts(session, owner_id)
+    return [_job_json(j, counts) for j in await repo.list_jobs(session, owner_id)]
+
+
+async def _jobs_response(session: AsyncSession, owner_id: int) -> web.Response:
+    return web.json_response({"items": await _jobs_list(session, owner_id)})
+
+
+def _job_name(data: dict) -> str:
+    name = " ".join(str(data.get("name") or "").split())[:50]
+    if not name:
+        raise ApiError(400, "Kasb nomini yozing")
+    return name
+
+
+async def _get_job(request: web.Request, session: AsyncSession, user: User) -> Job:
+    job = await repo.get_job(session, user.id, int(request.match_info["id"]))
+    if job is None:
+        raise ApiError(404, "Kasb topilmadi")
+    return job
+
+
+@routes.get("/api/jobs")
+@endpoint(owner_only=True)
+async def jobs(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    return await _jobs_response(session, user.id)
+
+
+@routes.post("/api/jobs")
+@endpoint(owner_only=True)
+async def add_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    name = _job_name(await _json(request))
+    existing = await repo.get_job_by_name(session, user.id, name)
+    if existing is not None and existing.is_active:
+        raise ApiError(400, "Bunday kasb bor")
+    await repo.create_job(session, user.id, name)
+    return await _jobs_response(session, user.id)
+
+
+@routes.patch(r"/api/jobs/{id:\d+}")
+@endpoint(owner_only=True)
+async def update_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    job = await _get_job(request, session, user)
+    if not await repo.rename_job(session, job, _job_name(await _json(request))):
+        raise ApiError(400, "Bunday kasb bor")
+    return await _jobs_response(session, user.id)
+
+
+@routes.delete(r"/api/jobs/{id:\d+}")
+@endpoint(owner_only=True)
+async def delete_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    await repo.delete_job(session, await _get_job(request, session, user))
+    return await _jobs_response(session, user.id)
+
+
 # --- Modellar ---------------------------------------------------------------
 
-def _model_json(m: ItemModel) -> dict:
-    return {"id": m.id, "name": m.name, "price": _num(m.price), "currency": m.currency, "is_active": m.is_active}
+def _model_json(m: ItemModel, prices: dict[int, ModelPrice]) -> dict:
+    """prices — shu modelning kasb narxlari (job_id -> narx)."""
+    return {
+        "id": m.id,
+        "name": m.name,
+        "price": _num(m.price),
+        "currency": m.currency,
+        "is_active": m.is_active,
+        "prices": [{"job_id": j, "price": float(r.price), "currency": r.currency} for j, r in prices.items()],
+    }
+
+
+def _worker_model_json(m: ItemModel, prices: dict[int, ModelPrice], job_id: int | None) -> dict:
+    """Ishchiga faqat o'z kasbining narxi (bo'lmasa umumiy narx) ko'rinadi."""
+    row = prices.get(job_id) if job_id else None
+    price, currency = (row.price, row.currency) if row else (m.price, m.currency)
+    return {"id": m.id, "name": m.name, "price": _num(price), "currency": currency, "is_active": m.is_active}
 
 
 def _parse_price(value) -> Decimal | None:
@@ -565,6 +692,20 @@ def _parse_price(value) -> Decimal | None:
     if price < 0 or price >= Decimal("1e12"):
         raise ApiError(400, "Narx noto'g'ri")
     return price
+
+
+async def _apply_prices(session: AsyncSession, model: ItemModel, data: dict) -> None:
+    """data["prices"]: {job_id: narx yoki null} — kasb narxlari modelning valyutasida."""
+    prices = data.get("prices")
+    if prices is None:
+        return
+    if not isinstance(prices, dict):
+        raise ApiError(400, "Narxlar noto'g'ri")
+    for key, value in prices.items():
+        job_id = await _job_arg(session, model.owner_id, key)
+        if job_id is None:
+            raise ApiError(400, "Kasb noto'g'ri")
+        await repo.set_model_price(session, model, job_id, _parse_price(value), model.currency)
 
 
 async def _apply_model(session: AsyncSession, model: ItemModel, data: dict) -> None:
@@ -586,11 +727,20 @@ async def _apply_model(session: AsyncSession, model: ItemModel, data: dict) -> N
         model.is_active = bool(data["is_active"])
 
 
+async def _model_prices(session: AsyncSession, model: ItemModel) -> dict[int, ModelPrice]:
+    return (await repo.model_prices(session, [model.id])).get(model.id, {})
+
+
 @routes.get("/api/models")
 @endpoint()
 async def models(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     items = await repo.list_models(session, user.account_id, active_only=not user.is_owner)
-    return web.json_response({"items": [_model_json(m) for m in items]})
+    prices = await repo.model_prices(session, [m.id for m in items])
+    if user.is_owner:
+        return web.json_response(
+            {"items": [_model_json(m, prices.get(m.id, {})) for m in items], "jobs": await _jobs_list(session, user.id)}
+        )
+    return web.json_response({"items": [_worker_model_json(m, prices.get(m.id, {}), user.job_id) for m in items]})
 
 
 @routes.post("/api/models")
@@ -603,7 +753,8 @@ async def add_model(request: web.Request, session: AsyncSession, user: User) -> 
     await _apply_model(session, model, data)
     session.add(model)
     await session.flush()
-    return web.json_response(_model_json(model))
+    await _apply_prices(session, model, data)
+    return web.json_response(_model_json(model, await _model_prices(session, model)))
 
 
 @routes.patch(r"/api/models/{id:\d+}")
@@ -612,9 +763,11 @@ async def update_model(request: web.Request, session: AsyncSession, user: User) 
     model = await repo.get_model(session, user.id, int(request.match_info["id"]))
     if model is None:
         raise ApiError(404, "Model topilmadi")
-    await _apply_model(session, model, await _json(request))
+    data = await _json(request)
+    await _apply_model(session, model, data)
     await session.flush()
-    return web.json_response(_model_json(model))
+    await _apply_prices(session, model, data)
+    return web.json_response(_model_json(model, await _model_prices(session, model)))
 
 
 # --- Shaxsiy hamyon: xarajat / daromad --------------------------------------

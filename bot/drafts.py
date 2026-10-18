@@ -8,8 +8,16 @@ Qoralama FSM holatida oddiy dict sifatida saqlanadi. Ish topshirish:
   "raw_text": "...",
   "created": "ISO vaqt",
   "lines": [{worker_id, worker_name, worker_q, model_id, model_name, model_q,
-             quantity, price, currency}],
+             job_id, job_name, job_q, job_auto, quantity, price, currency}],
 }
+job_q — xabarda aytilgan kasb («brsovka»). Aytilmasa va job_auto bo'lsa — ishchining o'z kasbi olinadi.
+Narx (price) — model va kasb bo'yicha: kasb narxi, u bo'lmasa modelning umumiy narxi.
+Model narxini belgilash — "section": "price":
+{
+  ..., "prices": [{model_id, model_name, model_q, job_id, job_name, job_q,
+                   price, currency, cur_said, old}],
+}
+job_q yo'q — umumiy narx. old — hozirgi narx {price, currency}, bo'lmasa None.
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],
@@ -33,6 +41,7 @@ from html import escape
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import ClientKind, DebtDirection, ItemModel, PersonalKind, PriceUnit, User, WorkEntry
@@ -47,6 +56,7 @@ def _empty_line() -> dict:
     return {
         "worker_id": None, "worker_name": None, "worker_q": None,
         "model_id": None, "model_name": None, "model_q": None,
+        "job_id": None, "job_name": None, "job_q": None, "job_auto": True,
         "quantity": None, "price": None, "currency": None,
     }
 
@@ -94,6 +104,14 @@ def is_money(ext: Extraction) -> bool:
 
 def is_client(ext: Extraction) -> bool:
     return ext.section == "client" and bool(ext.client)
+
+
+def is_price(ext: Extraction) -> bool:
+    return ext.section == "price" and bool(ext.prices)
+
+
+def _name(value: str | None, size: int) -> str | None:
+    return (value or "").strip()[:size] or None
 
 
 def _count(value: int | None) -> int | None:
@@ -155,6 +173,21 @@ def from_extraction(
         "raw_text": raw_text,
         "created": datetime.now(timezone.utc).isoformat(),
     }
+    if is_price(ext):
+        draft.update(section="price", entry_id=None)
+        draft["prices"] = [
+            {
+                "model_id": None, "model_name": None, "model_q": _name(item.model_name, 100),
+                "job_id": None, "job_name": None, "job_q": _name(item.job, 50),
+                "price": _amount(item.price),
+                # Valyuta aytilmasa — modelning hozirgi narxi valyutasi (resolve da), bo'lmasa asosiy valyuta
+                "currency": item.currency or default_currency,
+                "cur_said": item.currency is not None,
+                "old": None,
+            }
+            for item in ext.prices
+        ]
+        return draft
     if is_client(ext):
         said = {item.currency for item in ext.client if item.currency}
         if len(said) == 1:
@@ -200,6 +233,9 @@ def from_extraction(
         line = _empty_line()
         line["worker_q"] = item.worker_name
         line["model_q"] = item.model_name
+        line["job_q"] = _name(item.job, 50)
+        # Saqlangan yozuvni tahrirlashda kasb ishchiga qarab o'zgarib ketmasin — faqat aytilsa
+        line["job_auto"] = entry_id is None
         line["quantity"] = item.quantity if item.quantity and item.quantity > 0 else None
         lines.append(line)
     draft["lines"] = lines
@@ -211,6 +247,8 @@ def from_entry(entry: WorkEntry) -> dict:
     line.update(
         worker_id=entry.worker_id, worker_name=entry.worker.name, worker_q=entry.worker.name,
         model_id=entry.model_id, model_name=entry.model.name, model_q=entry.model.name,
+        job_id=entry.job_id, job_name=entry.job.name if entry.job else None,
+        job_q=entry.job.name if entry.job else None, job_auto=False,
         quantity=entry.quantity,
         price=str(entry.unit_price) if entry.unit_price is not None else None,
         currency=entry.price_currency,
@@ -236,6 +274,18 @@ def _num(v: str | None) -> float | None:
 
 def for_llm(draft: dict) -> dict:
     """LLM ga tuzatish uchun yuboriladigan qisqa ko'rinish."""
+    if draft["section"] == "price":
+        return {
+            "prices": [
+                {
+                    "model_name": p["model_name"] or p["model_q"],
+                    "job": p["job_name"] or p["job_q"],
+                    "price": _num(p["price"]),
+                    "currency": p["currency"] if p["cur_said"] else None,
+                }
+                for p in draft["prices"]
+            ],
+        }
     if draft["section"] == "client":
         return {
             "date": draft["date"],
@@ -271,6 +321,8 @@ def for_llm(draft: dict) -> dict:
             {
                 "worker_name": ln["worker_name"] or ln["worker_q"],
                 "model_name": ln["model_name"] or ln["model_q"],
+                # Ishchining o'z kasbi (aytilmagan) yuborilmaydi: ishchi almashsa, kasb ham almashadi
+                "job": (ln["job_name"] or ln["job_q"]) if ln["job_q"] else None,
                 "quantity": ln["quantity"],
             }
             for ln in draft["lines"]
@@ -280,7 +332,10 @@ def for_llm(draft: dict) -> dict:
 
 async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]:
     acc = user.account_id
-    known = {"models": [m.name for m in await repo.list_models(session, acc)]}
+    known = {
+        "models": [m.name for m in await repo.list_models(session, acc)],
+        "jobs": [j.name for j in await repo.list_jobs(session, acc)],
+    }
     if user.is_owner:
         known["workers"] = [w.name for w in await repo.list_workers(session, acc)]
         known["categories"] = await repo.personal_categories(session, acc)
@@ -292,13 +347,23 @@ async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]
 def set_model(line: dict, model: ItemModel) -> None:
     line["model_id"] = model.id
     line["model_name"] = model.name
-    line["price"] = str(model.price) if model.price is not None else None
-    line["currency"] = model.currency if model.price is not None else None
+
+
+async def price_lines(session: AsyncSession, draft: dict, acc: int) -> None:
+    """Har bir qatorning bir dona narxi: model va kasb bo'yicha."""
+    models = {m.id: m for m in await repo.list_models(session, acc, active_only=False)}
+    for line in draft["lines"]:
+        price, currency = await repo.unit_price(session, models.get(line["model_id"]), line["job_id"])
+        line["price"] = str(price) if price is not None else None
+        line["currency"] = currency
 
 
 async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     """Ismlarni bazadagi yozuvlarga bog'laydi (faqat aniq mos kelganlarini)."""
     acc = user.account_id
+    if draft["section"] == "price":
+        await _resolve_prices(session, draft, acc)
+        return
     if draft["section"] == "client":
         await _resolve_clients(session, draft, acc)
         return
@@ -318,6 +383,11 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     models = await repo.list_models(session, acc)
     model_aliases = await repo.get_aliases(session, acc, "model")
     models_by_id = {m.id: m for m in models}
+    jobs = await repo.list_jobs(session, acc)
+    jobs_by_id = {j.id: j for j in jobs}
+    job_aliases = await repo.get_aliases(session, acc, "job")
+    workers_by_id = {w.id: w for w in workers}
+    workers_by_id[user.id] = user
 
     for line in draft["lines"]:
         if not user.is_owner:
@@ -332,6 +402,59 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
             res = matcher.match(line["model_q"], [(m.id, m.name) for m in models], model_aliases)
             if res.exact_id:
                 set_model(line, models_by_id[res.exact_id])
+
+        if line["job_q"] and line["job_id"] is None:
+            if not jobs:  # kasblar yo'q — kasb aytilmagandek
+                line["job_q"] = None
+            else:
+                res = jobs_mod.match(line["job_q"], jobs, job_aliases)
+                if res.exact_id:
+                    line["job_id"], line["job_name"] = res.exact_id, jobs_by_id[res.exact_id].name
+        if not line["job_q"] and line.get("job_auto", True):
+            worker = workers_by_id.get(line["worker_id"])
+            job = jobs_by_id.get(worker.job_id) if worker else None
+            line["job_id"], line["job_name"] = (job.id, job.name) if job else (None, None)
+
+    await price_lines(session, draft, acc)
+
+
+async def _resolve_prices(session: AsyncSession, draft: dict, acc: int) -> None:
+    """Model va kasbni topadi, hozirgi narxini (old) va valyutasini qo'yadi."""
+    models = await repo.list_models(session, acc)
+    models_by_id = {m.id: m for m in models}
+    model_aliases = await repo.get_aliases(session, acc, "model")
+    jobs = await repo.list_jobs(session, acc)
+    jobs_by_id = {j.id: j for j in jobs}
+    job_aliases = await repo.get_aliases(session, acc, "job")
+    default_currency = (await repo.enabled_currencies(session, acc))[0]
+
+    for p in draft["prices"]:
+        if p["model_id"] is None and p["model_q"]:
+            res = matcher.match(p["model_q"], [(m.id, m.name) for m in models], model_aliases)
+            if res.exact_id:
+                p["model_id"], p["model_name"] = res.exact_id, models_by_id[res.exact_id].name
+        if p["job_q"] and p["job_id"] is None:
+            res = jobs_mod.match(p["job_q"], jobs, job_aliases)
+            if res.exact_id:
+                p["job_id"], p["job_name"] = res.exact_id, jobs_by_id[res.exact_id].name
+
+    prices = await repo.model_prices(session, [p["model_id"] for p in draft["prices"] if p["model_id"]])
+    for p in draft["prices"]:
+        model = models_by_id.get(p["model_id"])
+        old = None
+        if model is not None and p["job_id"]:
+            row = prices.get(model.id, {}).get(p["job_id"])
+            old = (row.price, row.currency) if row else None
+        elif model is not None and not p["job_q"] and model.price is not None:
+            old = (model.price, model.currency)
+        p["old"] = {"price": str(old[0]), "currency": old[1]} if old else None
+        if not p["cur_said"]:
+            if old:
+                p["currency"] = old[1]
+            elif model is not None and model.price is not None:
+                p["currency"] = model.currency
+            else:
+                p["currency"] = default_currency
 
 
 async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None:
@@ -377,6 +500,15 @@ async def mark_duplicates(session: AsyncSession, draft: dict, owner_id: int) -> 
 
 
 def next_missing(draft: dict) -> tuple[str, int] | None:
+    if draft["section"] == "price":
+        for i, p in enumerate(draft["prices"]):
+            if p["model_id"] is None:
+                return "pmodel", i
+            if p["job_q"] and p["job_id"] is None:
+                return "pjob", i
+            if p["price"] is None:
+                return "pr_price", i
+        return None
     if draft["section"] == "client":
         for i, c in enumerate(draft["client"]):
             if c["client_id"] is None and not c["client_new"]:
@@ -406,6 +538,8 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
             return "worker", i
         if line["model_id"] is None:
             return "model", i
+        if line["job_q"] and line["job_id"] is None:
+            return "job", i
         if not line["quantity"]:
             return "quantity", i
     return None
@@ -443,6 +577,9 @@ def _render(draft: dict) -> str:
     for ln in lines:
         model = escape(ln["model_name"] or (f"{ln['model_q']}?" if ln["model_q"] else "?"))
         qty = f"{ln['quantity']} ta" if ln["quantity"] else "? ta"
+        job = ln["job_name"] or (f"{ln['job_q']}?" if ln["job_q"] else None)
+        if job:
+            qty += f" · {escape(job)}"
         row = f"• {model} — {qty}"
         if not one_worker:
             worker = escape(ln["worker_name"] or (f"{ln['worker_q']}?" if ln["worker_q"] else "?"))
@@ -566,6 +703,65 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     return text + f"\n\n❓ <b>{escape(debt['person'])}</b> — qancha? Summani yozing.", kbs.cancel_only_kb()
 
 
+async def _job_options(session: AsyncSession, acc: int, query: str) -> list[tuple[int, str]]:
+    """Kasblar kam — hammasi tugma bo'lib chiqadi, o'xshashlari birinchi."""
+    jobs = await repo.list_jobs(session, acc)
+    saved = await repo.get_aliases(session, acc, "job")
+    first = [o[0] for o in jobs_mod.match(query, jobs, saved).options]
+    jobs.sort(key=lambda j: first.index(j.id) if j.id in first else len(first))
+    return [(j.id, j.name) for j in jobs]
+
+
+def _render_price(draft: dict) -> str:
+    parts = ["💰 <b>Ish haqi narxi</b> (bir dona uchun)"]
+    if raw := _short_raw(draft):
+        parts.append(raw)
+    rows = []
+    for p in draft["prices"]:
+        model = escape(p["model_name"] or (f"{p['model_q']}?" if p["model_q"] else "?"))
+        job = escape(p["job_name"] or (f"{p['job_q']}?" if p["job_q"] else "umumiy narx"))
+        row = f"• {model} — {job}: {_money_amount(p['price'], p['currency'])}"
+        old = p.get("old")
+        if old and p["price"] and (Decimal(old["price"]), old["currency"]) != (Decimal(p["price"]), p["currency"]):
+            row += f" <i>(avval {fmt_money(Decimal(old['price']), old['currency'])})</i>"
+        rows.append(row)
+    parts.append("\n".join(rows))
+    if any(not p["job_q"] for p in draft["prices"]):
+        parts.append("ℹ️ Umumiy narx — kasbining narxi yozilmagan ishlarga olinadi.")
+    return "\n\n".join(parts)
+
+
+async def _present_price(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
+    text = _render_price(draft)
+    missing = next_missing(draft)
+    if missing is None:
+        return text + "\n\n<b>To'g'rimi?</b> Yangi narx shu paytdan keyingi yozuvlarga qo'llanadi.", kbs.draft_kb()
+
+    kind, i = missing
+    p = draft["prices"][i]
+    acc = user.account_id
+    if kind == "pmodel":
+        items = [(m.id, m.name) for m in await repo.list_models(session, acc)]
+        if p["model_q"]:
+            aliases = await repo.get_aliases(session, acc, "model")
+            options = [(o[0], o[1]) for o in matcher.match(p["model_q"], items, aliases).options] or items[:20]
+            return (
+                text + f"\n\n❓ «{escape(p['model_q'])}» — qaysi model?",
+                kbs.resolve_kb("pmodel", i, options, p["model_q"]),
+            )
+        if not items:
+            return text + "\n\n❓ Qaysi model? Nomini yozing yoki ayting.", kbs.cancel_only_kb()
+        return text + "\n\n❓ Qaysi model? Tanlang yoki nomini ayting.", kbs.resolve_kb("pmodel", i, items[:20], None)
+    if kind == "pjob":
+        return (
+            text + f"\n\n❓ «{escape(p['job_q'])}» — qaysi kasb?",
+            kbs.resolve_kb("pjob", i, await _job_options(session, acc, p["job_q"]), p["job_q"]),
+        )
+    who = escape(p["model_name"] or "")
+    job = escape(p["job_name"] or "umumiy narx")
+    return text + f"\n\n❓ <b>{who} — {job}</b>: bir donasi qancha? Yozing yoki ayting.", kbs.cancel_only_kb()
+
+
 CLIENT_KIND_LABELS = {
     ClientKind.SALE: "📦 Mol berildi",
     ClientKind.PAYMENT: "💵 To'lov olindi",
@@ -650,6 +846,8 @@ async def _present_client(session: AsyncSession, draft: dict, user: User) -> tup
 
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi."""
+    if draft["section"] == "price":
+        return await _present_price(session, draft, user)
     if draft["section"] == "client":
         return await _present_client(session, draft, user)
     if draft["section"] == "money":
@@ -670,6 +868,13 @@ async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, 
         return (
             text + f"\n\n❓ <b>{model}</b> dan nechta? Sonini yozing yoki ovoz bilan ayting.",
             kbs.cancel_only_kb(),
+        )
+
+    if kind == "job":
+        options = await _job_options(session, acc, line["job_q"])
+        return (
+            text + f"\n\n❓ «{escape(line['job_q'])}» — qaysi kasb?",
+            kbs.resolve_kb("job", i, options, line["job_q"] if user.is_owner else None),
         )
 
     if kind == "worker":

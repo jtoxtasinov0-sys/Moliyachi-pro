@@ -32,9 +32,10 @@ STATUS_LABELS = {
 
 
 def entry_text(entry: WorkEntry) -> str:
+    job = f" · {escape(entry.job.name)}" if entry.job else ""
     text = (
         f"<b>#{entry.id}</b> · {fmt_date(entry.work_date)}\n"
-        f"👷 {escape(entry.worker.name)}\n"
+        f"👷 {escape(entry.worker.name)}{job}\n"
         f"🧵 {escape(entry.model.name)} — <b>{entry.quantity} ta</b>"
     )
     if entry.unit_price is not None and entry.price_currency:
@@ -220,11 +221,19 @@ def _add(totals: dict[str, Decimal], row: repo.WorkReportRow) -> None:
         totals[row.currency] = totals.get(row.currency, Decimal(0)) + row.pay
 
 
+def _model_label(r: repo.WorkReportRow, with_job: bool) -> str:
+    """«A-12» yoki «A-12 (Brsovkachi)»."""
+    name = escape(r.model_name)
+    return f"{name} ({escape(r.job_name)})" if with_job and r.job_name else name
+
+
 def _worker_report(rows: list[repo.WorkReportRow]) -> str:
     totals: dict[str, Decimal] = {}
     lines = []
+    # Ishchi bir nechta kasbda ishlagan bo'lsa — har bir qatorda kasbi
+    with_job = len({r.job_name for r in rows}) > 1
     for r in rows:
-        line = f"• {escape(r.model_name)} — {r.quantity} ta"
+        line = f"• {_model_label(r, with_job)} — {r.quantity} ta"
         if r.pay is not None and r.currency:
             line += f" — {fmt_money(r.pay, r.currency)}"
         lines.append(line)
@@ -246,22 +255,33 @@ def _owner_report(rows: list[repo.WorkReportRow]) -> str:
         for r in worker_rows:
             _add(totals, r)
         qty = sum(r.quantity for r in worker_rows)
-        models = ", ".join(f"{escape(r.model_name)}: {r.quantity}" for r in worker_rows)
-        block = f"👷 <b>{escape(worker_rows[0].worker_name)}</b> — {qty} ta\n   {models}"
+        # Ishchi bitta kasbda ishlagan bo'lsa — kasbi ismi yonida, aks holda har bir model yonida
+        jobs = {r.job_name for r in worker_rows}
+        one_job = jobs.pop() if len(jobs) == 1 else None
+        who = escape(worker_rows[0].worker_name) + (f" ({escape(one_job)})" if one_job else "")
+        models = ", ".join(f"{_model_label(r, one_job is None)}: {r.quantity}" for r in worker_rows)
+        block = f"👷 <b>{who}</b> — {qty} ta\n   {models}"
         if totals:
             block += f"\n   💰 {fmt_totals(totals)}"
         blocks.append(block)
 
-    by_model: dict[str, int] = defaultdict(int)
+    # Model bo'yicha: kasblar bo'lsa — har bir bosqichda (kroy, brsovka, tikuv...) nechta
+    by_model: dict[str, dict[str | None, int]] = defaultdict(lambda: defaultdict(int))
     grand: dict[str, Decimal] = {}
     for r in rows:
-        by_model[r.model_name] += r.quantity
+        by_model[r.model_name][r.job_name] += r.quantity
         _add(grand, r)
-    model_lines = "\n".join(f"• {escape(name)} — {qty} ta" for name, qty in sorted(by_model.items()))
+    model_lines = []
+    for name, jobs in sorted(by_model.items()):
+        if set(jobs) == {None}:
+            model_lines.append(f"• {escape(name)} — {jobs[None]} ta")
+        else:
+            parts = ", ".join(f"{escape(job or 'kasbsiz')}: {qty}" for job, qty in jobs.items())
+            model_lines.append(f"• {escape(name)} — {parts}")
 
     text = "\n\n".join(blocks)
-    text += f"\n\n🧵 <b>Modellar bo'yicha</b>\n{model_lines}"
-    text += f"\n\nJami: <b>{sum(by_model.values())} ta</b>"
+    text += "\n\n🧵 <b>Modellar bo'yicha</b>\n" + "\n".join(model_lines)
+    text += f"\n\nJami: <b>{sum(r.quantity for r in rows)} ta</b>"
     if grand:
         text += f"\nIsh haqi fondi: <b>{fmt_totals(grand)}</b>"
     return text

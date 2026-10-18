@@ -6,6 +6,15 @@ Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini 
 berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
 «Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
+**🏷 Kasblar va narxlar:** har bir ishchiga kasb beriladi — Kroychi (materialni kesadi), Brsovkachi (kesilganini
+tikishga tayyorlab shiladi), Tikuvchi, Tortuvchi (padoshni yopishtiradi), Pardozchi (sotuvga tayyorlaydi) yoki egasi
+qo'lda qo'shgan boshqa kasb («👷 Ishchilar → 🏷 Kasblar», ilovada «Jamoa»). Har bir modelga kasb bo'yicha bir dona
+narxi qo'yiladi: «🧵 Modellar → 💰 A-12» da tugma bilan yoki «brsovka 2000, kroy 1500» deb yozib, ilovada model
+oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». Ish topshirilganda kasb aytilsa
+(«A-12 dan 40 ta brsovka qildim») — o'sha kasb narxi, aytilmasa — ishchining o'z kasbi narxi olinadi; kasb narxi
+yozilmagan bo'lsa — modelning umumiy narxi. Hisobotda har bir model qaysi bosqichdan (kroy, brsovka, tikuv...)
+qancha o'tgani ko'rinadi.
+
 **Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi
@@ -109,6 +118,7 @@ bot/
   services/stt.py    ovoz → matn: Aisha (VoiceLab), zaxira — ElevenLabs Scribe
   services/llm.py    Claude: matn yoki rasm → JSON
   services/matcher.py  o'xshash ismlarni topish
+  jobs.py            kasblar: standart ro'yxat, «brsovka» → Brsovkachi, «kroy 1500, tikuv 5000» narx matni
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
   reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)

@@ -33,6 +33,8 @@ OWNER_HELP = """\
 🎙 Ovozli yoki matnli xabar yuboring, masalan:
 • <i>Alisher A-12 modeldan 50 ta topshirdi</i>
 • <i>Kecha Vali B-5 dan 30 ta, C-7 dan 20 ta</i>
+• <i>Vali A-12 dan 40 ta brsovka qildi</i> — kasbi bilan
+• <i>A-12 modelga brsovka 2000dan, kroy 1500</i> — model narxi kasb bo'yicha
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
 • <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
 • <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i> — mijozga mol
@@ -57,8 +59,9 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 💡 Maslahat — topgan pulingizdan xarajatga va jamg'armaga qancha ajratish,
      kunlik limit, moliyaviy saboqlar va shaxsiy maslahat
 ⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
-👷 Ishchilar — qo'shish, taklif havolasi
-🧵 Modellar — qo'shish, narx belgilash
+👷 Ishchilar — qo'shish, taklif havolasi, kasbi (kroychi, brsovkachi, tikuvchi,
+     tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb)
+🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
 ⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
@@ -71,6 +74,7 @@ WORKER_HELP = """\
 🎙 Topshirgan ishingizni ovoz yoki matn bilan yuboring:
 • <i>A-12 modeldan 50 ta topshirdim</i>
 • <i>Kecha B-5 dan 30 ta</i>
+• <i>A-12 dan 40 ta brsovka qildim</i> — boshqa ish qilgan bo'lsangiz, ish turini ayting
 🖼 Daftaringiz rasmini yuborsangiz ham bo'ladi.
 
 Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.

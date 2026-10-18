@@ -12,6 +12,7 @@ const state = {
   home: { personal: null, feed: [] },
   workers: [],
   models: [],
+  jobs: [],
   wallet: { tab: "money", period: "month", data: null, entries: { offset: 0, items: [] }, debts: null },
   advice: null,
   // home — bosh sahifadagi qisqa ko'rinish, data — «Mijozlar» bo'limi
@@ -390,7 +391,7 @@ function feedRow(e, opts = {}) {
     icon = "🧵";
     title = `${e.model} · ${fmtNum(e.qty)} dona`;
     amt = e.total != null ? money(e.total, e.currency) : "";
-    sub.push(e.worker.name, STATUS[e.status] || e.status);
+    sub.push(e.worker.name, e.job, STATUS[e.status] || e.status);
   }
   const del = opts.del ? `<button class="mini-del" data-del-feed="${e.type}:${e.id}" aria-label="O'chirish">🗑</button>` : "";
   return `
@@ -441,6 +442,7 @@ function renderDashboard() {
   renderTrend();
   renderModels();
   if (isOwner) renderRanking(cur);
+  renderJobStats();
 }
 
 function renderTrend() {
@@ -484,6 +486,23 @@ function renderRanking(cur) {
         <div class="val">${fmtNum(w.qty)} ta<small>${esc(moneyList(w.pay) || "—")}</small></div>
       </li>`).join("")
     : `<li class="muted" style="display:block">Bu davrda ish topshirilmagan</li>`;
+}
+
+// Kasblar bo'yicha: har bir bosqichda (kroy, brsovka, tikuv...) qancha ish va ish haqi
+const JOB_ICONS = [["kroy", "✂️"], ["brsov", "🔪"], ["tikuv", "🧵"], ["tort", "👞"], ["pardoz", "✨"]];
+const jobIcon = (name) => (JOB_ICONS.find(([k]) => name.toLowerCase().startsWith(k)) || [, "🏷"])[1];
+
+function renderJobStats() {
+  const items = (state.dash.by_job || []).filter((j) => j.name);
+  $("jobsStatCard").hidden = !state.me.is_owner || !items.length;
+  if (!items.length) return;
+  const max = Math.max(1, ...items.map((j) => j.qty));
+  $("jobRank").innerHTML = items.map((j) => `
+    <li>
+      <div class="avatar job">${jobIcon(j.name)}</div>
+      <div><div class="name">${esc(j.name)}</div><div class="bar"><i style="width:${Math.max(4, (j.qty / max) * 100)}%"></i></div></div>
+      <div class="val">${fmtNum(j.qty)} ta<small>${esc(moneyList(j.pay) || "—")}</small></div>
+    </li>`).join("");
 }
 
 // --- Yozuvlar ----------------------------------------------------------------
@@ -542,7 +561,7 @@ function entryCard(e) {
         <div class="model-badge">${esc(e.model)}</div>
         <div class="entry-info">
           <b>${fmtNum(e.qty)} dona</b>
-          ${isOwner ? `<small>👷 ${esc(e.worker.name)}</small>` : ""}<small>${unit ? esc(unit) + " / dona" : "narx yo'q"}</small>
+          ${isOwner ? `<small>👷 ${esc(e.worker.name)}${e.job ? " · " + esc(e.job) : ""}</small>` : e.job ? `<small>🏷 ${esc(e.job)}</small>` : ""}<small>${unit ? esc(unit) + " / dona" : "narx yo'q"}</small>
         </div>
         <div class="entry-right">
           <b>${esc(total)}</b>
@@ -967,19 +986,22 @@ function clientEditSheet(c) {
   };
 }
 
-// --- Ishchilar ---------------------------------------------------------------
+// --- Ishchilar va kasblar ---------------------------------------------------
 
 async function loadWorkers() {
   if (state.workers.length) renderWorkers();
   else $("workerList").innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
   try {
-    state.workers = (await api("/api/workers")).items;
+    const data = await api("/api/workers");
+    state.workers = data.items;
+    state.jobs = data.jobs;
     renderWorkers();
   } catch (e) { fail(e); }
 }
 
 function renderWorkers() {
   const items = state.workers;
+  renderJobChips();
   if (!items.length) {
     $("workerList").innerHTML = `<div class="empty"><span class="big">👷</span>Hali ishchi yo'q.<br>«+ Qo'shish» tugmasini bosing.</div>`;
     return;
@@ -987,13 +1009,29 @@ function renderWorkers() {
   $("workerList").innerHTML = items.map((w) => {
     const tag = !w.is_active ? '<span class="tag off">O\'chirilgan</span>'
       : w.linked ? '<span class="tag ok">Ulangan</span>' : '<span class="tag wait">Havola kutilmoqda</span>';
+    const job = w.job ? `<span class="tag job">${esc(w.job.name)}</span>` : '<span class="tag none">Kasbi tanlanmagan</span>';
     return `
       <button class="row-card${w.is_active ? "" : " off"}" data-worker="${w.id}">
         <div class="avatar">${esc(initials(w.name))}</div>
-        <div class="info"><b>${esc(w.name)}</b>${tag}</div>
+        <div class="info"><b>${esc(w.name)}</b>${job}${tag}</div>
         <div class="side">${fmtNum(w.month_qty)} ta<small>${esc(moneyList(w.month_pay) || "shu oy")}</small></div>
       </button>`;
   }).join("");
+}
+
+function renderJobChips() {
+  $("jobChips").innerHTML = state.jobs.map((j) => `
+    <button data-job="${j.id}">${esc(j.name)}${j.workers ? `<small>${j.workers}</small>` : ""}</button>`).join("")
+    + `<button data-job="new" class="add">+ Kasb</button>`;
+}
+
+// Kasb tanlash tugmalari: tanlangani (selected) to'q rangda, «Kasbsiz» va «+ Yangi» bilan
+function jobPicker(id, selected) {
+  return `<div class="pick" id="${id}">
+    ${state.jobs.map((j) => `<button data-job="${j.id}" class="${selected === j.id ? "on" : ""}">${esc(j.name)}</button>`).join("")}
+    <button data-job="" class="${selected ? "" : "on"}">Kasbsiz</button>
+    <button data-job="new" class="add">+ Yangi kasb</button>
+  </div>`;
 }
 
 function shareInvite(w) {
@@ -1024,10 +1062,28 @@ function workerSheet(w) {
       <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
       <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>
     </div>
+    <div class="field"><label>🏷 Kasbi</label>
+      ${jobPicker("wJobs", w.job && w.job.id)}
+      <span class="field-hint">Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi.</span>
+    </div>
     ${invite}
     <button class="${w.is_active ? "danger" : "secondary"}" id="wToggle">${w.is_active ? "⛔ O'chirish (botdan foydalana olmaydi)" : "✅ Qayta faollashtirish"}</button>
     <button class="secondary" id="wEntries">🗂 Yozuvlarini ko'rish</button>
   `);
+  const setJob = async (jobId) => {
+    try {
+      const upd = await api(`/api/workers/${w.id}`, { method: "PATCH", body: { job_id: jobId } });
+      replaceWorker(upd);
+      workerSheet(upd);
+      toast(upd.job ? `Kasbi: ${upd.job.name}` : "Kasbsiz");
+    } catch (e) { fail(e); }
+  };
+  $("wJobs").onclick = (ev) => {
+    const b = ev.target.closest("[data-job]");
+    if (!b || b.classList.contains("on")) return;
+    if (b.dataset.job === "new") jobSheet(null, (job) => setJob(job.id));
+    else setJob(b.dataset.job ? Number(b.dataset.job) : null);
+  };
   if ($("wShare")) $("wShare").onclick = () => shareInvite(w);
   if ($("wCopy")) $("wCopy").onclick = () => copyText(w.invite_link);
   if ($("wInvite")) $("wInvite").onclick = async () => {
@@ -1061,25 +1117,84 @@ function replaceWorker(upd) {
   renderWorkers();
 }
 
-function addWorkerSheet() {
+function addWorkerSheet(name = "", jobId = null) {
   openSheet(`
     <h3>Yangi ishchi</h3>
-    <div class="field"><label>Ismi</label><input class="input" id="wName" maxlength="100" placeholder="Masalan: Alisher" autocomplete="off"></div>
+    <div class="field"><label>Ismi</label><input class="input" id="wName" maxlength="100" placeholder="Masalan: Alisher" autocomplete="off" value="${esc(name)}"></div>
+    <div class="field"><label>🏷 Kasbi</label>${jobPicker("wNewJobs", jobId)}</div>
     <button class="primary" id="wSave">Qo'shish</button>
   `);
   const input = $("wName");
-  setTimeout(() => input.focus(), 250);
+  let selected = jobId;
+  if (!name) setTimeout(() => input.focus(), 250);
+  $("wNewJobs").onclick = (ev) => {
+    const b = ev.target.closest("[data-job]");
+    if (!b) return;
+    if (b.dataset.job === "new") {
+      const typed = input.value;
+      jobSheet(null, (job) => addWorkerSheet(typed, job.id));
+      return;
+    }
+    selected = b.dataset.job ? Number(b.dataset.job) : null;
+    $("wNewJobs").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    haptic();
+  };
   $("wSave").onclick = async () => {
-    const name = input.value.trim();
-    if (!name) return input.focus();
+    const value = input.value.trim();
+    if (!value) return input.focus();
     $("wSave").disabled = true;
     try {
-      const w = await api("/api/workers", { method: "POST", body: { name } });
+      const w = await api("/api/workers", { method: "POST", body: { name: value, job_id: selected } });
       state.workers.unshift(w);
       renderWorkers();
       toast("Qo'shildi — havolani ishchiga yuboring");
       workerSheet(w);
     } catch (e) { fail(e); $("wSave").disabled = false; }
+  };
+}
+
+// Kasb qo'shish yoki tahrirlash. onCreated(job) — yangi kasb qo'shilgach (masalan, ishchiga berish uchun)
+function jobSheet(j, onCreated) {
+  const isNew = !j;
+  openSheet(`
+    <h3>${isNew ? "Yangi kasb" : esc(j.name)}</h3>
+    <div class="field"><label>Kasb nomi</label><input class="input" id="jName" maxlength="50" value="${esc(j ? j.name : "")}" placeholder="Masalan: Upakovkachi" autocomplete="off"></div>
+    <button class="primary" id="jSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
+    ${isNew
+      ? '<p class="muted small" style="margin-top:12px">Kasb ishchiga beriladi, har bir modelga esa shu kasb uchun alohida narx qo\'yiladi («Modellar»).</p>'
+      : `<button class="danger" id="jDel">🗑 O'chirish</button>
+         <p class="muted small" style="margin-top:12px">${j.workers ? `${j.workers} ta ishchi kasbsiz qoladi. ` : ""}Eski yozuvlar o'zgarmaydi.</p>`}
+  `);
+  const input = $("jName");
+  setTimeout(() => input.focus(), 250);
+  $("jSave").onclick = async () => {
+    const name = input.value.trim();
+    if (!name) return input.focus();
+    $("jSave").disabled = true;
+    try {
+      const res = isNew
+        ? await api("/api/jobs", { method: "POST", body: { name } })
+        : await api(`/api/jobs/${j.id}`, { method: "PATCH", body: { name } });
+      state.jobs = res.items;
+      if (isNew && onCreated) {
+        const job = state.jobs.find((x) => x.name.toLowerCase() === name.toLowerCase()) || state.jobs[state.jobs.length - 1];
+        onCreated(job);
+      } else {
+        closeSheet();
+      }
+      toast(isNew ? "Kasb qo'shildi" : "Saqlandi");
+      if (state.view === "workers") loadWorkers();
+      if (state.view === "models") renderModelList();
+    } catch (e) { fail(e); $("jSave").disabled = false; }
+  };
+  if ($("jDel")) $("jDel").onclick = async () => {
+    if (!(await confirmBox(`«${j.name}» kasbi o'chirilsinmi?`))) return;
+    try {
+      state.jobs = (await api(`/api/jobs/${j.id}`, { method: "DELETE" })).items;
+      closeSheet();
+      toast("O'chirildi");
+      loadWorkers();
+    } catch (e) { fail(e); }
   };
 }
 
@@ -1089,46 +1204,70 @@ async function loadModels() {
   if (state.models.length) renderModelList();
   else $("modelList").innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
   try {
-    state.models = (await api("/api/models")).items;
+    const data = await api("/api/models");
+    state.models = data.items;
+    if (data.jobs) state.jobs = data.jobs;
     renderModelList();
   } catch (e) { fail(e); }
 }
 
+// «Kroychi 1 500 · Brsovkachi 2 000» — kasblar ro'yxatidagi tartibda
+function jobPrices(m) {
+  return state.jobs
+    .map((j) => [j, (m.prices || []).find((p) => p.job_id === j.id)])
+    .filter(([, p]) => p)
+    .map(([j, p]) => `${j.name} ${money(p.price, p.currency)}`);
+}
+
 function renderModelList() {
   const items = state.models;
+  const owner = state.me.is_owner;
   if (!items.length) {
-    $("modelList").innerHTML = `<div class="empty"><span class="big">🧵</span>Hali model yo'q${state.me.is_owner ? ".<br>«+ Qo'shish» tugmasini bosing." : ""}</div>`;
+    $("modelList").innerHTML = `<div class="empty"><span class="big">🧵</span>Hali model yo'q${owner ? ".<br>«+ Qo'shish» tugmasini bosing." : ""}</div>`;
     return;
   }
-  $("modelList").innerHTML = items.map((m) => `
-    <${state.me.is_owner ? "button" : "div"} class="row-card${m.is_active ? "" : " off"}" data-model="${m.id}">
+  $("modelList").innerHTML = items.map((m) => {
+    const byJob = owner ? jobPrices(m) : [];
+    const side = m.price != null ? esc(money(m.price, m.currency)) : '<span class="muted">—</span>';
+    return `
+    <${owner ? "button" : "div"} class="row-card${m.is_active ? "" : " off"}" data-model="${m.id}">
       <div class="model-badge icon">🧵</div>
-      <div class="info"><b>${esc(m.name)}</b>${m.is_active ? "" : '<span class="tag off">O\'chirilgan</span>'}</div>
-      <div class="side">${m.price != null ? esc(money(m.price, m.currency)) : '<span class="muted">narx yo\'q</span>'}<small>bir dona</small></div>
-    </${state.me.is_owner ? "button" : "div"}>`).join("");
+      <div class="info"><b>${esc(m.name)}</b>${byJob.length ? `<small class="line">${esc(byJob.join(" · "))}</small>` : ""}${m.is_active ? "" : '<span class="tag off">O\'chirilgan</span>'}</div>
+      <div class="side">${side}<small>${owner ? "umumiy" : "bir dona"}</small></div>
+    </${owner ? "button" : "div"}>`;
+  }).join("");
 }
 
 function modelSheet(m) {
   const isNew = !m;
-  m = m || { name: "", price: null, currency: state.me.currencies[0], is_active: true };
+  m = m || { name: "", price: null, currency: state.me.currencies[0], is_active: true, prices: [] };
   const curOptions = state.me.currencies.concat(state.me.currencies.includes(m.currency) ? [] : [m.currency])
     .map((c) => `<option value="${c}" ${c === m.currency ? "selected" : ""}>${CUR[c] || c}</option>`).join("");
+  const priceOf = (jobId) => {
+    const p = (m.prices || []).find((x) => x.job_id === jobId);
+    return p ? p.price : "";
+  };
+  const rows = state.jobs.map((j) => `
+      <div class="price-row"><span>${esc(j.name)}</span><input class="input" data-job-price="${j.id}" inputmode="decimal" value="${priceOf(j.id)}" placeholder="—" aria-label="${esc(j.name)}"></div>`).join("");
   openSheet(`
     <h3>${isNew ? "Yangi model" : esc(m.name)}</h3>
     <div class="field"><label>Model nomi</label><input class="input" id="mName" maxlength="100" value="${esc(m.name)}" placeholder="Masalan: A-12" autocomplete="off"></div>
     <div class="field"><label>Bir dona uchun ish haqi</label>
-      <div class="field-row">
-        <input class="input" id="mPrice" inputmode="decimal" value="${m.price != null ? m.price : ""}" placeholder="Masalan: 5000">
-        <select class="select" id="mCur" style="margin:0">${curOptions}</select>
+      <div class="price-list">
+        ${rows}
+        <div class="price-row"><span>Umumiy<small>kasbining narxi yozilmagan ishlarga</small></span><input class="input" id="mPrice" inputmode="decimal" value="${m.price != null ? m.price : ""}" placeholder="—" aria-label="Umumiy narx"></div>
+        <div class="price-row"><span>Valyuta</span><select class="select" id="mCur" style="margin:0" aria-label="Valyuta">${curOptions}</select></div>
       </div>
     </div>
     ${isNew ? "" : `<label class="switch-row"><div>Faol<small>O'chirilgan model yangi yozuvlarda taklif qilinmaydi</small></div><span class="switch"><input type="checkbox" id="mActive" ${m.is_active ? "checked" : ""}><i></i></span></label>`}
     <button class="primary" id="mSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
-    ${isNew ? "" : '<p class="muted small" style="margin-top:12px">Yangi narx shu paytdan keyingi yozuvlarga qo\'llanadi.</p>'}
+    <p class="muted small" style="margin-top:12px">${isNew ? "" : "Yangi narx shu paytdan keyingi yozuvlarga qo'llanadi. "}💡 Ovoz bilan ham aytish mumkin: «A-12 modelga brsovka 2000dan».</p>
   `);
   if (isNew) setTimeout(() => $("mName").focus(), 250);
   $("mSave").onclick = async () => {
-    const body = { name: $("mName").value.trim(), price: $("mPrice").value.trim() || null, currency: $("mCur").value };
+    const prices = {};
+    document.querySelectorAll("[data-job-price]").forEach((el) => { prices[el.dataset.jobPrice] = el.value.trim() || null; });
+    const body = { name: $("mName").value.trim(), price: $("mPrice").value.trim() || null, currency: $("mCur").value, prices };
     if (!body.name) return $("mName").focus();
     if (!isNew) body.is_active = $("mActive").checked;
     $("mSave").disabled = true;
@@ -1179,7 +1318,7 @@ function composeSheet(voice, images) {
     </div>
     <p class="muted small compose-hint">${owner
       ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
-      : "Model va sonini ayting: «kecha B-5 dan 30 ta».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
+      : "Model va sonini ayting: «kecha B-5 dan 30 ta». Boshqa ish qilgan bo'lsangiz — ish turini ham: «A-12 dan 40 ta brsovka».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
   input.oninput = () => {
@@ -1971,7 +2110,13 @@ function bind() {
     const w = state.workers.find((x) => x.id === Number(b.dataset.worker));
     if (w) workerSheet(w);
   };
-  $("addWorkerBtn").onclick = addWorkerSheet;
+  $("addWorkerBtn").onclick = () => addWorkerSheet();
+  $("jobChips").onclick = (ev) => {
+    const b = ev.target.closest("[data-job]");
+    if (!b) return;
+    if (b.dataset.job === "new") jobSheet(null);
+    else jobSheet(state.jobs.find((j) => j.id === Number(b.dataset.job)));
+  };
 
   $("modelList").onclick = (ev) => {
     if (!state.me.is_owner) return;
@@ -2103,7 +2248,12 @@ async function init() {
   $("typeChips").hidden = !me.is_owner;
   if (!me.is_owner) state.entries.type = "work";
   syncChips();
-  if (!me.is_owner) $("modelsTitle").textContent = "Narxlar";
+  if (!me.is_owner) {
+    $("modelsTitle").textContent = "Narxlar";
+    $("modelsHint").textContent = me.job
+      ? `Bir dona uchun ish haqi — kasbingiz (${me.job.name}) bo'yicha`
+      : "Narx — bir dona uchun ish haqi";
+  }
   await fillWorkerFilter();
   show(startView());
 }

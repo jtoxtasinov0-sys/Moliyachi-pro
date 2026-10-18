@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import (
@@ -20,6 +21,8 @@ from bot.db.models import (
     DebtEntry,
     EntryStatus,
     ItemModel,
+    Job,
+    ModelPrice,
     PersonalEntry,
     Role,
     Setting,
@@ -49,6 +52,8 @@ DEFAULT_SETTINGS = {
     "reminder_sent": "",
     # Qo'llanma videosining Telegram file_id si — har safar qayta yuklamaslik uchun
     "guide_video_id": "",
+    # Standart kasblar (Kroychi, Brsovkachi...) bir marta qo'shilgan: egasi o'chirsa, qaytib chiqmaydi
+    "jobs_seeded": "0",
 }
 
 
@@ -141,8 +146,10 @@ async def ensure_owner(session: AsyncSession, tg_id: int, name: str) -> User:
     return user
 
 
-async def create_worker(session: AsyncSession, owner_id: int, name: str) -> User:
-    user = User(name=name, role=Role.WORKER, owner_id=owner_id, invite_token=secrets.token_urlsafe(12))
+async def create_worker(session: AsyncSession, owner_id: int, name: str, job_id: int | None = None) -> User:
+    user = User(
+        name=name, role=Role.WORKER, owner_id=owner_id, invite_token=secrets.token_urlsafe(12), job_id=job_id
+    )
     session.add(user)
     await session.flush()
     return user
@@ -211,6 +218,149 @@ async def create_model(
     return model
 
 
+# --- Kasblar ---------------------------------------------------------------
+
+async def _seed_jobs(session: AsyncSession, owner_id: int) -> None:
+    """Standart kasblarni bir marta qo'shadi (Kroychi, Brsovkachi, Tikuvchi, Tortuvchi, Pardozchi)."""
+    from bot.jobs import DEFAULT_JOBS  # aylanma importdan qochish uchun
+
+    if await get_setting(session, owner_id, "jobs_seeded") == "1":
+        return
+    try:
+        # Bir vaqtda ikkita so'rov kelsa — ikkinchisi takror qo'shmaydi
+        async with session.begin_nested():
+            existing = {n.lower() for n in await session.scalars(select(Job.name).where(Job.owner_id == owner_id))}
+            for i, name in enumerate(DEFAULT_JOBS, start=1):
+                if name.lower() not in existing:
+                    session.add(Job(owner_id=owner_id, name=name, position=i))
+            await set_setting(session, owner_id, "jobs_seeded", "1")
+    except IntegrityError:
+        pass
+
+
+async def list_jobs(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[Job]:
+    await _seed_jobs(session, owner_id)
+    q = select(Job).where(Job.owner_id == owner_id).order_by(Job.position, Job.id)
+    if active_only:
+        q = q.where(Job.is_active.is_(True))
+    return list(await session.scalars(q))
+
+
+async def get_job(session: AsyncSession, owner_id: int, job_id: int | None) -> Job | None:
+    if not job_id:
+        return None
+    job = await session.get(Job, job_id)
+    return job if job is not None and job.owner_id == owner_id and job.is_active else None
+
+
+async def get_job_by_name(session: AsyncSession, owner_id: int, name: str) -> Job | None:
+    return await session.scalar(
+        select(Job).where(Job.owner_id == owner_id, func.lower(Job.name) == name.strip().lower())
+    )
+
+
+async def create_job(session: AsyncSession, owner_id: int, name: str) -> Job:
+    """Yangi kasb. Shu nomli o'chirilgan kasb bo'lsa — o'shani qaytaradi (eski narxlari bilan)."""
+    from bot.jobs import clean_name
+
+    name = clean_name(name)
+    job = await get_job_by_name(session, owner_id, name)
+    if job is not None:
+        job.is_active = True
+        return job
+    last = await session.scalar(select(func.max(Job.position)).where(Job.owner_id == owner_id))
+    job = Job(owner_id=owner_id, name=name, position=(last or 0) + 1)
+    session.add(job)
+    await session.flush()
+    return job
+
+
+async def rename_job(session: AsyncSession, job: Job, name: str) -> bool:
+    """False — shu nomli boshqa kasb bor. O'chirilgan kasb nomni band qilib turmaydi."""
+    from bot.jobs import clean_name
+
+    name = clean_name(name)
+    other = await get_job_by_name(session, job.owner_id, name)
+    if other is not None and other.id != job.id:
+        if other.is_active:
+            return False
+        other.name = f"{other.name[:40]} #{other.id}"
+        await session.flush()
+    job.name = name
+    await session.flush()
+    return True
+
+
+async def delete_job(session: AsyncSession, job: Job) -> None:
+    """Kasb ro'yxatdan olinadi, ishchilar kasbsiz qoladi. Eski yozuvlarda kasb nomi saqlanadi."""
+    job.is_active = False
+    workers = await session.scalars(select(User).where(User.owner_id == job.owner_id, User.job_id == job.id))
+    for w in workers:
+        w.job_id = None
+    await session.flush()
+
+
+async def job_worker_counts(session: AsyncSession, owner_id: int) -> dict[int, int]:
+    rows = await session.execute(
+        select(User.job_id, func.count(User.id))
+        .where(User.role == Role.WORKER, User.owner_id == owner_id, User.is_active.is_(True), User.job_id.is_not(None))
+        .group_by(User.job_id)
+    )
+    return {job_id: int(n) for job_id, n in rows}
+
+
+# --- Model narxlari: umumiy va kasb bo'yicha ---------------------------------
+
+async def model_prices(session: AsyncSession, model_ids: list[int]) -> dict[int, dict[int, ModelPrice]]:
+    """model_id -> {job_id: narx}."""
+    if not model_ids:
+        return {}
+    out: dict[int, dict[int, ModelPrice]] = defaultdict(dict)
+    for row in await session.scalars(select(ModelPrice).where(ModelPrice.model_id.in_(model_ids))):
+        out[row.model_id][row.job_id] = row
+    return dict(out)
+
+
+async def set_model_price(
+    session: AsyncSession, model: ItemModel, job_id: int | None, price: Decimal | None, currency: str
+) -> None:
+    """job_id=None — umumiy narx. price=None — narx olib tashlanadi."""
+    if job_id is None:
+        model.price = price
+        if price is not None:
+            model.currency = currency
+        await session.flush()
+        return
+    row = await session.get(ModelPrice, (model.id, job_id))
+    if price is None:
+        if row is not None:
+            await session.delete(row)
+    elif row is None:
+        session.add(ModelPrice(model_id=model.id, job_id=job_id, price=price, currency=currency))
+    else:
+        row.price, row.currency = price, currency
+    await session.flush()
+
+
+async def clear_model_prices(session: AsyncSession, model_id: int) -> None:
+    await session.execute(delete(ModelPrice).where(ModelPrice.model_id == model_id))
+
+
+async def unit_price(
+    session: AsyncSession, model: ItemModel | None, job_id: int | None
+) -> tuple[Decimal | None, str | None]:
+    """Bir dona uchun ish haqi: kasb narxi, u bo'lmasa — modelning umumiy narxi."""
+    if model is None:
+        return None, None
+    if job_id:
+        row = await session.get(ModelPrice, (model.id, job_id))
+        if row is not None:
+            return row.price, row.currency
+    if model.price is None:
+        return None, None
+    return model.price, model.currency
+
+
 # --- Taxalluslar (ovozdagi xato ismlar) -------------------------------------
 
 async def get_aliases(session: AsyncSession, owner_id: int, entity_type: str) -> list[tuple[int, str]]:
@@ -258,23 +408,26 @@ async def create_work_entry(
     status: str,
     raw_text: str | None,
     created_by: int,
+    job_id: int | None = None,
 ) -> WorkEntry:
     model = await get_model(session, owner_id, model_id)
+    price, currency = await unit_price(session, model, job_id)
     entry = WorkEntry(
         owner_id=owner_id,
         worker_id=worker_id,
         model_id=model_id,
+        job_id=job_id,
         quantity=quantity,
         work_date=work_date,
-        unit_price=model.price if model else None,
-        price_currency=model.currency if model and model.price is not None else None,
+        unit_price=price,
+        price_currency=currency,
         status=status,
         raw_text=raw_text,
         created_by=created_by,
     )
     session.add(entry)
     await session.flush()
-    await session.refresh(entry, ["worker", "model"])
+    await session.refresh(entry, ["worker", "model", "job"])
     return entry
 
 
@@ -319,10 +472,29 @@ async def pending_work_entries(session: AsyncSession, owner_id: int) -> list[Wor
     return list(await session.scalars(q))
 
 
-def apply_model_price(entry: WorkEntry, model: ItemModel) -> None:
+async def reprice_entry(session: AsyncSession, entry: WorkEntry, model: ItemModel, job_id: int | None) -> None:
+    """Yozuvning modeli yoki kasbi o'zgarganda — narx hozirgi narxlardan olinadi."""
     entry.model_id = model.id
-    entry.unit_price = model.price
-    entry.price_currency = model.currency if model.price is not None else None
+    entry.job_id = job_id
+    entry.unit_price, entry.price_currency = await unit_price(session, model, job_id)
+
+
+# Narx yozuvda saqlanmagan bo'lsa (yozilgan paytda narx yo'q edi) — hozirgi kasb narxi, u bo'lmasa umumiy narx
+_REPORT_PRICE = func.coalesce(WorkEntry.unit_price, ModelPrice.price, ItemModel.price)
+_REPORT_CURRENCY = func.coalesce(WorkEntry.price_currency, ModelPrice.currency, ItemModel.currency)
+
+
+def _work_rows_query(*columns):
+    return (
+        select(*columns)
+        .select_from(WorkEntry)
+        .join(User, User.id == WorkEntry.worker_id)
+        .join(ItemModel, ItemModel.id == WorkEntry.model_id)
+        .outerjoin(Job, Job.id == WorkEntry.job_id)
+        .outerjoin(
+            ModelPrice, (ModelPrice.model_id == WorkEntry.model_id) & (ModelPrice.job_id == WorkEntry.job_id)
+        )
+    )
 
 
 @dataclass
@@ -333,26 +505,23 @@ class WorkReportRow:
     quantity: int
     pay: Decimal | None  # narx kiritilmagan bo'lsa None
     currency: str | None
+    job_name: str | None = None  # kasb ko'rsatilmagan bo'lsa None
 
 
 async def work_report(
     session: AsyncSession, owner_id: int, start: date, end: date, worker_id: int | None = None
 ) -> list[WorkReportRow]:
-    """Tasdiqlangan ishlar: ishchi va model bo'yicha jamlangan (start..end, ikkalasi ham kiradi)."""
-    price = func.coalesce(WorkEntry.unit_price, ItemModel.price)
-    currency = func.coalesce(WorkEntry.price_currency, ItemModel.currency)
+    """Tasdiqlangan ishlar: ishchi, model va kasb bo'yicha jamlangan (start..end, ikkalasi ham kiradi)."""
     q = (
-        select(
+        _work_rows_query(
             User.id,
             User.name,
             ItemModel.name,
             func.sum(WorkEntry.quantity),
-            func.sum(WorkEntry.quantity * price),
-            currency,
+            func.sum(WorkEntry.quantity * _REPORT_PRICE),
+            _REPORT_CURRENCY,
+            Job.name,
         )
-        .select_from(WorkEntry)
-        .join(User, User.id == WorkEntry.worker_id)
-        .join(ItemModel, ItemModel.id == WorkEntry.model_id)
         .where(
             WorkEntry.owner_id == owner_id,
             WorkEntry.deleted_at.is_(None),
@@ -360,14 +529,16 @@ async def work_report(
             WorkEntry.work_date >= start,
             WorkEntry.work_date <= end,
         )
-        .group_by(User.id, User.name, ItemModel.id, ItemModel.name, currency)
-        .order_by(User.name, ItemModel.name)
+        .group_by(User.id, User.name, ItemModel.id, ItemModel.name, _REPORT_CURRENCY, Job.id, Job.name, Job.position)
+        .order_by(User.name, ItemModel.name, Job.position)
     )
     if worker_id is not None:
         q = q.where(WorkEntry.worker_id == worker_id)
     rows = await session.execute(q)
     return [
-        WorkReportRow(r[0], r[1], r[2], int(r[3] or 0), Decimal(str(r[4])) if r[4] is not None else None, r[5])
+        WorkReportRow(
+            r[0], r[1], r[2], int(r[3] or 0), Decimal(str(r[4])) if r[4] is not None else None, r[5], r[6]
+        )
         for r in rows
     ]
 
@@ -381,27 +552,24 @@ class WorkStatRow:
     quantity: int
     pay: Decimal | None
     currency: str | None
+    job_name: str | None = None
 
 
 async def work_stat_rows(
     session: AsyncSession, owner_id: int, start: date, end: date, worker_id: int | None = None
 ) -> list[WorkStatRow]:
-    """Tasdiqlangan ishlar: kun, ishchi va model bo'yicha jamlangan — grafiklar uchun."""
-    price = func.coalesce(WorkEntry.unit_price, ItemModel.price)
-    currency = func.coalesce(WorkEntry.price_currency, ItemModel.currency)
+    """Tasdiqlangan ishlar: kun, ishchi, model va kasb bo'yicha jamlangan — grafiklar uchun."""
     q = (
-        select(
+        _work_rows_query(
             WorkEntry.work_date,
             User.id,
             User.name,
             ItemModel.name,
             func.sum(WorkEntry.quantity),
-            func.sum(WorkEntry.quantity * price),
-            currency,
+            func.sum(WorkEntry.quantity * _REPORT_PRICE),
+            _REPORT_CURRENCY,
+            Job.name,
         )
-        .select_from(WorkEntry)
-        .join(User, User.id == WorkEntry.worker_id)
-        .join(ItemModel, ItemModel.id == WorkEntry.model_id)
         .where(
             WorkEntry.owner_id == owner_id,
             WorkEntry.deleted_at.is_(None),
@@ -409,14 +577,16 @@ async def work_stat_rows(
             WorkEntry.work_date >= start,
             WorkEntry.work_date <= end,
         )
-        .group_by(WorkEntry.work_date, User.id, User.name, ItemModel.id, ItemModel.name, currency)
+        .group_by(
+            WorkEntry.work_date, User.id, User.name, ItemModel.id, ItemModel.name, _REPORT_CURRENCY, Job.id, Job.name
+        )
     )
     if worker_id is not None:
         q = q.where(WorkEntry.worker_id == worker_id)
     rows = await session.execute(q)
     return [
         WorkStatRow(
-            r[0], r[1], r[2], r[3], int(r[4] or 0), Decimal(str(r[5])) if r[5] is not None else None, r[6]
+            r[0], r[1], r[2], r[3], int(r[4] or 0), Decimal(str(r[5])) if r[5] is not None else None, r[6], r[7]
         )
         for r in rows
     ]

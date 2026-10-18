@@ -51,7 +51,7 @@ class DraftCb(CallbackData, prefix="d"):
 
 
 class ResolveCb(CallbackData, prefix="r"):
-    kind: str  # worker | model | client
+    kind: str  # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb)
     line: int
     item_id: int  # 0 — yangi qo'shish
 
@@ -100,13 +100,20 @@ class SettingsCb(CallbackData, prefix="s"):
 
 
 class WorkerCb(CallbackData, prefix="wk"):
-    action: str  # add | link | toggle
+    action: str  # list | open | add | link | toggle | job (value — kasb, 0 — kasbsiz) | newjob
     user_id: int = 0
+    value: int = 0
+
+
+class JobCb(CallbackData, prefix="jb"):
+    action: str  # list | add | rename | del
+    job_id: int = 0
 
 
 class ModelCb(CallbackData, prefix="md"):
-    action: str  # add | price | toggle | noprice
+    action: str  # add | price | toggle | pjob (value — kasb, 0 — umumiy narx) | done
     model_id: int = 0
+    value: int = 0
 
 
 # --- Tugmalar ---------------------------------------------------------------

@@ -206,6 +206,7 @@ _VIEWS = {
     "/api/advice": "Maslahat",
     "/api/workers": "Ishchilar",
     "/api/models": "Modellar",
+    "/api/jobs": "Kasblar",
     "/api/entries": "Yozuvlar",
     "/api/activity": "Oxirgi yozuvlar",
 }
@@ -225,6 +226,10 @@ _ACTIONS = [
     ("POST", r"/api/workers", "Ishchi qo'shdi"),
     ("POST", r"/api/workers/\d+/toggle", "Ishchini yoqdi/o'chirdi"),
     ("POST", r"/api/workers/\d+/invite", "Ishchi uchun yangi havola oldi"),
+    ("PATCH", r"/api/workers/\d+", "Ishchini tahrirladi (kasbi)"),
+    ("POST", r"/api/jobs", "Kasb qo'shdi"),
+    ("PATCH", r"/api/jobs/\d+", "Kasb nomini o'zgartirdi"),
+    ("DELETE", r"/api/jobs/\d+", "Kasbni o'chirdi"),
 ]
 OPEN_EVERY = 20 * 60  # ilovani ochish — 20 daqiqada bir marta yoziladi
 VIEW_EVERY = 10 * 60  # bir bo'limni ko'rish — 10 daqiqada bir marta
