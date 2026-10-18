@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 from datetime import date
-from typing import Literal
+from typing import Literal, get_args, get_origin
 
 import anthropic
 from pydantic import BaseModel, Field
@@ -228,6 +228,97 @@ def _context_block(today: date, known: dict[str, list[str]], info: str = "") -> 
     return "Ma'lum nomlar:\n" + "\n".join(lines)
 
 
+# Structured outputs javobni sxemaga majburan moslaydi. API sxemani rad etsa (masalan, «Schema is too complex
+# for compilation»), so'rov oddiy JSON bilan takrorlanadi va server qayta ishga tushguncha shu usul ishlatiladi
+_strict = True
+
+
+def _schema_text() -> str:
+    """Oddiy JSON so'rovi uchun sxema — ixcham, sarlavhalarsiz."""
+
+    def strip(node):
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items() if k != "title"}
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+
+    return json.dumps(strip(Extraction.model_json_schema()), ensure_ascii=False, separators=(",", ":"))
+
+
+JSON_RULES = (
+    "Javobni faqat bitta JSON obyekt qilib yoz — boshqa matn, izoh va ``` belgisisiz. JSON quyidagi sxemaga "
+    "mos bo'lsin, hamma maydonlar bo'lsin (bo'sh ro'yxat — []):\n" + _schema_text()
+)
+
+
+def _empty(annotation) -> object:
+    """Javobda tushib qolgan yoki null bo'lgan maydon uchun «aytilmagan» qiymati (sxemadagidek)."""
+    args = get_args(annotation)
+    if annotation is str:
+        return ""
+    if annotation in (int, float):
+        return 0
+    if annotation is bool:
+        return False
+    if type(None) in args:
+        return None
+    if get_origin(annotation) is list:
+        return []
+    if get_origin(annotation) is Literal and "" in args:
+        return ""
+    return None
+
+
+def _complete(model: type[BaseModel], data: object) -> object:
+    """Yetishmagan maydonlarni to'ldiradi — JSON sxemaga majburan mos bo'lmagan javob uchun."""
+    if not isinstance(data, dict):
+        return data
+    for name, field in model.model_fields.items():
+        empty = _empty(field.annotation)
+        if data.get(name) is None:
+            if name not in data or empty is not None:
+                data[name] = empty
+        elif get_origin(field.annotation) is list and isinstance(data[name], list):
+            (item,) = get_args(field.annotation)
+            if isinstance(item, type) and issubclass(item, BaseModel):
+                data[name] = [_complete(item, x) for x in data[name]]
+    return data
+
+
+def parse_json(text: str) -> Extraction:
+    """Oddiy matndagi JSON javob: ``` ichida yoki atrofida gap bo'lsa ham."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("Javobda JSON topilmadi")
+    return Extraction.model_validate(_complete(Extraction, json.loads(text[start : end + 1])))
+
+
+JSON_ATTEMPTS = 2
+
+
+async def _call_json(system: str, request: dict) -> Extraction:
+    """Sxemasiz so'rov: JSON matndan o'qiladi. Buzuq kelsa — yana bir marta so'raladi."""
+    for attempt in range(1, JSON_ATTEMPTS + 1):
+        try:
+            response = await client.messages.create(system=f"{system}\n\n{JSON_RULES}", **request)
+        except anthropic.APIError as e:
+            log.exception("Claude API xatosi")
+            raise LlmError(str(e)) from e
+        if response.stop_reason == "refusal":
+            log.warning("Claude javob bermadi: stop_reason=%s", response.stop_reason)
+            raise LlmError(f"stop_reason={response.stop_reason}")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        try:
+            return parse_json(text)
+        except ValueError as e:  # JSON buzuq yoki sxemaga mos emas (ValidationError ham ValueError)
+            if attempt == JSON_ATTEMPTS:
+                log.exception("Claude javobini o'qib bo'lmadi (stop_reason=%s)", response.stop_reason)
+                raise LlmError(str(e)) from e
+            log.warning("Claude JSON javobi buzuq, qayta so'ralmoqda: %s", e)
+    raise AssertionError("unreachable")
+
+
 async def _call(
     user_content: str | list[dict],
     extra_rules: str = "",
@@ -236,17 +327,24 @@ async def _call(
     max_tokens: int = 4000,
     timeout: float | None = None,
 ) -> Extraction:
+    global _strict
     system = SYSTEM_PROMPT + (f"\n{extra_rules}" if extra_rules else "")
+    request = {
+        "model": settings.llm_model,
+        "max_tokens": max_tokens,
+        "output_config": {"effort": effort},
+        "messages": [{"role": "user", "content": user_content}],
+        "timeout": timeout or anthropic.not_given,
+    }
+    if not _strict:
+        return await _call_json(system, request)
     try:
-        response = await client.messages.parse(
-            model=settings.llm_model,
-            max_tokens=max_tokens,
-            system=system,
-            output_config={"effort": effort},
-            messages=[{"role": "user", "content": user_content}],
-            output_format=Extraction,
-            timeout=timeout or anthropic.not_given,
-        )
+        response = await client.messages.parse(system=system, output_format=Extraction, **request)
+    except anthropic.BadRequestError as e:
+        log.warning("Claude sxemali so'rovni rad etdi, oddiy JSON bilan qayta urinilmoqda: %s", e)
+        result = await _call_json(system, request)
+        _strict = False
+        return result
     except anthropic.APIError as e:
         log.exception("Claude API xatosi")
         raise LlmError(str(e)) from e
