@@ -21,6 +21,8 @@ from bot.services.utils import fmt_money, today
 
 
 CLIENT_KINDS = (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN)
+# Telegram xabari 4096 belgigacha: ishchi yozgani bitta xabarga sig'masa — har bir yozuv alohida tasdiqlanadi
+REVIEW_TEXT_LIMIT = 3800
 
 
 class IntakeError(Exception):
@@ -484,9 +486,9 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         header = "✅ <b>Saqlandi</b>"
 
     if needs_approval and saved:
-        header += "\n⏳ Ish yozuvlari egasining tasdig'ini kutmoqda."
+        header += "\n⏳ Ish yozuvlari boshlig'ingiz tasdig'ini kutmoqda."
     if any(p.status == EntryStatus.PENDING for p in payments):
-        header += "\n⏳ Pul yozuvlari egasining tasdig'ini kutmoqda."
+        header += "\n⏳ Pul yozuvlari boshlig'ingiz tasdig'ini kutmoqda."
     balance = await _balance_lines(session, user, [e.worker for e in saved], [p.worker for p in payments])
     if balance:
         header += "\n\n" + "\n".join(balance)
@@ -598,24 +600,39 @@ async def _notify_owner(
     bot: Bot, session: AsyncSession, worker: User, entries: list[WorkEntry], payments: list[WorkerPayment],
     edited: bool,
 ) -> None:
-    """Ishchi yozdi: egasiga — tasdiq kutayotgani tugmalari bilan, darhol hisobga kirgani ham xabar bo'lib."""
-    from bot.handlers.entries import entry_text, notify_owner, notify_owner_pending, pay_text
+    """Ishchi yozdi: egasiga — tasdiq kutayotgani tugmalari bilan, darhol hisobga kirgani ham xabar bo'lib.
+    Tasdiq kutayotgani bir nechta bo'lsa — bitta xabar, hammasiga bitta «✅ Tasdiqlash» / «❌ Bekor qilish»."""
+    from bot.handlers.entries import batch_text, entry_text, notify_owner, notify_owner_pending, pay_text
 
     owner = await session.get(User, worker.owner_id)
     if owner is None:
         return
-    done = []
-    for e in entries:
-        if e.status == EntryStatus.PENDING:
+    action = "yozuvini o'zgartirdi" if edited else "yozdi"
+    pending = [e for e in entries if e.status == EntryStatus.PENDING]
+    pending_pays = [p for p in payments if p.status == EntryStatus.PENDING]
+    review = kbs.review_kb(pending, pending_pays) if len(pending) + len(pending_pays) > 1 else None
+    text = ""
+    if review is not None:
+        text = (
+            f"🔔 <b>{escape(worker.name)} {action} — tasdiqlaysizmi?</b>\n\n"
+            + await batch_text(session, owner, worker, pending, pending_pays)
+            + "\n\n<i>Bittasini alohida tasdiqlash — «⏳ Tasdiq kutayotganlar» bo'limida.</i>"
+        )
+        if len(text) > REVIEW_TEXT_LIMIT:
+            review = None
+    if review is not None:
+        await notify_owner(bot, session, owner.id, text, markup=review)
+    else:
+        for e in pending:
             await notify_owner_pending(bot, session, e)
-        else:
-            done.append(e)
+    done = [e for e in entries if e.status != EntryStatus.PENDING]
     if done:
-        action = "yozuvini o'zgartirdi" if edited else "yozdi"
         text = f"🧾 <b>{escape(worker.name)} {action}</b>\n\n" + "\n\n".join(entry_text(e) for e in done)
         markup = kbs.entry_kb(done[0], owner) if len(done) == 1 else kbs.app_kb("entries")
         await notify_owner(bot, session, owner.id, text, markup=markup)
     for e in payments:
+        if review is not None and e.status == EntryStatus.PENDING:
+            continue
         balance = (await repo.worker_balance(session, e.owner_id, worker.id)).balance
         title = "🔔 <b>Tasdiq kutmoqda</b>" if e.status == EntryStatus.PENDING else "🧾 <b>Hisob-kitob</b>"
         text = (

@@ -477,7 +477,7 @@ async def review(request: web.Request, session: AsyncSession, user: User) -> web
     approve = request.match_info["action"] == "approve"
     await repo.review_work_entry(session, entry, user, approve)
     if entry.worker.tg_id and entry.worker_id != user.id:
-        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        verdict = "✅ tasdiqlandi" if approve else "❌ bekor qilindi"
         _notify(request, entry.worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + entry_text(entry))
     return web.json_response(_entry_json(entry))
 
@@ -1340,7 +1340,7 @@ async def review_payment(request: web.Request, session: AsyncSession, user: User
     await repo.review_payment(session, entry, user, approve)
     worker = entry.worker
     if worker.tg_id and worker.id != user.id:
-        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        verdict = "✅ tasdiqlandi" if approve else "❌ bekor qilindi"
         _notify(request, worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + pay_text(entry, worker))
     return web.json_response(_pay_json(entry, user))
 

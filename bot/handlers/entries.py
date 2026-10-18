@@ -27,7 +27,7 @@ router.callback_query.filter(Registered())
 STATUS_LABELS = {
     EntryStatus.PENDING: "⏳ tasdiq kutmoqda",
     EntryStatus.APPROVED: "✅ tasdiqlangan",
-    EntryStatus.REJECTED: "🚫 rad etilgan",
+    EntryStatus.REJECTED: "❌ bekor qilingan",
 }
 
 
@@ -89,6 +89,26 @@ async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry
     await notify_owner(bot, session, entry.owner_id, text, entry)
 
 
+async def batch_text(
+    session: AsyncSession, viewer: User, worker: User, entries: list[WorkEntry], payments: list[WorkerPayment]
+) -> str:
+    """Ishchi bir xabarda yozgan ishlar va pullar: kartalar, ish ko'p bo'lsa — jami, pul yoki hisob-kitob
+    yuritilsa — qoldiq."""
+    text = "\n\n".join([*(entry_text(e) for e in entries), *(pay_text(p, viewer) for p in payments)])
+    if len(entries) > 1:
+        totals: dict[str, Decimal] = defaultdict(Decimal)
+        for e in entries:
+            if e.unit_price is not None and e.price_currency:
+                totals[e.price_currency] += e.unit_price * e.quantity
+        text += f"\n\n🧵 Jami: <b>{sum(e.quantity for e in entries)} ta</b>"
+        if totals:
+            text += f" · 💰 <b>{fmt_totals(totals)}</b>"
+    b = await repo.worker_balance(session, worker.owner_id, worker.id)
+    if payments or tracked(b):
+        text += "\n\n" + drafts.balance_text(b.balance, worker.name if viewer.is_owner else None)
+    return text
+
+
 def _can_touch(user: User, entry: WorkEntry) -> bool:
     return user.is_owner or entry.worker_id == user.id
 
@@ -144,11 +164,59 @@ async def on_review(
     approve = callback_data.action == "approve"
     await repo.review_work_entry(session, entry, user, approve)
     await call.message.edit_text(entry_text(entry), reply_markup=kbs.entry_kb(entry, user))
-    await call.answer("Tasdiqlandi" if approve else "Rad etildi")
+    await call.answer("Tasdiqlandi" if approve else "Bekor qilindi")
 
     if entry.worker.tg_id and entry.worker_id != user.id:
-        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        verdict = "✅ tasdiqlandi" if approve else "❌ bekor qilindi"
         await call.bot.send_message(entry.worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + entry_text(entry))
+
+
+@router.callback_query(kbs.ReviewCb.filter(), IsOwner())
+async def on_review_all(
+    call: CallbackQuery, callback_data: kbs.ReviewCb, session: AsyncSession, user: User
+) -> None:
+    """Ishchi bir xabarda yozgan hamma narsa birdan tasdiqlanadi yoki bekor qilinadi. Avval alohida ko'rib
+    chiqilganlari («⏳ Tasdiq kutayotganlar» yoki ilovada) o'zgarmaydi, o'chirilganlari tashlab ketiladi."""
+    entries = []
+    for entry_id in kbs.unpack_ids(callback_data.work):
+        entry = await repo.get_work_entry(session, user.account_id, entry_id)
+        if entry is not None:
+            entries.append(entry)
+    payments = []
+    for entry_id in kbs.unpack_ids(callback_data.pay):
+        entry = await repo.get_payment(session, user.account_id, entry_id)
+        if entry is not None:
+            payments.append(entry)
+    if not entries and not payments:
+        await call.message.edit_reply_markup(reply_markup=None)
+        await call.answer("Yozuvlar topilmadi yoki o'chirilgan.", show_alert=True)
+        return
+
+    approve = callback_data.action == "approve"
+    changed_entries = [e for e in entries if e.status == EntryStatus.PENDING]
+    changed_payments = [p for p in payments if p.status == EntryStatus.PENDING]
+    for e in changed_entries:
+        await repo.review_work_entry(session, e, user, approve)
+    for p in changed_payments:
+        await repo.review_payment(session, p, user, approve)
+
+    worker = (entries or payments)[0].worker
+    changed = bool(changed_entries or changed_payments)
+    if not changed:
+        title = "🧾"  # holati kartalarda
+    else:
+        title = "✅ Tasdiqlandi —" if approve else "❌ Bekor qilindi —"
+    text = f"<b>{title} {escape(worker.name)} yozgan</b>\n\n" + await batch_text(session, user, worker, entries, payments)
+    await call.message.edit_text(text, reply_markup=kbs.app_kb("entries"))
+    if not changed:
+        await call.answer("Bu yozuvlar avval ko'rib chiqilgan.", show_alert=True)
+        return
+    await call.answer("Tasdiqlandi" if approve else "Bekor qilindi")
+
+    if worker.tg_id and worker.id != user.id:
+        verdict = "✅ Boshlig'ingiz tasdiqladi" if approve else "❌ Boshlig'ingiz bekor qildi"
+        body = await batch_text(session, worker, worker, changed_entries, changed_payments)
+        await notify_user(call.bot, worker.tg_id, f"<b>{verdict}</b>\n\n{body}", kbs.app_kb("ledger"))
 
 
 @router.callback_query(kbs.EntryCb.filter(F.action == "edit"))
@@ -353,10 +421,10 @@ async def on_pay_review(call: CallbackQuery, callback_data: kbs.PayCb, session: 
     approve = callback_data.action == "approve"
     await repo.review_payment(session, entry, user, approve)
     await call.message.edit_text(await _pay_card(session, entry, user), reply_markup=kbs.pay_entry_kb(entry, user))
-    await call.answer("Tasdiqlandi" if approve else "Rad etildi")
+    await call.answer("Tasdiqlandi" if approve else "Bekor qilindi")
     worker = entry.worker
     if worker.tg_id and worker.id != user.id:
-        verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
+        verdict = "✅ tasdiqlandi" if approve else "❌ bekor qilindi"
         await notify_user(call.bot, worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + await _pay_card(session, entry, worker))
 
 

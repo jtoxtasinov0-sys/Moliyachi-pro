@@ -23,7 +23,7 @@ const state = {
 const charts = {};
 
 const CUR = { UZS: "so'm", USD: "$", KRW: "won" };
-const STATUS = { pending: "Kutilmoqda", approved: "Tasdiqlangan", rejected: "Rad etilgan" };
+const STATUS = { pending: "Kutilmoqda", approved: "Tasdiqlangan", rejected: "Bekor qilingan" };
 const WD = ["Du", "Se", "Ch", "Pa", "Ju", "Sh", "Ya"];
 const WD_LONG = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"];
 const MON = ["Yan", "Fev", "Mar", "Apr", "May", "Iyn", "Iyl", "Avg", "Sen", "Okt", "Noy", "Dek"];
@@ -576,7 +576,7 @@ function renderEntries() {
       continue;
     }
     const review = e.type === "pay" && e.status === "pending" && state.me.is_owner
-      ? `<div class="entry-actions"><button class="act ok" data-pay-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-pay-act="reject" data-id="${e.id}">Rad etish</button></div>`
+      ? `<div class="entry-actions"><button class="act ok" data-pay-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-pay-act="reject" data-id="${e.id}">Bekor qilish</button></div>`
       : "";
     html += `<div class="entry">${feedRow(e, { del: true })}${review}</div>`;
   }
@@ -589,7 +589,7 @@ function entryCard(e) {
   const unit = e.unit_price != null ? money(e.unit_price, e.currency) : "";
   let actions = "";
   if (isOwner && e.status === "pending") {
-    actions += `<button class="act ok" data-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-act="reject" data-id="${e.id}">Rad etish</button>`;
+    actions += `<button class="act ok" data-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-act="reject" data-id="${e.id}">Bekor qilish</button>`;
   }
   actions += `<button class="act del" data-act="delete" data-id="${e.id}" aria-label="O'chirish">🗑</button>`;
   return `
@@ -621,7 +621,7 @@ async function entryAction(act, id) {
       const updated = await api(`/api/entries/${id}/${act}`, { method: "POST" });
       const keep = !state.entries.status || state.entries.status === updated.status;
       state.entries.items = state.entries.items.flatMap((e) => (isWorkItem(e) && e.id === id ? (keep ? [updated] : []) : [e]));
-      toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
+      toast(act === "approve" ? "Tasdiqlandi" : "Bekor qilindi");
     }
     renderEntries();
   } catch (e) { fail(e); }
@@ -639,7 +639,7 @@ async function reviewPayment(act, id) {
     const upd = await api(`/api/payments/${id}/${act}`, { method: "POST" });
     state.entries.items = state.entries.items.map((e) => (e.type === "pay" && e.id === id ? { ...e, ...upd, type: "pay" } : e));
     renderEntries();
-    toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
+    toast(act === "approve" ? "Tasdiqlandi" : "Bekor qilindi");
   } catch (e) { fail(e); }
 }
 
@@ -737,7 +737,7 @@ function ledgerRow(e, owner) {
   const review = owner && e.type === "pay" && e.status === "pending";
   if (review) {
     acts += `<button class="lg-act ok" data-lg="approve" data-id="${e.id}" aria-label="Tasdiqlash">✓</button>`
-      + `<button class="lg-act no" data-lg="reject" data-id="${e.id}" aria-label="Rad etish">✕</button>`;
+      + `<button class="lg-act no" data-lg="reject" data-id="${e.id}" aria-label="Bekor qilish">✕</button>`;
   }
   if (e.can_delete) acts += `<button class="lg-act del" data-lg="del-${e.type}" data-id="${e.id}" aria-label="O'chirish">🗑</button>`;
   return `
@@ -865,7 +865,7 @@ async function onLedgerClick(ev) {
   try {
     if (act === "approve" || act === "reject") {
       await api(`/api/payments/${id}/${act}`, { method: "POST" });
-      toast(act === "approve" ? "Tasdiqlandi" : "Rad etildi");
+      toast(act === "approve" ? "Tasdiqlandi" : "Bekor qilindi");
     } else if (act.startsWith("del-")) {
       if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
       await api(`/api/payments/${id}`, { method: "DELETE" });

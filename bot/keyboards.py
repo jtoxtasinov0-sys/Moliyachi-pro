@@ -76,6 +76,41 @@ class PayCb(CallbackData, prefix="wp"):
     entry_id: int
 
 
+class ReviewCb(CallbackData, prefix="rv"):
+    """Ishchi bir xabarda yozgan hamma ish va pul — bitta tugma bilan tasdiqlanadi yoki bekor qilinadi."""
+    action: str  # approve | reject
+    work: str = ""  # ish yozuvlari id lari: "12-14.20" (pack_ids)
+    pay: str = ""  # pul yozuvlari id lari
+
+
+MAX_REVIEW_IDS = 200
+
+
+def pack_ids(ids: list[int]) -> str:
+    """[12, 13, 14, 20] -> "12-14.20": bir saqlashdagi yozuvlar id lari odatda ketma-ket."""
+    parts: list[str] = []
+    for i in sorted(ids):
+        start, _, end = parts[-1].partition("-") if parts else ("", "", "")
+        if parts and i == int(end or start) + 1:
+            parts[-1] = f"{start}-{i}"
+        else:
+            parts.append(str(i))
+    return ".".join(parts)
+
+
+def unpack_ids(value: str) -> list[int]:
+    """pack_ids ning teskarisi (MAX_REVIEW_IDS tagacha)."""
+    ids: list[int] = []
+    for part in value.split("."):
+        start, _, end = part.partition("-")
+        if not start.isdigit() or (end and not end.isdigit()):
+            continue
+        ids.extend(range(int(start), min(int(end or start), int(start) + MAX_REVIEW_IDS) + 1))
+        if len(ids) >= MAX_REVIEW_IDS:
+            return ids[:MAX_REVIEW_IDS]
+    return ids
+
+
 class DebtDirCb(CallbackData, prefix="dd"):
     line: int
     direction: str  # in | out
@@ -183,12 +218,26 @@ def entry_kb(entry: WorkEntry, viewer: User, app: bool = False) -> InlineKeyboar
     kb = InlineKeyboardBuilder()
     if viewer.is_owner and entry.status == EntryStatus.PENDING:
         kb.button(text="✅ Tasdiqlash", callback_data=EntryCb(action="approve", entry_id=entry.id))
-        kb.button(text="🚫 Rad etish", callback_data=EntryCb(action="reject", entry_id=entry.id))
+        kb.button(text="❌ Bekor qilish", callback_data=EntryCb(action="reject", entry_id=entry.id))
     kb.button(text="✏️ Tahrirlash", callback_data=EntryCb(action="edit", entry_id=entry.id))
     kb.button(text="🗑 O'chirish", callback_data=EntryCb(action="del", entry_id=entry.id))
     kb.adjust(2)
     if app:
         add_app_button(kb, "entries")
+    return kb.as_markup()
+
+
+def review_kb(entries: list[WorkEntry], payments: list[WorkerPayment]) -> InlineKeyboardMarkup | None:
+    """«✅ Tasdiqlash» / «❌ Bekor qilish» — hamma yozuvga birdan. Id lar tugmaga sig'masa (64 bayt) — None."""
+    work = pack_ids([e.id for e in entries])
+    pay = pack_ids([p.id for p in payments])
+    kb = InlineKeyboardBuilder()
+    try:
+        kb.button(text="✅ Tasdiqlash", callback_data=ReviewCb(action="approve", work=work, pay=pay).pack())
+        kb.button(text="❌ Bekor qilish", callback_data=ReviewCb(action="reject", work=work, pay=pay).pack())
+    except ValueError:
+        return None
+    kb.adjust(2)
     return kb.as_markup()
 
 
@@ -232,7 +281,7 @@ def pay_entry_kb(entry: WorkerPayment, viewer: User, app: bool = False) -> Inlin
     kb = InlineKeyboardBuilder()
     if viewer.is_owner and entry.status == EntryStatus.PENDING:
         kb.button(text="✅ Tasdiqlash", callback_data=PayCb(action="approve", entry_id=entry.id))
-        kb.button(text="🚫 Rad etish", callback_data=PayCb(action="reject", entry_id=entry.id))
+        kb.button(text="❌ Bekor qilish", callback_data=PayCb(action="reject", entry_id=entry.id))
     if viewer.is_owner or entry.created_by == viewer.id:
         kb.button(text="🗑 O'chirish", callback_data=PayCb(action="del", entry_id=entry.id))
     kb.adjust(2)

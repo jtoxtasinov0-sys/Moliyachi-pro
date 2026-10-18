@@ -27,6 +27,15 @@ tugma bosilgach darhol saqlaydi va tanlovni eslab qoladi. Ishchi o'zi yozsa ham 
 bo'yicha), egasiga xabar boradi. «⚙️ Sozlamalar → Ovoz va matnni darhol saqlash» o'chirilsa — avvalgidek har safar
 «✅ Saqlash» bosiladi. Rasm (skrinshot, chek, daftar) uchun — alohida sozlama (pastda).
 
+**✅ Ishchi yozuvini boshliq tasdiqlaydi:** ishchi botda «A-12 dan 40 ta, B-5 dan 20 ta qildim» deb yozsa (yoki ovoz
+yuborsa), boshliqqa bitta xabar keladi: «🔔 Robiya yozdi — tasdiqlaysizmi?», har bir ish, jami soni va ish haqi,
+ostida «✅ Tasdiqlash» va «❌ Bekor qilish». Bitta tugma shu xabardagi hamma ishga (va ishchi shu xabarda yozgan
+«oldim» puliga) birdan qo'llanadi, ishchiga «✅ Boshlig'ingiz tasdiqladi» yoki «❌ Boshlig'ingiz bekor qildi» deb
+xabar boradi. Bekor qilingan ish hisobot va qoldiqqa kirmaydi. Yozuv bitta bo'lsa — kartasida o'sha tugmalar
+(«✏️ Tahrirlash», «🗑 O'chirish» bilan), bittasini alohida tasdiqlash — «⏳ Tasdiq kutayotganlar» da. Bu
+«⚙️ Sozlamalar → Ishchi yozuvlarini tasdiqlash» (pul uchun — «Pul yozuvlarini tasdiqlash») yoqiq bo'lsa ishlaydi
+(sukut bo'yicha yoqiq); o'chiq bo'lsa ishchi yozgani darhol hisobga kiradi, boshliqqa faqat xabar boradi.
+
 **🧾 Ishchi bilan hisob-kitob (avans, ish haqi):** SMS'dagidek qisqa yozish kifoya. Ishchi o'zi: «500 ming oldim»,
 «15 loaf 15 sapog, 500.000 oldim» — olgan puli hisobidan ayriladi, topshirgan ishlari qo'shiladi. Egasi: «Robiyaga
 500 ming berdim», «Robiya 200 ming qaytardi», «Robiyaga qolganini berdim». Hisob holatini ham aytish mumkin
