@@ -364,7 +364,7 @@ async def on_pay_delete(call: CallbackQuery, callback_data: kbs.PayCb, session: 
     if entry is None:
         return
     if not user.is_owner and entry.created_by != user.id:
-        await call.answer("Bu yozuvni egangiz kiritgan — faqat u o'chira oladi.", show_alert=True)
+        await call.answer("Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi.", show_alert=True)
         return
     if callback_data.action == "del":
         await call.message.edit_reply_markup(reply_markup=kbs.pay_confirm_delete_kb(entry.id))

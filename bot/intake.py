@@ -443,7 +443,7 @@ async def _notify_payments(bot: Bot, session: AsyncSession, user: User, payments
             worker = e.worker
             if worker.tg_id and worker.is_active and worker.id != user.id:
                 balance = (await repo.worker_balance(session, e.owner_id, worker.id)).balance
-                text = f"🧾 <b>Hisob-kitob</b> (egangiz yozdi)\n\n{pay_text(e, worker)}\n\n{drafts.balance_text(balance)}"
+                text = f"🧾 <b>Hisob-kitob</b> (boshlig'ingiz yozdi)\n\n{pay_text(e, worker)}\n\n{drafts.balance_text(balance)}"
                 await notify_user(bot, worker.tg_id, text, kbs.app_kb("ledger"))
         return
     owner = await session.get(User, user.owner_id)

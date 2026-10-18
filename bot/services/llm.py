@@ -407,7 +407,7 @@ def _worker_rules(worker_name: str) -> str:
         f"Bu xabarni ishchi {worker_name} yozdi. Bo'lim faqat work yoki pay bo'lishi mumkin "
         f"(yoki tushunarsiz bo'lsa unknown). worker_name har doim \"{worker_name}\". "
         "Ishchi tilidan: \"500 ming oldim\", \"avans oldim\", \"oylikni oldim\" — pay; \"200 ming qaytardim\", "
-        "\"200 ming berdim\" — return; \"egam menga 900 ming qarz\", \"900 ming haqqim bor\" — balance, "
+        "\"200 ming berdim\" — return; \"boshlig'im menga 900 ming qarz\", \"egam menga 900 ming qarz\", \"900 ming haqqim bor\" — balance, "
         "worker_owes=false; \"men 200 ming qarzman\" — balance, worker_owes=true."
     )
 

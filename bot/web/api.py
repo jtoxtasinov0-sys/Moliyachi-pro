@@ -1269,7 +1269,7 @@ async def add_payment(request: web.Request, session: AsyncSession, user: User) -
     if kind not in (PayKind.PAY, PayKind.RETURN, PayKind.BALANCE):
         raise ApiError(400, "Noto'g'ri tur")
     if kind == PayKind.BALANCE and not user.is_owner:
-        raise ApiError(403, "Hisob holatini egangiz yozadi")
+        raise ApiError(403, "Hisob holatini boshlig'ingiz yozadi")
     amount = _parse_price(data.get("amount"))
     currency = (await repo.enabled_currencies(session, user.account_id))[0]
     whole = kind == PayKind.PAY and bool(data.get("whole"))
@@ -1338,7 +1338,7 @@ async def delete_payment(request: web.Request, session: AsyncSession, user: User
 
     entry = await _payment_for(request, session, user)
     if not user.is_owner and entry.created_by != user.id:
-        raise ApiError(403, "Bu yozuvni egangiz kiritgan — faqat u o'chira oladi")
+        raise ApiError(403, "Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi")
     await repo.soft_delete(session, entry)
     if not user.is_owner and entry.status == EntryStatus.APPROVED:
         owner = await session.get(User, user.owner_id)

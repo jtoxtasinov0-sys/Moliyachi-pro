@@ -711,7 +711,7 @@ function payTitle(e, owner) {
   if (e.kind === "balance") {
     if (!e.amount) return "Hisob yopildi";
     if (owner) return e.worker_owes ? "Hisob: ishchi sizga qarzdor" : "Hisob: siz qarzdorsiz";
-    return e.worker_owes ? "Hisob: siz qarzdorsiz" : "Hisob: egangiz sizga qarzdor";
+    return e.worker_owes ? "Hisob: siz qarzdorsiz" : "Hisob: boshlig'ingiz sizga qarzdor";
   }
   if (e.kind === "pay") return owner ? "Berildi" : "Oldingiz";
   return owner ? "Qaytardi" : "Qaytardingiz";

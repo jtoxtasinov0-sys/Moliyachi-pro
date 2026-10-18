@@ -911,7 +911,7 @@ def pay_line(
             else:
                 text = f"🧾 Hisob: siz {name}ga qarzdorsiz" if name else "🧾 Hisob: siz qarzdorsiz"
         else:
-            text = "🧾 Hisob: siz qarzdorsiz" if worker_owes else "🧾 Hisob: egangiz sizga qarzdor"
+            text = "🧾 Hisob: siz qarzdorsiz" if worker_owes else "🧾 Hisob: boshlig'ingiz sizga qarzdor"
     elif kind == PayKind.PAY:
         text = (f"💵 {name}ga berildi" if name else "💵 Berildi") if owner else "💵 Oldingiz"
     elif kind == PayKind.RETURN:
