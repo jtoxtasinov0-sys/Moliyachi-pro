@@ -42,7 +42,10 @@ ashyo» va bosh sahifadagi karta.
 **Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi
-bilan xarajat/daromad kategoriyalariga ajratadi. Bir martada 5 tagacha rasm (albom). Avval kiritilgan yozuv (shu kun,
+bilan xarajat/daromad kategoriyalariga ajratadi. Qog'ozga qo'lda yozilgani ham o'qiladi — kirill yoki lotin
+(«20 та сапок, 15 та лофер» — ishchining topshirgan ishi). Rasm birdaniga tushunilmasa (xato yoki yozuv topilmasa),
+undagi yozuv avval matnga ko'chiriladi va oddiy xabardek tahlil qilinadi — qoralamada nima o'qilgani ko'rinadi
+(«🖼 Rasm: «20 та сапок…»»). Bir martada 5 tagacha rasm (albom). Avval kiritilgan yozuv (shu kun,
 shu summa) qayta qo'shilmaydi. O'qilgani avval ro'yxat bo'lib ko'rsatiladi va «✅ Tasdiqlash» bosilgach hisobga
 qo'shiladi (xato bo'lsa — «✏️ Tuzatish» yoki «❌ Bekor»). «⚙️ Sozlamalar → Rasmdagi xarajatlarni darhol saqlash»
 yoqilsa — tasdiqlamasdan darhol qo'shiladi.

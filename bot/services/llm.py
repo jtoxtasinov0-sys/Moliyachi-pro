@@ -323,6 +323,8 @@ def _complete(model: type[BaseModel], data: object) -> object:
         if data.get(name) is None:
             if name not in data or empty is not None:
                 data[name] = empty
+        elif data[name] == "" and empty is None:  # «aytilmagan» null o'rniga bo'sh satr (masalan, valyuta)
+            data[name] = None
         elif get_origin(field.annotation) is list and isinstance(data[name], list):
             (item,) = get_args(field.annotation)
             if isinstance(item, type) and issubclass(item, BaseModel):
@@ -441,7 +443,18 @@ async def correct(
     return await _call(content, extra)
 
 
-IMAGE_RULES = """\
+NO_TEXT = "YOZUV_YOQ"
+
+# Qog'ozga qo'lda yozilgan matn: rasmni to'g'ridan-to'g'ri tahlil qilishda ham, matnga ko'chirishda ham
+HANDWRITING_RULES = """\
+Qo'lyozma (qog'oz, daftar): avval yozuv kirillmi yoki lotinmi — butun so'zlarga qarab aniqla. Kirill yozma \
+harflari lotinchaga o'xshaydi: т — m, п — n, и — u, д — g, з — 3, л — λ; с, а, о, е, к, р, х, у — o'sha \
+shakldagi lotin harflari. Shuning uchun «20 ma canok» aslida kirillcha «20 та сапок» (20 ta sapog). \
+Qiyshiq, xira yoki chiziqli qog'oz bo'lsa ham har bir qatorni o'qi; sonlarni (1 va 7, 4 va 9, 5 va 6) \
+diqqat bilan ajrat. O'qib bo'lmagan joyni to'qima."""
+
+
+IMAGE_RULES = f"""\
 Senga rasm(lar) beriladi: bank ilovasi skrinshoti (to'lovlar tarixi, chek, o'tkazma), bank SMS xabari, \
 do'kon cheki yoki qo'lda yozilgan daftar sahifasi (telefon kamerasida qiyshiq yoki xira tushgan bo'lishi \
 mumkin). Rasmdagi har bir moliyaviy yozuvni ajrat.
@@ -484,6 +497,10 @@ va bonus ballar, bekor qilingan, rad etilgan yoki o'tmagan to'lovlar ("Bekor qil
 
 Qo'lda yozilgan daftar yoki boshqa matnli rasm — undagi yozuvlarni oddiy xabar kabi yuqoridagi qoidalar \
 bilan ajrat. Korxona uchun xom ashyo (teri, kley, padosh...) xaridi cheki yoki daftari — section=material.
+{HANDWRITING_RULES}
+- Daftardagi "20 та сапок", "15 ta lofer" kabi qatorlar (son + ta/та/dona/шт + nom) — model nomi va dona soni, \
+har bir qator alohida work elementi. Model nomini lotinga o'gir (сапок — sapog, лофер — lofer, лоропиано — \
+loro piano) va "Modellar" ro'yxatidagi eng mos nomga keltir (lofer — Loaf yoki Lofer, qaysi biri ro'yxatda bo'lsa).
 Ishchi bilan yozishma (SMS yoki Telegram chat skrinshoti): tepadagi suhbatdosh ismi — odatda ishchi, o'ng \
 tomondagi (yuborilgan) xabarlarni foydalanuvchining o'zi yozgan. "15 loaf 15 sapog" — ish (work), \
 "500.000 berdim" — pul (pays), "900.000 men qarz" — hisob holati (balance). Har bir xabarning sanasi \
@@ -502,19 +519,55 @@ async def extract_images(
 ) -> Extraction:
     """images — (rasm, media turi) ro'yxati: bitta yoki bir nechta skrinshot bitta qoralamaga."""
     extra = IMAGE_RULES + ("\n" + _worker_rules(worker_name) if worker_name else "")
-    content: list[dict] = [
+    text = f"{_context_block(today, known, info)}\n\nRasmlar soni: {len(images)}."
+    if caption:
+        text += f"\nFoydalanuvchi izohi:\n«{caption}»"
+    content = [*_image_blocks(images), {"type": "text", "text": text}]
+    # Ko'p qatorli bank tarixi: aniq o'qish uchun chuqurroq o'ylaydi va uzunroq javob yozadi
+    return await _call(content, extra, effort="medium", max_tokens=16000, timeout=180)
+
+
+def _image_blocks(images: list[tuple[bytes, str]]) -> list[dict]:
+    return [
         {
             "type": "image",
             "source": {"type": "base64", "media_type": media_type, "data": base64.standard_b64encode(data).decode()},
         }
         for data, media_type in images
     ]
-    text = f"{_context_block(today, known, info)}\n\nRasmlar soni: {len(images)}."
-    if caption:
-        text += f"\nFoydalanuvchi izohi:\n«{caption}»"
-    content.append({"type": "text", "text": text})
-    # Ko'p qatorli bank tarixi: aniq o'qish uchun chuqurroq o'ylaydi va uzunroq javob yozadi
-    return await _call(content, extra, effort="medium", max_tokens=16000, timeout=180)
+
+
+READ_PROMPT = f"""\
+Senga rasm(lar) beriladi: qog'ozga yoki daftarga qo'lda yozilgan yozuv, chek, bank ilovasi skrinshoti yoki \
+yozishma. Rasmdagi hamma yozuvni qanday yozilgan bo'lsa shunday, qatorma-qator ko'chirib yoz.
+{HANDWRITING_RULES}
+- Kirillcha yozuvni kirillcha, lotincha yozuvni lotincha ko'chir. Sonlarni, sanalarni va summalarni aniq yoz.
+- O'qib bo'lmagan so'z o'rniga [?] qo'y, o'zingdan so'z yoki son qo'shma.
+- Faqat ko'chirilgan matnni yoz: izoh, sarlavha, tarjima va ``` belgisisiz. Bir nechta rasm bo'lsa — \
+ketma-ket, rasmlar orasida bo'sh qator.
+- Rasmda yozuv bo'lmasa — faqat {NO_TEXT} deb yoz."""
+
+
+async def read_images(images: list[tuple[bytes, str]]) -> str:
+    """Rasmdagi yozuvni matnga ko'chiradi (qo'lyozma, kirill yoki lotin). Yozuv bo'lmasa — bo'sh satr.
+    Rasmni to'g'ridan-to'g'ri tahlil qilib bo'lmasa, ko'chirilgan matn oddiy xabardek tahlil qilinadi."""
+    try:
+        response = await client.messages.create(
+            model=settings.llm_model,
+            max_tokens=8000,
+            system=READ_PROMPT,
+            output_config={"effort": "medium"},
+            messages=[{"role": "user", "content": [*_image_blocks(images), {"type": "text", "text": "Ko'chir."}]}],
+            timeout=120,
+        )
+    except anthropic.APIError as e:
+        log.exception("Claude API xatosi (rasmni matnga ko'chirish)")
+        raise LlmError(str(e)) from e
+    text = "".join(block.text for block in response.content if block.type == "text").strip().strip("`").strip()
+    if response.stop_reason == "refusal" or not text:
+        log.warning("Claude rasmni ko'chirmadi: stop_reason=%s", response.stop_reason)
+        raise LlmError(f"stop_reason={response.stop_reason}")
+    return "" if text == NO_TEXT else text
 
 
 # --- Shaxsiy moliyaviy maslahat --------------------------------------------

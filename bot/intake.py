@@ -74,19 +74,55 @@ async def analyze(
 
 
 MAX_IMAGES = 5
+# Rasmdan ko'chirilgan matnning xabarda ko'rinadigan qismi
+READ_PREVIEW = 600
 
 
 async def analyze_images(session: AsyncSession, user: User, images: list[tuple[bytes, str]], caption: str = "") -> dict:
-    """Bank skrinshoti, chek yoki daftar rasmidan yangi qoralama. images — (rasm, media turi)."""
+    """Bank skrinshoti, chek yoki daftar rasmidan yangi qoralama. images — (rasm, media turi).
+
+    Avval rasm to'g'ridan-to'g'ri tahlil qilinadi. O'xshamasa (xato yoki yozuv topilmadi) — rasmdagi yozuv
+    matnga ko'chiriladi (qo'lda yozilgan qog'oz, kirill yoki lotin) va oddiy xabardek tahlil qilinadi;
+    qoralamada nima o'qilgani ko'rinadi."""
     caption = caption.strip()[:500]
+    images = images[:MAX_IMAGES]
     known, worker_name, set_size, info = await _context(session, user)
-    try:
-        ext = await llm.extract_images(images[:MAX_IMAGES], today(), known, worker_name, info, caption)
-    except llm.LlmError:
-        raise IntakeError("⚠️ Rasmni o'qib bo'lmadi. Birozdan keyin qayta yuboring yoki matn bilan yozing.")
-    label = "🖼 Rasm" if len(images) == 1 else f"🖼 {min(len(images), MAX_IMAGES)} ta rasm"
+    label = "🖼 Rasm" if len(images) == 1 else f"🖼 {len(images)} ta rasm"
     raw = f"{label}: {caption}" if caption else label
-    return await _build(session, user, ext, raw, set_size, said=f"<i>{escape(raw)}</i>", source="image")
+    try:
+        ext = await llm.extract_images(images, today(), known, worker_name, info, caption)
+    except llm.LlmError:
+        ext = None
+    if ext is not None and _understood(user, ext):
+        return await _build(session, user, ext, raw, set_size, said=f"<i>{escape(raw)}</i>", source="image")
+
+    try:
+        text = await llm.read_images(images)
+    except llm.LlmError:
+        text = ""
+    if not text:
+        if ext is None:
+            raise IntakeError("⚠️ Rasmni o'qib bo'lmadi. Birozdan keyin qayta yuboring yoki matn bilan yozing.")
+        return await _build(session, user, ext, raw, set_size, said=f"<i>{escape(raw)}</i>", source="image")
+
+    read = f"{label}: «{text}»"
+    shown = text if len(text) <= READ_PREVIEW else text[:READ_PREVIEW] + "…"
+    said = f"{label}da: <i>«{escape(shown)}»</i>"
+    message = f"{text}\n\nIzoh: {caption}" if caption else text
+    info = f"{info} Xabar — rasmdagi yozuvning ko'chirmasi (qo'lda yozilgan qog'oz, chek yoki skrinshot).".strip()
+    try:
+        ext = await llm.extract(message, today(), known, worker_name, info)
+    except llm.LlmError:
+        raise IntakeError(f"{said}\n\n⚠️ Yozuvni tahlil qilib bo'lmadi. Birozdan keyin qayta yuboring yoki matn bilan yozing.")
+    return await _build(session, user, ext, read, set_size, said=said, source="image")
+
+
+def _understood(user: User, ext: llm.Extraction) -> bool:
+    """Xabardan saqlasa bo'ladigan yozuv chiqdimi (egasida — har qanday bo'lim, ishchida — ish yoki pul)."""
+    special = user.is_owner and (
+        drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext) or drafts.is_material(ext)
+    )
+    return special or (ext.section in ("work", "pay") and bool(ext.work or ext.pays))
 
 
 async def _build(
@@ -99,10 +135,7 @@ async def _build(
     entry_id: int | None = None,
     source: str | None = None,
 ) -> dict:
-    special = user.is_owner and (
-        drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext) or drafts.is_material(ext)
-    )
-    if not special and (ext.section not in ("work", "pay") or not (ext.work or ext.pays)):
+    if not _understood(user, ext):
         example = (
             "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «A-12 modeldan 50 ta» "
             "yoki «Robiyaga 500 ming berdim»"
