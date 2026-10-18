@@ -1,6 +1,6 @@
 """Ma'lumotlar bazasi jadvallari.
 
-Har bir ega — alohida kabinet: ishchilar, modellar, sozlamalar, ish yozuvlari,
+Har bir ega — alohida kabinet: ishchilar, modellar, sozlamalar, ish yozuvlari, xom ashyo,
 shaxsiy xarajatlar va qarzlar egasining id si (owner_id) bilan ajratiladi.
 Bir ega boshqa eganing hech narsasini ko'rmaydi.
 """
@@ -262,6 +262,30 @@ class DebtEntry(TimestampMixin, Base):
     note: Mapped[str | None] = mapped_column(Text)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --- 4. Xom ashyo: teri, material, kley... ----------------------------------
+
+class MaterialEntry(TimestampMixin, Base):
+    """Sotib olingan xom ashyo: «1 list teri», «10 millionlik teri, nomi Shirin gul», «20 kg kley».
+    Narx aytilmasa ham yoziladi (amount bo'sh)."""
+
+    __tablename__ = "material_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(50))  # Teri, Material, Kley, Padosh...
+    name: Mapped[str | None] = mapped_column(String(100))  # nomi yoki markasi: Shirin gul, Lider
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 3))
+    unit: Mapped[str | None] = mapped_column(String(20))  # list, metr, kg, dona...
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))  # jami summa
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    supplier: Mapped[str | None] = mapped_column(String(100))  # kimdan olingan
+    entry_date: Mapped[date] = mapped_column(Date, index=True)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

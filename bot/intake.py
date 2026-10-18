@@ -87,7 +87,9 @@ async def _build(
     entry_id: int | None = None,
     source: str | None = None,
 ) -> dict:
-    special = user.is_owner and (drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext))
+    special = user.is_owner and (
+        drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext) or drafts.is_material(ext)
+    )
     if not special and (ext.section != "work" or not ext.work):
         example = (
             "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan» yoki «A-12 modeldan 50 ta»"
@@ -269,13 +271,15 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
-    if draft["section"] in ("money", "client", "price"):
+    if draft["section"] in ("money", "client", "price", "material"):
         if not user.is_owner:
             raise IntakeError("Ruxsat yo'q.", drop=True)
         if draft["section"] == "client":
             return await _save_client(session, user, draft)
         if draft["section"] == "price":
             return await _save_prices(session, user, draft)
+        if draft["section"] == "material":
+            return await _save_materials(session, user, draft)
         return await _save_money(session, user, draft)
 
     acc = user.account_id
@@ -346,6 +350,37 @@ async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
         + "\n\nYangi narx shu paytdan keyingi yozuvlarga qo'llanadi. Hamma narxlar — «🧵 Modellar»da."
     )
     return Saved(header)
+
+
+async def _save_materials(session: AsyncSession, user: User, draft: dict) -> Saved:
+    from bot.handlers.money import material_month_line, material_text
+
+    def dec(value: str | None) -> Decimal | None:
+        return Decimal(value) if value else None
+
+    entries = [
+        await repo.create_material_entry(
+            session,
+            owner_id=user.id,
+            kind=m["kind"],
+            name=m["name"],
+            quantity=dec(m["quantity"]),
+            unit=m["unit"],
+            unit_price=dec(m["price"]),
+            amount=dec(m["total"]),
+            currency=m["currency"],
+            supplier=m["supplier"],
+            entry_date=date.fromisoformat(draft["date"]),
+            raw_text=draft["raw_text"],
+            created_by=user.id,
+        )
+        for m in draft["materials"]
+    ]
+    header = "✅ <b>Xom ashyoga qo'shildi</b>\n\n" + await material_month_line(session, user.id)
+    last = len(entries) - 1
+    return Saved(
+        header, [(material_text(e), kbs.money_entry_kb("x", e.id, app=i == last)) for i, e in enumerate(entries)]
+    )
 
 
 async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:

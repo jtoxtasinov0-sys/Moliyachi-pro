@@ -120,6 +120,7 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 
 /* --- Maslahat oynasi ------------------------------------------------------ */
 .seg.three { grid-template-columns: repeat(3, 1fr); box-shadow: none; background: var(--bg); margin: 0; }
+.seg.trio { grid-template-columns: repeat(3, 1fr); }
 .advice-cur { font-size: 13px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 18px 0 8px 4px; }
 .advice-card { background: var(--bg); border-radius: 20px; padding: 14px; margin-bottom: 10px; }
 .advice-card p { margin: 6px 0 0; }

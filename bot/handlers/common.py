@@ -35,6 +35,7 @@ OWNER_HELP = """\
 • <i>Kecha Vali B-5 dan 30 ta, C-7 dan 20 ta</i>
 • <i>Vali A-12 dan 40 ta brsovka qildi</i> — kasbi bilan
 • <i>A-12 modelga brsovka 2000dan, kroy 1500</i> — model narxi kasb bo'yicha
+• <i>10 millionlik teri oldim, nomi Shirin gul</i> — xom ashyo
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat
 • <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
 • <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i> — mijozga mol
@@ -62,6 +63,7 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 👷 Ishchilar — qo'shish, taklif havolasi, kasbi (kroychi, brsovkachi, tikuvchi,
      tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb)
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
+🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
 ⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni

@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=16">
+  <link rel="stylesheet" href="static/style.css?v=17">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -94,6 +94,11 @@
               <div><b id="mcPaid">0</b><small>to'lov olindi</small></div>
             </div>
             <div id="mClientList"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>🧱 Xom ashyo</h3><button class="link-btn" id="mMaterialsAll">Hammasi →</button></div>
+            <div id="mMaterialList"></div>
           </div>
 
           <div class="card">
@@ -169,6 +174,7 @@
           <button data-type="income">💰 Daromad</button>
           <button data-type="client">🛍 Mijoz</button>
           <button data-type="debt">🤝 Qarz</button>
+          <button data-type="material">🧱 Xom ashyo</button>
           <button data-type="work">🧵 Ish</button>
         </div>
         <div class="chips" id="statusChips">
@@ -285,9 +291,10 @@
 
       <!-- Ishchilar -->
       <section class="view" id="view-workers" hidden>
-        <div class="seg two team-seg" hidden>
+        <div class="seg trio team-seg" hidden>
           <button data-team="workers" class="on">Ishchilar</button>
           <button data-team="models">Modellar</button>
+          <button data-team="materials">Xom ashyo</button>
         </div>
         <div class="page-head">
           <h2 class="page-title">Ishchilar</h2>
@@ -303,9 +310,10 @@
 
       <!-- Modellar -->
       <section class="view" id="view-models" hidden>
-        <div class="seg two team-seg" hidden>
+        <div class="seg trio team-seg" hidden>
           <button data-team="workers">Ishchilar</button>
           <button data-team="models" class="on">Modellar</button>
+          <button data-team="materials">Xom ashyo</button>
         </div>
         <div class="page-head">
           <h2 class="page-title" id="modelsTitle">Modellar</h2>
@@ -313,6 +321,43 @@
         </div>
         <p class="muted small" id="modelsHint">Bir dona uchun ish haqi — har bir kasb uchun alohida yoki umumiy narx</p>
         <div id="modelList"></div>
+      </section>
+
+      <!-- Xom ashyo: teri, material, kley... xaridlari -->
+      <section class="view" id="view-materials" hidden>
+        <div class="seg trio team-seg" hidden>
+          <button data-team="workers">Ishchilar</button>
+          <button data-team="models">Modellar</button>
+          <button data-team="materials" class="on">Xom ashyo</button>
+        </div>
+        <div class="seg" id="xPeriodSeg">
+          <button data-period="day">Bugun</button>
+          <button data-period="week">Hafta</button>
+          <button data-period="month" class="on">Oy</button>
+          <button data-period="year">Yil</button>
+        </div>
+        <div class="hero">
+          <div class="hero-circle c1"></div>
+          <div class="hero-circle c2"></div>
+          <div class="hero-label">Xom ashyoga sarflandi</div>
+          <div class="hero-amount" id="xAmount">—</div>
+          <div class="hero-extra" id="xExtra"></div>
+          <div class="hero-row two">
+            <div class="hero-stat"><span id="xCount">0</span><small>ta xarid</small></div>
+            <div class="hero-stat"><span id="xKinds">0</span><small>xil xom ashyo</small></div>
+          </div>
+          <div class="hero-range" id="xRange"></div>
+        </div>
+        <p class="muted small hint">🎤 tugmani bosib turib ayting: «1 list teri oldim», «10 millionlik teri oldim, nomi Shirin gul», «20 kg kley oldim, kilosi 45 ming».</p>
+        <div class="card">
+          <div class="card-head"><h3>Turlari bo'yicha</h3></div>
+          <div id="xKindList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Oxirgi xaridlar</h3></div>
+          <div id="xFeed"></div>
+          <button class="ghost-btn flat" id="xMoreBtn" hidden>Yana yuklash</button>
+        </div>
       </section>
 
       <!-- Yordam (ishchi uchun) -->
@@ -393,6 +438,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=16"></script>
+  <script src="static/app.js?v=17"></script>
 </body>
 </html>

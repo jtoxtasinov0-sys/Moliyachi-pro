@@ -15,6 +15,13 @@ oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». 
 yozilmagan bo'lsa — modelning umumiy narxi. Hisobotda har bir model qaysi bosqichdan (kroy, brsovka, tikuv...)
 qancha o'tgani ko'rinadi.
 
+**🧱 Xom ashyo:** teri, material, podklad, kley, padosh, ip, furnitura xaridlari alohida bo'limda yuritiladi
+(shaxsiy xarajatga qo'shilmaydi). Ovoz yoki matn yuboring: «1 list teri oldim», «10 millionlik teri oldim, nomi
+Shirin gul», «Lider terisidan 5 list, listi 300 ming», «Alisherdan 20 kg kley oldim» — bot turini, nomini (markasi),
+miqdori va birligini, narxini (bir birlik yoki jami) va kimdan olinganini ajratib «To'g'rimi?» deb so'raydi; narx
+aytilmasa ham yoziladi. Botda «🧱 Xom ashyo» — kun/hafta/oy bo'yicha turlari va summasi, ilovada «Jamoa → Xom
+ashyo» va bosh sahifadagi karta.
+
 **Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi

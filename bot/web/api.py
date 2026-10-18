@@ -24,6 +24,7 @@ from bot.db.models import (
     EntryStatus,
     ItemModel,
     Job,
+    MaterialEntry,
     ModelPrice,
     PersonalEntry,
     PersonalKind,
@@ -1082,9 +1083,92 @@ async def delete_client_entry(request: web.Request, session: AsyncSession, user:
     return web.json_response({"ok": True})
 
 
-# --- Barcha harakatlar: xarajat, daromad, qarz, mijoz va ish yozuvlari bitta lentada ---
+# --- Xom ashyo: teri, material, kley... ---------------------------------------
 
-ACTIVITY_KINDS = ("expense", "income", "debt", "client", "work")
+def _material_json(e: MaterialEntry) -> dict:
+    return {
+        "id": e.id,
+        "date": e.entry_date.isoformat(),
+        "kind": e.kind,
+        "name": e.name,
+        "quantity": _num(e.quantity),
+        "unit": e.unit,
+        "unit_price": _num(e.unit_price),
+        "amount": _num(e.amount),
+        "currency": e.currency,
+        "supplier": e.supplier,
+        "raw_text": e.raw_text,
+    }
+
+
+def _material_kinds(rows: list[repo.MaterialStatRow]) -> list[dict]:
+    """Turlar bo'yicha: summa (valyuta bo'yicha), miqdor (birlik bo'yicha), xaridlar soni."""
+    groups: dict[str, dict] = {}
+    for r in rows:
+        g = groups.setdefault(r.kind, {"amounts": defaultdict(Decimal), "qty": defaultdict(Decimal), "count": 0})
+        g["amounts"][r.currency] += r.amount
+        if r.quantity:
+            g["qty"][r.unit or ""] += r.quantity
+        g["count"] += r.count
+    items = [
+        {
+            "name": kind,
+            "amounts": _money({c: v for c, v in g["amounts"].items() if v}),
+            "qty": {unit: float(q) for unit, q in g["qty"].items()},
+            "count": g["count"],
+        }
+        for kind, g in groups.items()
+    ]
+    items.sort(key=lambda x: (max(x["amounts"].values(), default=0), x["count"]), reverse=True)
+    return items
+
+
+@routes.get("/api/materials")
+@endpoint(owner_only=True)
+async def materials(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    period = request.query.get("period", "month")
+    if period not in PERIODS:
+        raise ApiError(400, "Noto'g'ri davr")
+    t = today()
+    b = _period_bounds(period, t)
+    rows = await repo.material_stat_rows(session, user.id, b["start"], b["end"])
+    total: dict[str, Decimal] = defaultdict(Decimal)
+    for r in rows:
+        total[r.currency] += r.amount
+    return web.json_response(
+        {
+            "period": period,
+            "start": b["start"].isoformat(),
+            "end": b["end"].isoformat(),
+            "today": t.isoformat(),
+            "total": _money({c: v for c, v in total.items() if v}),
+            "count": sum(r.count for r in rows),
+            "by_kind": _material_kinds(rows),
+        }
+    )
+
+
+@routes.get("/api/materials/entries")
+@endpoint(owner_only=True)
+async def material_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    limit, offset = _paging(request)
+    rows = await repo.list_material_entries(session, user.id, limit=limit + 1, offset=offset)
+    return web.json_response({"items": [_material_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
+
+
+@routes.delete(r"/api/materials/{id:\d+}")
+@endpoint(owner_only=True)
+async def delete_material(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    entry = await repo.get_material_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    await repo.soft_delete(session, entry)
+    return web.json_response({"ok": True})
+
+
+# --- Barcha harakatlar: xarajat, daromad, qarz, mijoz, xom ashyo va ish yozuvlari bitta lentada ---
+
+ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work")
 ACTIVITY_MAX = 1000
 
 
@@ -1110,6 +1194,9 @@ async def activity(request: web.Request, session: AsyncSession, user: User) -> w
     if kind in (None, "client"):
         for e in await repo.list_client_entries(session, user.id, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "client", **_client_entry_json(e)}))
+    if kind in (None, "material"):
+        for e in await repo.list_material_entries(session, user.id, limit=need):
+            items.append((e.entry_date, e.created_at.timestamp(), {"type": "material", **_material_json(e)}))
     if kind in (None, "work"):
         for e in await repo.list_work_entries(session, user.id, limit=need):
             items.append((e.work_date, e.created_at.timestamp(), {"type": "work", **_entry_json(e)}))

@@ -1,4 +1,5 @@
-"""Egasining hamyoni va mijozlari: xarajat/daromad hisoboti, qarzlar, mijozlar bilan oldi-berdi."""
+"""Egasining hamyoni, mijozlari va xom ashyosi: xarajat/daromad hisoboti, qarzlar, mijozlar bilan oldi-berdi,
+xom ashyo xaridlari."""
 from collections import defaultdict
 from decimal import Decimal
 from html import escape
@@ -15,14 +16,15 @@ from bot.db.models import (
     ClientEntry,
     ClientKind,
     DebtEntry,
+    MaterialEntry,
     PersonalEntry,
     PersonalKind,
     PriceUnit,
     User,
 )
-from bot.drafts import CLIENT_KIND_LABELS, debt_line, qty_text
+from bot.drafts import CLIENT_KIND_LABELS, debt_line, material_line, qty_text
 from bot.middlewares import IsOwner
-from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
+from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, period_range
 
 router = Router(name="money")
 router.message.filter(IsOwner())
@@ -65,6 +67,29 @@ def client_text(e: ClientEntry) -> str:
     if e.note:
         text += f"\n<i>{escape(e.note)}</i>"
     return text
+
+
+def material_text(e: MaterialEntry) -> str:
+    """«🧱 <b>Teri</b> «Shirin gul» — 1 list = 10 000 000 so'm\n🏪 Alisher\n📅 18.10.2026»"""
+    text = "🧱 " + material_line(e.kind, e.name, e.quantity, e.unit, e.unit_price, e.amount, e.currency)
+    if e.supplier:
+        text += f"\n🏪 {escape(e.supplier)}"
+    return text + f"\n📅 {fmt_date(e.entry_date)}"
+
+
+async def material_month_line(session: AsyncSession, owner_id: int) -> str:
+    """«🧱 Shu oy xom ashyoga: 12 500 000 so'm (3 ta xarid)»."""
+    start, end = period_range("month")
+    rows = await repo.material_stat_rows(session, owner_id, start, end)
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    for r in rows:
+        totals[r.currency] += r.amount
+    count = sum(r.count for r in rows)
+    return f"🧱 Shu oy xom ashyoga: {_sum_text(totals)} ({count} ta xarid)"
+
+
+def _sum_text(totals: dict[str, Decimal]) -> str:
+    return f"<b>{fmt_totals(dict(totals))}</b>" if any(totals.values()) else "narxi aytilmagan"
 
 
 def client_balance_text(name: str, balance: dict) -> str:
@@ -176,6 +201,77 @@ async def on_personal_report(
     await call.answer()
 
 
+# --- Xom ashyo --------------------------------------------------------------
+
+def _qty_totals(quantities: dict[str | None, Decimal]) -> str:
+    """{"list": 12, "kg": 20} -> «12 list, 20 kg»."""
+    return ", ".join(f"{fmt_number(q)} {escape(unit or 'ta')}" for unit, q in quantities.items() if q)
+
+
+async def _materials_report(session: AsyncSession, owner_id: int, period: str) -> str:
+    start, end = period_range(period)
+    rows = await repo.material_stat_rows(session, owner_id, start, end)
+    title = (
+        f"🧱 <b>Xom ashyo · {PERIOD_LABELS[period]}</b> "
+        f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
+    )
+    if not rows:
+        return (
+            f"{title}\n\nBu davrda xom ashyo yozilmagan.\n\nYozish uchun ovoz yoki matn yuboring: "
+            "<i>«1 list teri oldim»</i>, <i>«10 millionlik teri oldim, nomi Shirin gul»</i>, "
+            "<i>«20 kg kley oldim, kilosi 45 ming»</i>."
+        )
+    by_kind: dict[str, dict] = {}
+    total: dict[str, Decimal] = defaultdict(Decimal)
+    for r in rows:
+        k = by_kind.setdefault(r.kind, {"amount": defaultdict(Decimal), "qty": defaultdict(Decimal), "count": 0})
+        k["amount"][r.currency] += r.amount
+        k["qty"][r.unit] += r.quantity
+        k["count"] += r.count
+        total[r.currency] += r.amount
+    ranked = sorted(by_kind.items(), key=lambda kv: max(kv[1]["amount"].values(), default=0), reverse=True)
+    lines = []
+    for kind, k in ranked:
+        parts = []
+        if qty := _qty_totals(k["qty"]):
+            parts.append(qty)
+        if any(k["amount"].values()):
+            parts.append(fmt_totals(dict(k["amount"])))
+        lines.append(f"• <b>{escape(kind)}</b> — " + (" · ".join(parts) or f"{k['count']} ta xarid"))
+    count = sum(r.count for r in rows)
+    return f"{title}\n\nJami: {_sum_text(total)} ({count} ta xarid)\n\n" + "\n".join(lines)
+
+
+@router.message(F.text == kbs.BTN_MATERIALS)
+async def materials(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    text = await _materials_report(session, user.id, "month")
+    await message.answer(text, reply_markup=kbs.materials_report_kb())
+
+
+@router.callback_query(kbs.MaterialReportCb.filter())
+async def on_materials_report(
+    call: CallbackQuery, callback_data: kbs.MaterialReportCb, session: AsyncSession, user: User
+) -> None:
+    if callback_data.period == "recent":
+        items = await repo.list_material_entries(session, user.id, limit=10)
+        await call.answer()
+        if not items:
+            await call.message.answer("Hali xom ashyo yozilmagan.")
+            return
+        await call.message.answer(f"🕘 Oxirgi {len(items)} ta xarid:")
+        for i, e in enumerate(reversed(items)):
+            kb = kbs.money_entry_kb("x", e.id, app=i == len(items) - 1)
+            await call.message.answer(material_text(e), reply_markup=kb)
+        return
+    if callback_data.period not in PERIOD_LABELS:
+        await call.answer()
+        return
+    text = await _materials_report(session, user.id, callback_data.period)
+    await call.message.edit_text(text, reply_markup=kbs.materials_report_kb())
+    await call.answer()
+
+
 # --- Qarzlar ----------------------------------------------------------------
 
 async def _debts_view(session: AsyncSession, owner_id: int) -> str:
@@ -268,7 +364,9 @@ async def clients(message: Message, state: FSMContext, session: AsyncSession, us
 
 async def _get(
     session: AsyncSession, owner_id: int, kind: str, entry_id: int
-) -> PersonalEntry | DebtEntry | ClientEntry | None:
+) -> PersonalEntry | DebtEntry | ClientEntry | MaterialEntry | None:
+    if kind == "x":
+        return await repo.get_material_entry(session, owner_id, entry_id)
     if kind == "p":
         return await repo.get_personal_entry(session, owner_id, entry_id)
     if kind == "d":
@@ -278,7 +376,9 @@ async def _get(
     return None
 
 
-def _text(entry: PersonalEntry | DebtEntry | ClientEntry) -> str:
+def _text(entry: PersonalEntry | DebtEntry | ClientEntry | MaterialEntry) -> str:
+    if isinstance(entry, MaterialEntry):
+        return material_text(entry)
     if isinstance(entry, ClientEntry):
         return client_text(entry)
     return personal_text(entry) if isinstance(entry, PersonalEntry) else debt_text(entry)

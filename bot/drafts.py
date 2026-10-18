@@ -18,6 +18,11 @@ Model narxini belgilash — "section": "price":
                    price, currency, cur_said, old}],
 }
 job_q yo'q — umumiy narx. old — hozirgi narx {price, currency}, bo'lmasa None.
+Xom ashyo xaridi — "section": "material":
+{
+  ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier}],
+}
+price — bir birlik (list, kg...) narxi, total — jami; aytilmasa None, narxsiz ham saqlanadi.
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],
@@ -47,7 +52,7 @@ from bot.db import repo
 from bot.db.models import ClientKind, DebtDirection, ItemModel, PersonalKind, PriceUnit, User, WorkEntry
 from bot.services import matcher
 from bot.services.llm import Extraction
-from bot.services.utils import fmt_date, fmt_money, fmt_totals, today
+from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, today
 
 DRAFT_TTL = timedelta(minutes=30)
 
@@ -110,8 +115,31 @@ def is_price(ext: Extraction) -> bool:
     return ext.section == "price" and bool(ext.prices)
 
 
+def is_material(ext: Extraction) -> bool:
+    return ext.section == "material" and bool(ext.materials)
+
+
 def _name(value: str | None, size: int) -> str | None:
     return (value or "").strip()[:size] or None
+
+
+def _quantity(value: float | None) -> str | None:
+    """«1.5» -> "1.5", «20» -> "20"; 0 yoki aql bovar qilmaydigan son — None."""
+    if not value or not 0 < value < 1e9:
+        return None
+    q = Decimal(str(value)).quantize(Decimal("0.001")).normalize()
+    return str(int(q)) if q == q.to_integral_value() else str(q)
+
+
+def material_total(item: dict) -> None:
+    """Jami yoki bir birlik narxini ikkinchisidan hisoblaydi (miqdor bilan)."""
+    if not item["quantity"]:
+        return
+    qty = Decimal(item["quantity"])
+    if item["price"] and not item["total"]:
+        item["total"] = _amount(float(Decimal(item["price"]) * qty))
+    elif item["total"] and not item["price"]:
+        item["price"] = _amount(float(Decimal(item["total"]) / qty))
 
 
 def _count(value: int | None) -> int | None:
@@ -173,6 +201,26 @@ def from_extraction(
         "raw_text": raw_text,
         "created": datetime.now(timezone.utc).isoformat(),
     }
+    if is_material(ext):
+        said = {item.currency for item in ext.materials if item.currency}
+        if len(said) == 1:
+            default_currency = said.pop()
+        draft.update(section="material", entry_id=None)
+        draft["materials"] = []
+        for item in ext.materials:
+            m = {
+                "kind": _name(item.kind, 50),
+                "name": _name(item.name, 100),
+                "quantity": _quantity(item.quantity),
+                "unit": _name(item.unit, 20),
+                "price": _amount(item.price_per_unit),
+                "total": _amount(item.total),
+                "currency": item.currency or default_currency,
+                "supplier": _name(item.supplier, 100),
+            }
+            material_total(m)
+            draft["materials"].append(m)
+        return draft
     if is_price(ext):
         draft.update(section="price", entry_id=None)
         draft["prices"] = [
@@ -182,7 +230,7 @@ def from_extraction(
                 "price": _amount(item.price),
                 # Valyuta aytilmasa — modelning hozirgi narxi valyutasi (resolve da), bo'lmasa asosiy valyuta
                 "currency": item.currency or default_currency,
-                "cur_said": item.currency is not None,
+                "cur_said": bool(item.currency),
                 "old": None,
             }
             for item in ext.prices
@@ -274,6 +322,23 @@ def _num(v: str | None) -> float | None:
 
 def for_llm(draft: dict) -> dict:
     """LLM ga tuzatish uchun yuboriladigan qisqa ko'rinish."""
+    if draft["section"] == "material":
+        return {
+            "date": draft["date"],
+            "materials": [
+                {
+                    "kind": m["kind"] or "",
+                    "name": m["name"] or "",
+                    "quantity": _num(m["quantity"]) or 0,
+                    "unit": m["unit"] or "",
+                    "price_per_unit": _num(m["price"]) or 0,
+                    "total": _num(m["total"]) or 0,
+                    "currency": m["currency"],
+                    "supplier": m["supplier"] or "",
+                }
+                for m in draft["materials"]
+            ],
+        }
     if draft["section"] == "price":
         return {
             "prices": [
@@ -341,6 +406,8 @@ async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]
         known["categories"] = await repo.personal_categories(session, acc)
         known["people"] = [name for _, name in await repo.debt_people(session, acc)][:60]
         known["clients"] = [c.name for c in await repo.list_clients(session, acc)][:100]
+        known["material_kinds"] = await repo.material_kinds(session, acc)
+        known["material_names"] = await repo.material_names(session, acc)
     return known
 
 
@@ -363,6 +430,17 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     acc = user.account_id
     if draft["section"] == "price":
         await _resolve_prices(session, draft, acc)
+        return
+    if draft["section"] == "material":
+        # Avval yozilgan tur va nom bo'lsa — o'sha yozilishi («teri» -> «Teri», «shirin gul» -> «Shirin gul»)
+        for key, values in (("kind", await repo.material_kinds(session, acc)),
+                            ("name", await repo.material_names(session, acc))):
+            items = list(enumerate(values))
+            for m in draft["materials"]:
+                if m[key] and items:
+                    res = matcher.match(m[key], items)
+                    if res.exact_id is not None:
+                        m[key] = values[res.exact_id]
         return
     if draft["section"] == "client":
         await _resolve_clients(session, draft, acc)
@@ -500,6 +578,11 @@ async def mark_duplicates(session: AsyncSession, draft: dict, owner_id: int) -> 
 
 
 def next_missing(draft: dict) -> tuple[str, int] | None:
+    if draft["section"] == "material":
+        for i, m in enumerate(draft["materials"]):
+            if not m["kind"]:
+                return "m_kind", i
+        return None
     if draft["section"] == "price":
         for i, p in enumerate(draft["prices"]):
             if p["model_id"] is None:
@@ -703,6 +786,63 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     return text + f"\n\n❓ <b>{escape(debt['person'])}</b> — qancha? Summani yozing.", kbs.cancel_only_kb()
 
 
+def material_line(
+    kind: str | None,
+    name: str | None,
+    quantity: str | Decimal | None,
+    unit: str | None,
+    price: str | Decimal | None,
+    total: str | Decimal | None,
+    currency: str,
+) -> str:
+    """«<b>Teri</b> «Shirin gul» — 1 list × 10 000 000 so'm = <b>10 000 000 so'm</b>»"""
+    text = f"<b>{escape(kind or '?')}</b>"
+    if name:
+        text += f" «{escape(name)}»"
+    qty = f"{fmt_number(Decimal(quantity))} {escape(unit or '')}".strip() if quantity else None
+    if qty:
+        text += f" — {qty}"
+    if total:
+        if qty and price:
+            text += f" × {fmt_money(Decimal(price), currency)}"
+        text += " = " if qty else " — "
+        text += f"<b>{fmt_money(Decimal(total), currency)}</b>"
+    elif price:
+        text += f" × {fmt_money(Decimal(price), currency)}"
+    else:
+        text += " · <i>narxi aytilmagan</i>"
+    return text
+
+
+def _render_material(draft: dict) -> str:
+    parts = ["🧱 <b>Xom ashyo</b>"]
+    if raw := _short_raw(draft):
+        parts.append(raw)
+    parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
+    rows = []
+    totals: dict[str, Decimal] = {}
+    for m in draft["materials"]:
+        row = "• " + material_line(
+            m["kind"], m["name"], m["quantity"], m["unit"], m["price"], m["total"], m["currency"]
+        )
+        if m["supplier"]:
+            row += f"\n   🏪 {escape(m['supplier'])}"
+        rows.append(row)
+        if m["total"]:
+            totals[m["currency"]] = totals.get(m["currency"], Decimal(0)) + Decimal(m["total"])
+    parts.append("\n".join(rows))
+    if len(draft["materials"]) > 1 and totals:
+        parts.append(f"Jami: <b>{fmt_totals(totals)}</b>")
+    return "\n\n".join(parts)
+
+
+def _present_material(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
+    text = _render_material(draft)
+    if next_missing(draft) is None:
+        return text + "\n\n<b>To'g'rimi?</b>", kbs.draft_kb(with_date_buttons=True)
+    return text + "\n\n❓ Qanday xom ashyo? Masalan: <i>teri</i>, <i>kley</i>, <i>padosh</i>.", kbs.cancel_only_kb()
+
+
 async def _job_options(session: AsyncSession, acc: int, query: str) -> list[tuple[int, str]]:
     """Kasblar kam — hammasi tugma bo'lib chiqadi, o'xshashlari birinchi."""
     jobs = await repo.list_jobs(session, acc)
@@ -846,6 +986,8 @@ async def _present_client(session: AsyncSession, draft: dict, user: User) -> tup
 
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi."""
+    if draft["section"] == "material":
+        return _present_material(draft)
     if draft["section"] == "price":
         return await _present_price(session, draft, user)
     if draft["section"] == "client":

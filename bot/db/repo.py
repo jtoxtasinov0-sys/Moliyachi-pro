@@ -22,6 +22,7 @@ from bot.db.models import (
     EntryStatus,
     ItemModel,
     Job,
+    MaterialEntry,
     ModelPrice,
     PersonalEntry,
     Role,
@@ -432,7 +433,7 @@ async def create_work_entry(
 
 
 async def soft_delete(
-    session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry | ClientEntry
+    session: AsyncSession, entry: WorkEntry | PersonalEntry | DebtEntry | ClientEntry | MaterialEntry
 ) -> None:
     entry.deleted_at = _now()
     await session.flush()
@@ -1031,3 +1032,118 @@ async def client_balance(session: AsyncSession, owner_id: int, client_id: int) -
         if st.client.id == client_id:
             return {c: v for c, v in st.balance.items() if v}
     return {}
+
+
+# --- Xom ashyo --------------------------------------------------------------
+
+async def create_material_entry(
+    session: AsyncSession,
+    *,
+    owner_id: int,
+    kind: str,
+    name: str | None,
+    quantity: Decimal | None,
+    unit: str | None,
+    unit_price: Decimal | None,
+    amount: Decimal | None,
+    currency: str,
+    supplier: str | None,
+    entry_date: date,
+    raw_text: str | None,
+    created_by: int,
+) -> MaterialEntry:
+    entry = MaterialEntry(
+        owner_id=owner_id,
+        kind=kind[:50],
+        name=name,
+        quantity=quantity,
+        unit=unit,
+        unit_price=unit_price,
+        amount=amount,
+        currency=currency,
+        supplier=supplier,
+        entry_date=entry_date,
+        raw_text=raw_text,
+        created_by=created_by,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def get_material_entry(session: AsyncSession, owner_id: int, entry_id: int) -> MaterialEntry | None:
+    entry = await session.get(MaterialEntry, entry_id)
+    if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:
+        return None
+    return entry
+
+
+async def list_material_entries(
+    session: AsyncSession, owner_id: int, *, limit: int = 30, offset: int = 0
+) -> list[MaterialEntry]:
+    q = (
+        select(MaterialEntry)
+        .where(MaterialEntry.owner_id == owner_id, MaterialEntry.deleted_at.is_(None))
+        .order_by(MaterialEntry.entry_date.desc(), MaterialEntry.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(await session.scalars(q))
+
+
+@dataclass
+class MaterialStatRow:
+    entry_date: date
+    kind: str
+    unit: str | None
+    currency: str
+    quantity: Decimal
+    amount: Decimal
+    count: int
+
+
+async def material_stat_rows(session: AsyncSession, owner_id: int, start: date, end: date) -> list[MaterialStatRow]:
+    """Kun, tur, o'lchov birligi va valyuta bo'yicha jamlangan xaridlar."""
+    q = (
+        select(
+            MaterialEntry.entry_date,
+            MaterialEntry.kind,
+            MaterialEntry.unit,
+            MaterialEntry.currency,
+            func.sum(MaterialEntry.quantity),
+            func.sum(MaterialEntry.amount),
+            func.count(MaterialEntry.id),
+        )
+        .where(
+            MaterialEntry.owner_id == owner_id,
+            MaterialEntry.deleted_at.is_(None),
+            MaterialEntry.entry_date >= start,
+            MaterialEntry.entry_date <= end,
+        )
+        .group_by(MaterialEntry.entry_date, MaterialEntry.kind, MaterialEntry.unit, MaterialEntry.currency)
+    )
+    rows = await session.execute(q)
+    return [
+        MaterialStatRow(r[0], r[1], r[2], r[3], Decimal(str(r[4] or 0)), Decimal(str(r[5] or 0)), int(r[6]))
+        for r in rows
+    ]
+
+
+async def _material_values(session: AsyncSession, owner_id: int, column) -> list[str]:
+    """Avval yozilgan turlar yoki nomlar — ko'p ishlatilgani birinchi (LLM bir xil yozishi uchun)."""
+    q = (
+        select(column)
+        .where(MaterialEntry.owner_id == owner_id, MaterialEntry.deleted_at.is_(None), column.is_not(None))
+        .group_by(column)
+        .order_by(func.count(MaterialEntry.id).desc())
+        .limit(40)
+    )
+    return list(await session.scalars(q))
+
+
+async def material_kinds(session: AsyncSession, owner_id: int) -> list[str]:
+    return await _material_values(session, owner_id, MaterialEntry.kind)
+
+
+async def material_names(session: AsyncSession, owner_id: int) -> list[str]:
+    return await _material_values(session, owner_id, MaterialEntry.name)

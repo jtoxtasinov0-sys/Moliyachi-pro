@@ -17,12 +17,13 @@ BTN_ADVICE = "💡 Maslahat"
 BTN_PENDING = "⏳ Tasdiq kutayotganlar"
 BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
+BTN_MATERIALS = "🧱 Xom ashyo"
 BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
     BTN_REPORT, BTN_RECENT, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
-    BTN_MODELS, BTN_SETTINGS, BTN_HELP,
+    BTN_MODELS, BTN_MATERIALS, BTN_SETTINGS, BTN_HELP,
 }
 
 
@@ -38,6 +39,7 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
         kb.button(text=BTN_PENDING)
         kb.button(text=BTN_WORKERS)
         kb.button(text=BTN_MODELS)
+        kb.button(text=BTN_MATERIALS)
         kb.button(text=BTN_SETTINGS)
     kb.button(text=BTN_HELP)
     kb.adjust(2)
@@ -73,11 +75,15 @@ class ClientKindCb(CallbackData, prefix="ck"):
 
 class MoneyCb(CallbackData, prefix="m"):
     action: str  # del | del_yes | del_no
-    kind: str  # p — xarajat/daromad, d — qarz, c — mijoz yozuvi
+    kind: str  # p — xarajat/daromad, d — qarz, c — mijoz yozuvi, x — xom ashyo
     entry_id: int
 
 
 class PersonalReportCb(CallbackData, prefix="pr"):
+    period: str  # day | week | month | recent
+
+
+class MaterialReportCb(CallbackData, prefix="mr"):
     period: str  # day | week | month | recent
 
 
@@ -119,7 +125,8 @@ class ModelCb(CallbackData, prefix="md"):
 # --- Tugmalar ---------------------------------------------------------------
 
 def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
-    """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries, clients)."""
+    """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries, clients,
+    materials)."""
     url = settings.webapp_url
     if url:
         url += f"?view={view}" if view else ""
@@ -211,7 +218,7 @@ def money_entry_kb(kind: str, entry_id: int, app: bool = False) -> InlineKeyboar
     kb = InlineKeyboardBuilder()
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
     if app:
-        add_app_button(kb, {"d": "debts", "c": "clients"}.get(kind, "wallet"))
+        add_app_button(kb, {"d": "debts", "c": "clients", "x": "materials"}.get(kind, "wallet"))
     return kb.as_markup()
 
 
@@ -245,6 +252,17 @@ def personal_report_kb() -> InlineKeyboardMarkup:
     kb.button(text="🕘 Oxirgi yozuvlar", callback_data=PersonalReportCb(period="recent"))
     kb.adjust(3, 1)
     add_app_button(kb, "wallet")
+    return kb.as_markup()
+
+
+def materials_report_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Bugun", callback_data=MaterialReportCb(period="day"))
+    kb.button(text="Shu hafta", callback_data=MaterialReportCb(period="week"))
+    kb.button(text="Shu oy", callback_data=MaterialReportCb(period="month"))
+    kb.button(text="🕘 Oxirgi xaridlar", callback_data=MaterialReportCb(period="recent"))
+    kb.adjust(3, 1)
+    add_app_button(kb, "materials")
     return kb.as_markup()
 
 

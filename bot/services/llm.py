@@ -23,25 +23,43 @@ class LlmError(Exception):
 # --- Javob sxemasi ----------------------------------------------------------
 
 Currency = Literal["UZS", "USD", "KRW"]
+# Yangi maydonlar bo'sh satr yoki 0 bilan «aytilmagan»: null (anyOf) sxemani og'irlashtiradi,
+# structured outputs esa union turli maydonlar sonini cheklaydi
+CurrencyOrEmpty = Literal["UZS", "USD", "KRW", ""]
 
 
 class WorkItem(BaseModel):
     worker_name: str | None = Field(description="Ishchi ismi, aytilmagan bo'lsa null")
     model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
-    job: str | None = Field(
+    job: str = Field(
         description="Qanday ish qilingani — kasb nomi \"Kasblar\" ro'yxatidan (kroy — Kroychi, brsovka — "
-        "Brsovkachi, tikish — Tikuvchi...). Faqat ish turi aytilsa, aks holda null"
+        "Brsovkachi, tikish — Tikuvchi...). Faqat ish turi aytilsa, aks holda bo'sh satr"
     )
     quantity: int | None = Field(description="Dona soni, aytilmagan bo'lsa null")
 
 
 class PriceItem(BaseModel):
-    model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
-    job: str | None = Field(
-        description="Qaysi kasb uchun narx — \"Kasblar\" ro'yxatidan. Kasb aytilmasa (umumiy narx) null"
+    model_name: str = Field(description="Model nomi/kodi, aytilmagan bo'lsa bo'sh satr")
+    job: str = Field(
+        description="Qaysi kasb uchun narx — \"Kasblar\" ro'yxatidan. Kasb aytilmasa (umumiy narx) bo'sh satr"
     )
-    price: float | None = Field(description="Bir dona uchun ish haqi")
-    currency: Currency | None
+    price: float = Field(description="Bir dona uchun ish haqi, aytilmagan bo'lsa 0")
+    currency: CurrencyOrEmpty = Field(description="Aytilmasa bo'sh satr")
+
+
+class MaterialItem(BaseModel):
+    kind: str = Field(description="Xom ashyo turi, bosh harf bilan: Teri, Material, Kley, Padosh, Ip...")
+    name: str = Field(description="Nomi yoki markasi (\"nomi Shirin gul\", \"Lider\"), aytilmasa bo'sh satr")
+    quantity: float = Field(description="Miqdori (1 list — 1, 20 kg — 20), aytilmasa 0")
+    unit: str = Field(
+        description="O'lchov birligi: list, metr, kg, litr, dona, juft, rulon, pachka; aytilmasa bo'sh satr"
+    )
+    price_per_unit: float = Field(
+        description="Bir birlik narxi (\"listi 300 ming\", \"300 mingdan\"), aytilmasa 0"
+    )
+    total: float = Field(description="Jami summa (\"10 millionlik\", \"jami 10 million\"), aytilmasa 0")
+    currency: CurrencyOrEmpty = Field(description="Aytilmasa bo'sh satr")
+    supplier: str = Field(description="Kimdan yoki qayerdan olingani, aytilmasa bo'sh satr")
 
 
 class ClientItem(BaseModel):
@@ -97,10 +115,11 @@ class DebtItem(BaseModel):
 
 
 class Extraction(BaseModel):
-    section: Literal["work", "price", "client", "personal", "debt", "unknown"]
+    section: Literal["work", "price", "material", "client", "personal", "debt", "unknown"]
     date: str | None = Field(description="YYYY-MM-DD. Sana aytilmagan bo'lsa null")
     work: list[WorkItem]
     prices: list[PriceItem]
+    materials: list[MaterialItem]
     client: list[ClientItem]
     personal: list[PersonalItem]
     debt: list[DebtItem]
@@ -129,6 +148,10 @@ Bo'limlar:
 - price — egasi model uchun bir dona ish haqi narxini belgilaydi (kasb bo'yicha yoki umumiy): \
 "A-12 modelga brsovka 2000dan", "A-12: kroy 1500, tikuv 5000, tortish 3000", "B-5 narxi 4000 bo'lsin". \
 Ishchi ismi va dona soni aytilmaydi.
+- material — korxona uchun xom ashyo sotib olindi: teri, material (mato), podklad, kley (yelim), padosh \
+(tag), ip, furnitura (zamok, tugma, lenta), upakovka (karobka, paket): "1 list teri oldim", \
+"10 millionlik teri oldim, nomi Shirin gul", "Lider terisidan 5 list, listi 300 ming", \
+"Alisherdan 20 kg kley oldim". Bu shaxsiy xarajat (personal) emas.
 - client — korxona mijozlar bilan optom savdo qiladi: mijozga mol (komplekt yoki dona) berish/sotish, \
 mijozning to'lovi, mijoz molni qaytarishi: "Tohirga 10 komplekt maksima berdim, 140 mingdan", \
 "Tohir 2 million to'ladi", "Tohir 3 komplekt qaytardi".
@@ -150,6 +173,11 @@ aytilmasa — null (o'zingdan qo'shma).
 - price: har bir model va kasb juftligi — alohida element ("A-12 ga kroy 1500, brsovka 2000" — ikkita). \
 "2000dan", "2 mingdan", "2 ming so'm" — price. Kasb aytilmasa job=null (umumiy narx). \
 work va price farqi: ishchi ismi yoki dona soni bo'lsa — work, faqat model, kasb va narx bo'lsa — price.
+- material: har bir xom ashyo — alohida element. kind — "Xom ashyo turlari" ro'yxatidan mosi, bo'lmasa \
+bosh harf bilan (Teri, Material, Podklad, Kley, Padosh, Ip, Furnitura, Upakovka). name — nomi yoki markasi \
+("nomi Shirin gul", "Lider terisi" — "Lider"), "Xom ashyo nomlari" ro'yxatidagi yozilishiga keltir. \
+"listi 300 ming", "kilosi 50 ming", "300 mingdan" (miqdor bilan) — price_per_unit; "10 millionlik", \
+"10 millionga", "jami", "hammasi" — total. Narxni o'zing hisoblama, faqat aytilganini yoz.
 - Mijoz bilan savdo (client):
   * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
 ro'yxatida bo'lmasa ham (yangi mijoz).
@@ -182,6 +210,8 @@ _LABELS = {
     "workers": "Ishchilar",
     "models": "Modellar",
     "jobs": "Kasblar",
+    "material_kinds": "Xom ashyo turlari",
+    "material_names": "Xom ashyo nomlari",
     "clients": "Mijozlar",
     "categories": "Kategoriyalar",
     "people": "Qarz bo'yicha odamlar",
@@ -308,7 +338,7 @@ va bonus ballar, bekor qilingan, rad etilgan yoki o'tmagan to'lovlar ("Bekor qil
 - Odamga o'tkazma — qarz emas, Pul o'tkazma xarajati. Foydalanuvchi izohida qarz deyilgan bo'lsa — debt.
 
 Qo'lda yozilgan daftar yoki boshqa matnli rasm — undagi yozuvlarni oddiy xabar kabi yuqoridagi qoidalar \
-bilan ajrat.
+bilan ajrat. Korxona uchun xom ashyo (teri, kley, padosh...) xaridi cheki yoki daftari — section=material.
 Rasmda moliyaviy yozuv bo'lmasa — section=unknown, question'da rasmda nima ko'ringanini qisqa ayt.
 Foydalanuvchi izohi berilsa — undagi ko'rsatmaga amal qil (masalan, sana yoki qaysi yozuvlar kerakligi)."""
 

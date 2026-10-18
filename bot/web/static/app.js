@@ -17,6 +17,8 @@ const state = {
   advice: null,
   // home — bosh sahifadagi qisqa ko'rinish, data — «Mijozlar» bo'limi
   clients: { period: "month", data: null, home: null, byId: {}, feed: { offset: 0, items: [] } },
+  // Xom ashyo: home — bosh sahifadagi qisqa ko'rinish
+  materials: { period: "month", data: null, home: null, feed: { offset: 0, items: [] } },
 };
 const charts = {};
 
@@ -171,8 +173,8 @@ function fail(err) {
 
 function show(view) {
   state.view = view;
-  // Egada «Modellar» — «Jamoa» bo'limining ichida
-  const navView = view === "models" && state.me && state.me.is_owner ? "workers" : view;
+  // Egada «Modellar» va «Xom ashyo» — «Jamoa» bo'limining ichida
+  const navView = (view === "models" || view === "materials") && state.me && state.me.is_owner ? "workers" : view;
   document.querySelectorAll(".view").forEach((el) => (el.hidden = el.id !== `view-${view}`));
   document.querySelectorAll("#nav > button").forEach((b) => b.classList.toggle("on", b.dataset.view === navView));
   window.scrollTo({ top: 0 });
@@ -183,6 +185,7 @@ function show(view) {
   if (view === "clients") loadClients();
   if (view === "workers") loadWorkers();
   if (view === "models") loadModels();
+  if (view === "materials") loadMaterials();
 }
 
 // --- Grafiklar ---------------------------------------------------------------
@@ -290,19 +293,22 @@ async function loadHomeMoney() {
     $("mFeed").innerHTML = SKELETONS;
   }
   try {
-    const [personal, debts, feed, clients] = await Promise.all([
+    const [personal, debts, feed, clients, materials] = await Promise.all([
       api(`/api/personal?period=${state.period}`),
       api("/api/debts"),
       api("/api/activity?limit=8"),
       api(`/api/clients?period=${state.period}`),
+      api(`/api/materials?period=${state.period}`),
     ]);
     h.personal = personal;
     h.feed = feed.items;
     state.wallet.debts = debts;
     state.clients.home = clients;
     rememberClients(clients);
+    state.materials.home = materials;
     renderHomeMoney();
     renderHomeClients();
+    renderHomeMaterials();
   } catch (e) { fail(e); }
 }
 
@@ -375,6 +381,15 @@ function feedRow(e, opts = {}) {
     amt = money(e.amount, e.currency);
     sub.push("Qarz");
     if (e.note) sub.push(e.note);
+  } else if (e.type === "material") {
+    icon = materialIcon(e.kind);
+    iconCls = "out";
+    title = e.name ? `${e.kind} «${e.name}»` : e.kind;
+    amt = e.amount != null ? "−" + money(e.amount, e.currency) : "";
+    sub.push("Xom ashyo", materialQty(e));
+    if (e.unit_price != null && e.quantity) sub.push(`${money(e.unit_price, e.currency)} / ${e.unit || "dona"}`);
+    if (e.amount == null) sub.push("narxi aytilmagan");
+    if (e.supplier) sub.push(e.supplier);
   } else if (e.type === "client") {
     icon = CLIENT_ICON[e.kind] || "❔";
     iconCls = e.kind === "payment" ? "in" : e.kind === "return" ? "out" : "";
@@ -592,7 +607,10 @@ async function entryAction(act, id) {
 
 const isWorkItem = (e) => !e.type || e.type === "work";
 
-const DELETE_URL = { expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/", client: "/api/clients/entries/" };
+const DELETE_URL = {
+  expense: "/api/personal/", income: "/api/personal/", debt: "/api/debts/", client: "/api/clients/entries/",
+  material: "/api/materials/",
+};
 
 async function deleteFeedItem(type, id) {
   if (!(await confirmBox("Yozuv o'chirilsinmi?"))) return;
@@ -986,6 +1004,84 @@ function clientEditSheet(c) {
   };
 }
 
+// --- Xom ashyo: teri, material, kley... ----------------------------------------
+
+const MATERIAL_ICONS = [["teri", "🟫"], ["material", "🧶"], ["podklad", "🧶"], ["kley", "🧴"], ["yelim", "🧴"],
+  ["padosh", "👟"], ["ip", "🧵"], ["furnitura", "🔩"], ["zamok", "🔩"], ["upakovka", "📦"], ["karobka", "📦"]];
+const materialIcon = (kind) => (MATERIAL_ICONS.find(([k]) => (kind || "").toLowerCase().startsWith(k)) || [, "🧱"])[1];
+const materialQty = (e) => (e.quantity ? `${fmtNum(e.quantity)} ${e.unit || ""}`.trim() : "");
+// {"list": 12, "kg": 20} -> «12 list, 20 kg»
+const qtyList = (qty) => Object.entries(qty || {}).map(([u, q]) => `${fmtNum(q)} ${u || "ta"}`).join(", ");
+
+function materialKindRow(k) {
+  return `
+    <div class="mini-entry">
+      <div class="mini-icon">${materialIcon(k.name)}</div>
+      <div class="info"><b>${esc(k.name)}</b><small>${esc([qtyList(k.qty), `${k.count} ta xarid`].filter(Boolean).join(" · "))}</small></div>
+      <div class="amt">${esc(moneyList(k.amounts) || "—")}</div>
+    </div>`;
+}
+
+function renderHomeMaterials() {
+  const d = state.materials.home;
+  if (!d) return;
+  $("mMaterialList").innerHTML = d.count
+    ? `<p class="muted small" style="margin:0 0 10px">Jami: <b>${esc(moneyList(d.total) || "narxi aytilmagan")}</b> · ${d.count} ta xarid</p>`
+      + d.by_kind.slice(0, 4).map(materialKindRow).join("")
+    : `<p class="muted">Bu davrda xom ashyo yozilmagan. Botga ayting: «1 list teri oldim», «10 millionlik teri oldim, nomi Shirin gul».</p>`;
+}
+
+async function loadMaterials() {
+  const m = state.materials;
+  if (!m.data) {
+    $("xKindList").innerHTML = SKELETONS;
+    $("xFeed").innerHTML = SKELETONS;
+  }
+  loadMaterialFeed(true);
+  try {
+    m.data = await api(`/api/materials?period=${m.period}`);
+    renderMaterials();
+  } catch (e) { fail(e); }
+}
+
+function renderMaterials() {
+  const d = state.materials.data;
+  const cur = mainCurrency(d.total);
+  $("xAmount").innerHTML = `${fmtNum(d.total[cur] || 0)}<small>${esc(CUR[cur] || cur)}</small>`;
+  $("xExtra").textContent = Object.entries(d.total).filter(([c, v]) => c !== cur && v).map(([c, v]) => "+ " + money(v, c)).join("  ");
+  $("xCount").textContent = d.count;
+  $("xKinds").textContent = d.by_kind.length;
+  $("xRange").textContent = rangeLabel(d.start, d.end);
+  $("xKindList").innerHTML = d.by_kind.length
+    ? d.by_kind.map(materialKindRow).join("")
+    : `<p class="muted">Bu davrda xom ashyo yozilmagan</p>`;
+}
+
+async function loadMaterialFeed(reset) {
+  const f = state.materials.feed;
+  if (reset) {
+    f.offset = 0;
+    f.items = [];
+  }
+  try {
+    const data = await api(`/api/materials/entries?limit=20&offset=${f.offset}`);
+    f.items = f.items.concat(data.items.map((e) => ({ type: "material", ...e })));
+    f.offset += data.items.length;
+    $("xMoreBtn").hidden = !data.has_more;
+    $("xFeed").innerHTML = f.items.map((e) => feedRow(e, { date: true, del: true })).join("")
+      || `<p class="muted">Hali xom ashyo yozilmagan.</p>`;
+  } catch (e) { fail(e); }
+}
+
+async function deleteMaterial(id) {
+  if (!(await confirmBox("Xom ashyo yozuvi o'chirilsinmi?"))) return;
+  try {
+    await api(`/api/materials/${id}`, { method: "DELETE" });
+    toast("O'chirildi");
+    refreshView();
+  } catch (e) { fail(e); }
+}
+
 // --- Ishchilar va kasblar ---------------------------------------------------
 
 async function loadWorkers() {
@@ -1317,7 +1413,7 @@ function composeSheet(voice, images) {
       <button class="send-btn" id="cSend" aria-label="Yuborish">➤</button>
     </div>
     <p class="muted small compose-hint">${owner
-      ? "Xarajat, daromad, qarz yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «Valiga 50 dollar berdim».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
+      ? "Xarajat, daromad, qarz, xom ashyo yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «10 millionlik teri oldim, nomi Shirin gul».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
       : "Model va sonini ayting: «kecha B-5 dan 30 ta». Boshqa ish qilgan bo'lsangiz — ish turini ham: «A-12 dan 40 ta brsovka».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
@@ -1714,6 +1810,7 @@ function refreshView() {
   else if (state.view === "entries") loadEntries(true);
   else if (state.view === "wallet") loadWallet();
   else if (state.view === "clients") loadClients();
+  else if (state.view === "materials") loadMaterials();
 }
 
 // --- Sozlamalar --------------------------------------------------------------
@@ -2081,6 +2178,20 @@ function bind() {
   $("mClientList").onclick = openClient;
   $("clientList").onclick = openClient;
   $("mClientsAll").onclick = () => show("clients");
+  $("mMaterialsAll").onclick = () => show("materials");
+  $("xPeriodSeg").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b || b.dataset.period === state.materials.period) return;
+    state.materials.period = b.dataset.period;
+    document.querySelectorAll("#xPeriodSeg button").forEach((x) => x.classList.toggle("on", x === b));
+    haptic();
+    loadMaterials();
+  };
+  $("xMoreBtn").onclick = () => loadMaterialFeed(false);
+  $("xFeed").onclick = (ev) => {
+    const btn = ev.target.closest("[data-del-feed]");
+    if (btn) deleteMaterial(Number(btn.dataset.delFeed.split(":")[1]));
+  };
   $("addClientBtn").onclick = () => clientEditSheet(null);
   $("cMoreBtn").onclick = () => loadClientFeed(false);
   $("cFeed").onclick = (ev) => {
@@ -2285,6 +2396,7 @@ function startView() {
   if (view === "entries") return "entries";
   if (!state.me.is_owner) return "home";
   if (view === "clients") return "clients";
+  if (view === "materials") return "materials";
   if (view === "debts" || view === "wallet") {
     state.wallet.tab = view === "debts" ? "debts" : "money";
     return "wallet";
