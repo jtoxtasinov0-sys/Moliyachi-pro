@@ -303,6 +303,7 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "bot_username": bot_me.username,
             "currencies": await repo.enabled_currencies(session, user.account_id),
             "require_approval": await repo.require_approval(session, user.account_id),
+            "require_pay_approval": await repo.require_pay_approval(session, user.account_id),
             "set_size": await repo.set_size(session, user.account_id),
             "auto_save_images": await repo.auto_save_images(session, user.account_id),
             "savings_pct": await repo.savings_pct(session, user.account_id),
@@ -354,6 +355,10 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
     data = await _json(request)
     if "require_approval" in data:
         await repo.set_setting(session, user.id, "require_approval", "1" if data["require_approval"] else "0")
+    if "require_pay_approval" in data:
+        await repo.set_setting(
+            session, user.id, "require_pay_approval", "1" if data["require_pay_approval"] else "0"
+        )
     if "auto_save_images" in data:
         await repo.set_setting(session, user.id, "auto_save_images", "1" if data["auto_save_images"] else "0")
     if "currencies" in data:
@@ -386,6 +391,7 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
         {
             "currencies": await repo.enabled_currencies(session, user.id),
             "require_approval": await repo.require_approval(session, user.id),
+            "require_pay_approval": await repo.require_pay_approval(session, user.id),
             "set_size": await repo.set_size(session, user.id),
             "auto_save_images": await repo.auto_save_images(session, user.id),
             "savings_pct": await repo.savings_pct(session, user.id),
@@ -1262,7 +1268,8 @@ async def ledger(request: web.Request, session: AsyncSession, user: User) -> web
 @routes.post("/api/payments")
 @endpoint()
 async def add_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Tez yozish: {worker_id (egasida), kind: pay|return|balance, amount, worker_owes, whole}."""
+    """Tez yozish: {worker_id (egasida), kind: pay|return|balance, amount, worker_owes, whole}.
+    Javobda pending — yozuv egasining tasdig'ini kutadimi (ishchi yozganda)."""
     data = await _json(request)
     worker = await _ledger_worker(request, session, user, data.get("worker_id"))
     kind = data.get("kind")
@@ -1306,7 +1313,10 @@ async def add_payment(request: web.Request, session: AsyncSession, user: User) -
         saved = await intake.save(session, request.app["bot"], user, draft)
     except intake.IntakeError as e:
         raise ApiError(400, e.message)
-    return web.json_response({"saved": "\n\n".join([saved.header, *(text for text, _ in saved.cards)])})
+    pending = not drafts.pay_counted(draft, draft["pays"][0])
+    return web.json_response(
+        {"saved": "\n\n".join([saved.header, *(text for text, _ in saved.cards)]), "pending": pending}
+    )
 
 
 async def _payment_for(request: web.Request, session: AsyncSession, user: User) -> WorkerPayment:

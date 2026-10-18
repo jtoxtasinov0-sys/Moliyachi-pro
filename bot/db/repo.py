@@ -40,6 +40,8 @@ ALL_CURRENCIES = ("UZS", "USD", "KRW")
 
 DEFAULT_SETTINGS = {
     "require_approval": "1",
+    # Ishchi yozgan pul («500 ming oldim», «qaytardim») egasi tasdiqlagach qoldiqqa kiradi
+    "require_pay_approval": "1",
     "currencies": ",".join(ALL_CURRENCIES),
     # Summa valyutasiz aytilsa shu valyuta olinadi
     "main_currency": ALL_CURRENCIES[0],
@@ -76,6 +78,10 @@ async def set_setting(session: AsyncSession, owner_id: int, key: str, value: str
 
 async def require_approval(session: AsyncSession, owner_id: int) -> bool:
     return await get_setting(session, owner_id, "require_approval") == "1"
+
+
+async def require_pay_approval(session: AsyncSession, owner_id: int) -> bool:
+    return await get_setting(session, owner_id, "require_pay_approval") == "1"
 
 
 async def auto_save_images(session: AsyncSession, owner_id: int) -> bool:

@@ -67,7 +67,7 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
      olgan puli va qoldig'i
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
 🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
-⚙️ Sozlamalar — tasdiqlash tartibi, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
+⚙️ Sozlamalar — ish va pul yozuvlarini tasdiqlash, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
 kiriting» deb eslatadi.

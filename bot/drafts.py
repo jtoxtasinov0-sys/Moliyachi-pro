@@ -17,7 +17,8 @@ Ishchi bilan pul (avans, ish haqi, qaytarilgan pul, hisob holati) — shu qorala
 {
   ..., "pays": [{worker_id, worker_name, worker_q, kind, amount, whole, worker_owes, currency, note, date}],
        "balances": {"worker_id": {valyuta: qoldiq}},  # ishchilarning hozirgi qoldig'i (resolve da)
-       "by_owner": bool, "auto_ok": bool,  # egasi yozdimi; ishchi yozuvi tasdiqsiz hisobga kiradimi
+       "by_owner": bool, "auto_ok": bool,  # egasi yozdimi; ishchining ish yozuvi tasdiqsiz hisobga kiradimi
+       "pay_ok": bool,  # ishchining «oldim» / «qaytardim» yozuvi tasdiqsiz qoldiqqa kiradimi
 }
 kind — PayKind; BALANCE da amount — qoldiq ("0" — hisob yopildi), worker_owes — ishchi qarzdor.
 whole — «qolgan hamma pulini berdim»: summa qoldiqdan olinadi.
@@ -577,11 +578,11 @@ def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
 
 
 def pay_counted(draft: dict, p: dict) -> bool:
-    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» desa — ha (egasiga
-    zarar yo'q); «qaytardim» — tasdiqlash o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
-    if draft.get("by_owner", True) or p["kind"] == PayKind.PAY:
+    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» / «qaytardim» desa —
+    «Pul yozuvlarini tasdiqlash» o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
+    if draft.get("by_owner", True):
         return True
-    return p["kind"] == PayKind.RETURN and draft.get("auto_ok", False)
+    return p["kind"] in (PayKind.PAY, PayKind.RETURN) and draft.get("pay_ok", False)
 
 
 def dec_str(value: Decimal) -> str:
@@ -639,6 +640,7 @@ async def _pay_balances(session: AsyncSession, draft: dict, user: User) -> None:
     }
     draft["by_owner"] = user.is_owner
     draft["auto_ok"] = user.is_owner or not await repo.require_approval(session, acc)
+    draft["pay_ok"] = user.is_owner or not await repo.require_pay_approval(session, acc)
     project_balances(draft)
 
 

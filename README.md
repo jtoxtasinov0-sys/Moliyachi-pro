@@ -20,12 +20,14 @@ qancha o'tgani ko'rinadi.
 500 ming berdim», «Robiya 200 ming qaytardi», «Robiyaga qolganini berdim». Hisob holatini ham aytish mumkin
 («Robiyaga 900 ming qarzman», «Robiya bilan hisob yopildi») — qoldiq shu summaga teng bo'ladi va keyingi ishlar
 hamda pullar undan davom etib hisoblanadi. Qoldiq = tasdiqlangan ishlar − olingan pul + qaytarilgan pul: musbat —
-egasi ishchiga berishi kerak, manfiy — ishchi ortiqcha olgan (avans). Ishchi «oldim» desa — darhol hisobga kiradi
-(egasiga xabar boradi); «qaytardim» — «Ishchi yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi tasdiqlagach; hisob
-holatini ishchi yozsa — har doim egasi tasdiqlagach. Egasi yozsa — ishchiga xabar boradi. Ko'rish: ishchida —
-botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun oxiridagi qoldiq, «💵 Oldim»
-tugmasi); egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi («💵 Berdim», «✅ Qolganini
-berdim», «🧾 Qoldiq shu»). Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir kun alohida o'qiladi.
+egasi ishchiga berishi kerak, manfiy — ishchi ortiqcha olgan (avans). Ishchi «oldim» yoki «qaytardim» desa —
+«⚙️ Sozlamalar → Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa (sukut bo'yicha) egasi tasdiqlagach, o'chiq bo'lsa
+darhol hisobga kiradi (egasiga xabar boradi); hisob holatini ishchi yozsa — har doim egasi tasdiqlagach. Bu
+sozlama ish yozuvlarini tasdiqlashdan («Ishchi yozuvlarini tasdiqlash») alohida. Egasi yozsa — ishchiga xabar
+boradi. Ko'rish: ishchida — botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun
+oxiridagi qoldiq, «💵 Oldim» tugmasi); egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi
+(«💵 Berdim», «✅ Qolganini berdim», «🧾 Qoldiq shu»). Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir
+kun alohida o'qiladi.
 ⚠️ Avvaldan ishlatayotgan bo'lsangiz: pul yozilmagan ishchining qoldig'i — barcha ishlari summasi. Har bir ishchi
 uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga 900 ming qarzman».
 

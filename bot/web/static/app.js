@@ -882,8 +882,8 @@ async function quickPay(act) {
   }
   ledger.busy = true;
   try {
-    await api("/api/payments", { method: "POST", body });
-    toast("Saqlandi");
+    const res = await api("/api/payments", { method: "POST", body });
+    toast(res.pending ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
     input.value = "";
     await afterLedgerChange();
   } catch (e) { fail(e); } finally { ledger.busy = false; }
@@ -2096,6 +2096,8 @@ function settingsSheet() {
     <h3>Sozlamalar</h3>
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
+    <label class="switch-row"><div>💵 Pul yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi yozgan pul («500 ming oldim», «200 ming qaytardim») siz tasdiqlagandan keyin hisob-kitobga kiradi. O'chiq bo'lsa — darhol kiradi, sizga xabar boradi. Hisob holatini ishchi yozsa — har doim tasdiqlaysiz.</small></div>
+      <span class="switch"><input type="checkbox" id="sPayApproval" ${me.require_pay_approval ? "checked" : ""}><i></i></span></label>
     <label class="switch-row"><div>🖼 Rasmdagi xarajatlarni darhol saqlash<small>O'chiq bo'lsa — rasmdan o'qilgani avval ko'rsatiladi va «✅ Tasdiqlash» ni bosganingizdan keyin hisobga qo'shiladi. Yoqilsa — tasdiqlamasdan darhol qo'shiladi. Avval kiritilganlari qayta qo'shilmaydi.</small></div>
       <span class="switch"><input type="checkbox" id="sAutoImg" ${me.auto_save_images ? "checked" : ""}><i></i></span></label>
     <div class="field"><label>📦 Bir komplektdagi dona (razmerlar) soni</label>
@@ -2124,6 +2126,7 @@ function settingsSheet() {
   $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
   $("sRemind").onchange = (ev) => save({ reminder_hour: ev.target.value === "" ? null : Number(ev.target.value) }, ev.target);
   $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
+  $("sPayApproval").onchange = (ev) => save({ require_pay_approval: ev.target.checked }, ev.target);
   $("sAutoImg").onchange = (ev) => save({ auto_save_images: ev.target.checked }, ev.target);
   $("sSetSize").onchange = (ev) => {
     const n = Number(ev.target.value);

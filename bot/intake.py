@@ -284,7 +284,7 @@ def pays_to_debt(draft: dict, user: User) -> bool:
                 "date": p["date"],
             }
         )
-    for key in ("lines", "pays", "balances", "by_owner", "auto_ok"):
+    for key in ("lines", "pays", "balances", "by_owner", "auto_ok", "pay_ok"):
         draft.pop(key, None)
     draft.update(section="money", personal=[], debt=debt)
     return True
@@ -382,6 +382,8 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         header += "\n⏳ Ish yozuvlari egasining tasdig'ini kutmoqda."
         for entry in saved:
             await notify_owner_pending(bot, session, entry)
+    if any(p.status == EntryStatus.PENDING for p in payments):
+        header += "\n⏳ Pul yozuvlari egasining tasdig'ini kutmoqda."
     if payments:
         header += "\n\n" + "\n".join(await _balance_lines(session, user, [p.worker for p in payments]))
         await _notify_payments(bot, session, user, payments)
@@ -397,15 +399,15 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
 
 async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> WorkerPayment:
-    """Ishchi «oldim» desa — darhol hisobga kiradi; «qaytardim» — tasdiqlash yoqilgan bo'lsa egasi tasdiqlagach;
-    hisob holatini ishchi yozsa — har doim egasi tasdiqlagach."""
+    """Ishchi «oldim» / «qaytardim» desa — «Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi tasdiqlagach,
+    o'chiq bo'lsa darhol hisobga kiradi; hisob holatini ishchi yozsa — har doim egasi tasdiqlagach."""
     acc = user.account_id
     worker = await repo.get_worker(session, acc, p["worker_id"])
     if worker is None or (not user.is_owner and worker.id != user.id):
         raise IntakeError("⚠️ Ishchi topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
-    approved = user.is_owner or p["kind"] == PayKind.PAY
-    if not approved and p["kind"] == PayKind.RETURN:
-        approved = not await repo.require_approval(session, acc)
+    approved = user.is_owner
+    if not approved and p["kind"] in (PayKind.PAY, PayKind.RETURN):
+        approved = not await repo.require_pay_approval(session, acc)
     amount = Decimal(p["amount"])
     if p["kind"] == PayKind.BALANCE and p["worker_owes"]:
         amount = -amount

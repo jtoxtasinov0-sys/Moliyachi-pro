@@ -114,7 +114,7 @@ class AdviceCb(CallbackData, prefix="adv"):
 
 
 class SettingsCb(CallbackData, prefix="s"):
-    action: str  # approval | cur | main | autoimg | remind
+    action: str  # approval | payapproval | cur | main | autoimg | remind
     value: str = ""
 
 
