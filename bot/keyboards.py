@@ -130,6 +130,22 @@ class SupplierCb(CallbackData, prefix="sp"):
     supplier_id: int = 0
 
 
+class ClientCb(CallbackData, prefix="cl"):
+    """Egasi: mijozlar ro'yxati va mijoz kartasi."""
+
+    action: str  # list | open | add | link | toggle
+    client_id: int = 0
+
+
+class MyClientCb(CallbackData, prefix="mc"):
+    """Mijozning o'zi: hisob-kitobni ko'rish, o'zi yozgan yozuvni o'chirish, qoralamadagi savollar."""
+
+    action: str  # ledger | del | del_yes | del_no | pick (qaysi ega bilan) | kind (value — ClientKind) | cancel
+    client_id: int = 0
+    entry_id: int = 0
+    value: str = ""
+
+
 class JobCb(CallbackData, prefix="jb"):
     action: str  # list | add | rename | del
     job_id: int = 0
@@ -290,9 +306,56 @@ def app_kb(view: str = "") -> InlineKeyboardMarkup | None:
     return kb.as_markup()
 
 
-def clients_kb() -> InlineKeyboardMarkup:
+# --- Mijozning o'zi (taklif havolasi orqali ulangan) ---------------------------
+
+def client_menu() -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardBuilder()
+    kb.button(text=BTN_LEDGER)
+    kb.button(text=BTN_HELP)
+    kb.adjust(2)
+    return kb.as_markup(resize_keyboard=True, input_field_placeholder="«10 komplekt oldim», «2 million berdim»")
+
+
+def my_client_kb(client_id: int, entry_id: int | None = None) -> InlineKeyboardMarkup:
+    """Mijozga: «🧾 Hisob-kitob» va o'zi yozgan yozuvda — «🗑 O'chirish»."""
     kb = InlineKeyboardBuilder()
-    add_app_button(kb, "clients")
+    if entry_id:
+        kb.button(text="🗑 O'chirish", callback_data=MyClientCb(action="del", client_id=client_id, entry_id=entry_id))
+    kb.button(text="🧾 Hisob-kitob", callback_data=MyClientCb(action="ledger", client_id=client_id))
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def my_client_confirm_kb(client_id: int, entry_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 Ha, o'chirilsin", callback_data=MyClientCb(action="del_yes", client_id=client_id, entry_id=entry_id))
+    kb.button(text="↩️ Yo'q", callback_data=MyClientCb(action="del_no", client_id=client_id, entry_id=entry_id))
+    return kb.as_markup()
+
+
+def my_client_pick_kb(options: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Mijoz bir nechta korxonaga ulangan: yozuv qaysi biri bilan. options — (mijoz id, ega ismi)."""
+    kb = InlineKeyboardBuilder()
+    for client_id, owner_name in options:
+        kb.button(text=f"🏢 {owner_name[:30]}", callback_data=MyClientCb(action="pick", client_id=client_id))
+    kb.button(text="❌ Bekor", callback_data=MyClientCb(action="cancel"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def my_client_kind_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📦 Mol oldim", callback_data=MyClientCb(action="kind", value="sale"))
+    kb.button(text="💵 Pul berdim", callback_data=MyClientCb(action="kind", value="payment"))
+    kb.button(text="↩️ Mol qaytardim", callback_data=MyClientCb(action="kind", value="return"))
+    kb.button(text="❌ Bekor", callback_data=MyClientCb(action="cancel"))
+    kb.adjust(2, 1, 1)
+    return kb.as_markup()
+
+
+def my_client_cancel_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Bekor", callback_data=MyClientCb(action="cancel"))
     return kb.as_markup()
 
 

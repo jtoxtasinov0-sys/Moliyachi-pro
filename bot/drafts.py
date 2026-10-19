@@ -1215,6 +1215,12 @@ CLIENT_KIND_LABELS = {
     ClientKind.PAYMENT: "💵 To'lov olindi",
     ClientKind.RETURN: "↩️ Mol qaytarildi",
 }
+# Mijozning o'ziga ko'rsatiladi (u «oldim», «berdim» deydi)
+CLIENT_SIDE_LABELS = {
+    ClientKind.SALE: "📦 Mol oldingiz",
+    ClientKind.PAYMENT: "💵 Pul to'ladingiz",
+    ClientKind.RETURN: "↩️ Mol qaytardingiz",
+}
 
 
 def qty_text(sets: int | None, pieces: int | None) -> str:
@@ -1223,9 +1229,11 @@ def qty_text(sets: int | None, pieces: int | None) -> str:
     return f"{pieces} dona" if pieces else "? komplekt"
 
 
-def client_line(c: dict) -> str:
-    """«📦 Mol berildi: Maksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm»"""
-    label = CLIENT_KIND_LABELS.get(c["kind"], "❔ Mol yoki to'lov?")
+def client_line(c: dict, client_side: bool = False) -> str:
+    """«📦 Mol berildi: Maksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm».
+    client_side — mijozning o'ziga: «📦 Mol oldingiz: …»."""
+    labels = CLIENT_SIDE_LABELS if client_side else CLIENT_KIND_LABELS
+    label = labels.get(c["kind"], "❔ Mol yoki to'lov?")
     if c["kind"] == ClientKind.PAYMENT:
         return f"{label}: {_money_amount(c['total'], c['currency'])}"
     text = f"{label}: "
@@ -1290,6 +1298,33 @@ async def _present_client(session: AsyncSession, draft: dict, user: User) -> tup
             kbs.cancel_only_kb(),
         )
     return text + f"\n\n❓ <b>{who}</b> qancha to'ladi? Summani yozing.", kbs.cancel_only_kb()
+
+
+def present_for_client(draft: dict, owners: list[tuple[int, str]]) -> tuple[str, InlineKeyboardMarkup] | None:
+    """Mijozning o'zi yozgan qoralama: yetishmagan narsani so'raydi. None — hammasi bor (darhol saqlanadi).
+    owners — (mijoz id, ega ismi): mijoz bir nechta korxonaga ulangan bo'lsa, qaysi biri bilan ekani so'raladi."""
+    missing = next_missing(draft)
+    if missing is None:
+        return None
+    parts = ["📝 <b>Oldi-berdi</b>"]
+    if raw := short_raw(draft):
+        parts.append(raw)
+    parts.append(f"📅 Sana: {fmt_date(date.fromisoformat(draft['date']))}")
+    parts.append("\n".join(f"• {client_line(c, client_side=True)}" for c in draft["client"]))
+    text = "\n\n".join(parts)
+    kind, _ = missing
+    if kind in ("client", "client_name"):
+        return text + "\n\n❓ Kim bilan oldi-berdi?", kbs.my_client_pick_kb(owners)
+    if kind == "client_kind":
+        return text + "\n\n❓ Mol oldingizmi yoki pul berdingizmi?", kbs.my_client_kind_kb()
+    if kind == "c_qty":
+        return text + "\n\n❓ Nechta komplekt? Sonini yozing yoki ayting.", kbs.my_client_cancel_kb()
+    if kind == "c_price":
+        return (
+            text + "\n\n❓ Bir komplekt narxi qancha? (yoki jami summani ayting: «jami 1,4 million»)",
+            kbs.my_client_cancel_kb(),
+        )
+    return text + "\n\n❓ Qancha to'ladingiz? Summani yozing yoki ayting.", kbs.my_client_cancel_kb()
 
 
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:

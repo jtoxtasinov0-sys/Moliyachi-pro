@@ -58,7 +58,9 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 📊 Hisobot — ishchilar: kunlik / haftalik / oylik
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 💸 Xarajatlar — kategoriyalar bo'yicha hisobot
-🛍 Mijozlar — kim qancha mol oldi va qancha qarzi bor
+🛍 Mijozlar — kim qancha mol oldi va qancha qarzi bor; ➕ qo'shish va taklif havolasi:
+     ulangan mijoz siz bilan oldi-berdini ko'radi va o'zi ham yozadi («10 komplekt oldim»,
+     «2 million berdim») — hisobga kiradi, sizga xabar keladi
 🤝 Qarzlar — kim kimga qancha qarz
 💡 Maslahat — topgan pulingizdan xarajatga va jamg'armaga qancha ajratish,
      kunlik limit, moliyaviy saboqlar va shaxsiy maslahat

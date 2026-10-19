@@ -1216,19 +1216,50 @@ async def get_client_by_name(session: AsyncSession, owner_id: int, name: str) ->
 
 
 async def create_client(session: AsyncSession, owner_id: int, name: str, phone: str | None = None) -> Client:
-    client = Client(owner_id=owner_id, name=name.strip()[:100], phone=phone)
+    """Yangi mijoz — taklif havolasi bilan: mijoz bosganda botga ulanadi va oldi-berdini ko'radi."""
+    client = Client(owner_id=owner_id, name=name.strip()[:100], phone=phone, invite_token=secrets.token_urlsafe(12))
     session.add(client)
     await session.flush()
     return client
 
 
-async def get_or_create_client(session: AsyncSession, owner_id: int, name: str) -> Client:
+async def get_or_create_client(session: AsyncSession, owner_id: int, name: str) -> tuple[Client, bool]:
+    """(mijoz, yangi qo'shildimi)."""
     client = await get_client_by_name(session, owner_id, name)
     if client is None:
-        client = await create_client(session, owner_id, name)
-    elif not client.is_active:
+        return await create_client(session, owner_id, name), True
+    if not client.is_active:
         client.is_active = True
+    return client, False
+
+
+async def new_client_token(session: AsyncSession, client: Client) -> str:
+    client.invite_token = secrets.token_urlsafe(12)
+    await session.flush()
+    return client.invite_token
+
+
+async def link_client(session: AsyncSession, token: str, tg_id: int) -> Client | None:
+    client = await session.scalar(select(Client).where(Client.invite_token == token))
+    if client is None or not client.is_active:
+        return None
+    # Bir egada bitta Telegram akkaunt — bitta mijoz: avval boshqa mijozga ulangan bo'lsa, o'shasidan ajratiladi
+    await session.execute(
+        update(Client)
+        .where(Client.owner_id == client.owner_id, Client.tg_id == tg_id, Client.id != client.id)
+        .values(tg_id=None)
+        .execution_options(synchronize_session=False)
+    )
+    client.tg_id = tg_id
+    client.invite_token = None
+    await session.flush()
     return client
+
+
+async def clients_by_tg(session: AsyncSession, tg_id: int) -> list[Client]:
+    """Shu Telegram akkaunt ulangan faol mijozlar (har xil egalarda bo'lishi mumkin)."""
+    q = select(Client).where(Client.tg_id == tg_id, Client.is_active.is_(True)).order_by(Client.id)
+    return list(await session.scalars(q))
 
 
 async def create_client_entry(
@@ -1248,6 +1279,7 @@ async def create_client_entry(
     entry_date: date,
     raw_text: str | None,
     created_by: int,
+    by_client: bool = False,
 ) -> ClientEntry:
     entry = ClientEntry(
         owner_id=owner_id,
@@ -1264,6 +1296,7 @@ async def create_client_entry(
         entry_date=entry_date,
         raw_text=raw_text,
         created_by=created_by,
+        by_client=by_client,
     )
     session.add(entry)
     await session.flush()
@@ -1353,11 +1386,39 @@ async def client_stats(
     return result
 
 
+def _client_delta(e: ClientEntry) -> Decimal:
+    """Yozuvning qoldiqqa ta'siri: mol — qarz qo'shiladi, to'lov va qaytgan mol — ayriladi."""
+    return _dec(e.amount) if e.kind == ClientKind.SALE else -_dec(e.amount)
+
+
 async def client_balance(session: AsyncSession, owner_id: int, client_id: int) -> dict[str, Decimal]:
-    for st in await client_stats(session, owner_id):
-        if st.client.id == client_id:
-            return {c: v for c, v in st.balance.items() if v}
-    return {}
+    """Valyuta -> qoldiq: musbat — mijoz qarzdor, manfiy — oldindan to'lagan."""
+    signed = case((ClientEntry.kind == ClientKind.SALE, ClientEntry.amount), else_=-ClientEntry.amount)
+    rows = await session.execute(
+        select(ClientEntry.currency, func.sum(signed))
+        .where(ClientEntry.owner_id == owner_id, ClientEntry.client_id == client_id, ClientEntry.deleted_at.is_(None))
+        .group_by(ClientEntry.currency)
+    )
+    return {currency: _dec(total) for currency, total in rows if _dec(total)}
+
+
+@dataclass
+class ClientLedgerRow:
+    entry: ClientEntry
+    balance: dict[str, Decimal]  # shu yozuvdan keyingi qoldiq
+
+
+async def client_ledger(
+    session: AsyncSession, owner_id: int, client_id: int, limit: int = 30
+) -> tuple[list[ClientLedgerRow], bool]:
+    """Mijoz bilan oldi-berdi (yangisi birinchi), har biridan keyingi qoldiq bilan. Qaytadi: (qatorlar, yana bormi)."""
+    entries = await list_client_entries(session, owner_id, client_id=client_id, limit=limit + 1)
+    running = await client_balance(session, owner_id, client_id)
+    rows = []
+    for e in entries[:limit]:
+        rows.append(ClientLedgerRow(e, {c: v for c, v in running.items() if v}))
+        running[e.currency] = running.get(e.currency, Decimal(0)) - _client_delta(e)
+    return rows, len(entries) > limit
 
 
 # --- Xom ashyo --------------------------------------------------------------

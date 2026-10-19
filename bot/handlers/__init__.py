@@ -1,12 +1,13 @@
 from aiogram import Router
 
-from bot.handlers import admin, advice, common, entries, input, money
+from bot.handlers import admin, advice, clients, common, entries, input, money
 
 
 def build_router() -> Router:
     root = Router(name="root")
-    # Tartib muhim: aniq buyruq va tugmalar avval, umumiy matn/ovoz (input) eng oxirida
+    # Tartib muhim: aniq buyruq va tugmalar avval, umumiy matn/ovoz (input) eng oxirida.
+    # Mijoz (clients) — common dan oldin: common ro'yxatda yo'q odamning hamma xabarini oladi
     root.include_routers(
-        common.router, admin.router, money.router, advice.router, entries.router, input.router
+        clients.router, common.router, admin.router, money.router, advice.router, entries.router, input.router
     )
     return root

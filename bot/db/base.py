@@ -35,6 +35,11 @@ _NEW_COLUMNS = {
         "unit_price": "NUMERIC(14, 2)",
         "price_unit": "VARCHAR(5)",
         "note": "TEXT",
+        "by_client": "BOOLEAN NOT NULL DEFAULT FALSE",
+    },
+    "clients": {
+        "tg_id": "BIGINT",
+        "invite_token": "VARCHAR(32)",
     },
     "debt_entries": {
         "stated": "BOOLEAN NOT NULL DEFAULT FALSE",
@@ -51,6 +56,13 @@ _NEW_COLUMNS = {
 }
 
 
+# ALTER bilan qo'shilgan ustunning indeksi (yangi bazada create_all o'zi yaratadi)
+_NEW_COLUMN_INDEXES = {
+    ("clients", "tg_id"): "CREATE INDEX ix_clients_tg_id ON clients (tg_id)",
+    ("clients", "invite_token"): "CREATE UNIQUE INDEX uq_clients_invite_token ON clients (invite_token)",
+}
+
+
 def _add_new_columns(conn: Connection) -> None:
     insp = inspect(conn)
     for table, columns in _NEW_COLUMNS.items():
@@ -60,6 +72,8 @@ def _add_new_columns(conn: Connection) -> None:
         for name, sql_type in columns.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                if index := _NEW_COLUMN_INDEXES.get((table, name)):
+                    conn.execute(text(index))
                 log.info("Ustun qo'shildi: %s.%s", table, name)
 
 

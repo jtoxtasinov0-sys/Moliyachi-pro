@@ -22,7 +22,7 @@ from bot.db.models import (
     PriceUnit,
     User,
 )
-from bot.drafts import CLIENT_KIND_LABELS, debt_line, material_line, qty_text
+from bot.drafts import CLIENT_KIND_LABELS, CLIENT_SIDE_LABELS, debt_line, material_line, qty_text
 from bot.handlers.entries import notify_user
 from bot.middlewares import IsOwner
 from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, period_range
@@ -52,9 +52,9 @@ def debt_text(e: DebtEntry) -> str:
     return text
 
 
-def client_text(e: ClientEntry) -> str:
-    """«👤 Tohir · 📦 Mol berildi\nMaksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm»"""
-    text = f"👤 <b>{escape(e.client.name)}</b> · {CLIENT_KIND_LABELS.get(e.kind, e.kind)}\n"
+def _client_body(e: ClientEntry) -> str:
+    """«Maksima — 10 komplekt (50 dona) × 140 000 so'm = <b>1 400 000 so'm</b>», to'lovda — faqat summa."""
+    text = ""
     if e.kind != ClientKind.PAYMENT:
         if e.product:
             text += f"{escape(e.product)} — "
@@ -64,10 +64,123 @@ def client_text(e: ClientEntry) -> str:
             if e.price_unit == PriceUnit.PIECE:
                 text += " (dona)"
         text += " = "
-    text += f"<b>{fmt_money(e.amount or 0, e.currency)}</b>\n📅 {fmt_date(e.entry_date)}"
+    return text + f"<b>{fmt_money(e.amount or 0, e.currency)}</b>"
+
+
+def client_text(e: ClientEntry) -> str:
+    """«👤 Tohir · 📦 Mol berildi\nMaksima — 10 komplekt (50 dona) × 140 000 so'm = 1 400 000 so'm»"""
+    text = f"👤 <b>{escape(e.client.name)}</b> · {CLIENT_KIND_LABELS.get(e.kind, e.kind)}\n"
+    text += f"{_client_body(e)}\n📅 {fmt_date(e.entry_date)}"
     if e.note:
         text += f"\n<i>{escape(e.note)}</i>"
+    if e.by_client:
+        text += f"\n✍️ {escape(e.client.name)} o'zi yozdi"
     return text
+
+
+def client_side_text(e: ClientEntry) -> str:
+    """Mijozning o'ziga: «📦 Mol oldingiz\nMaksima — 10 komplekt × 140 000 so'm = 1 400 000 so'm\n📅 18.10.2026»."""
+    text = f"<b>{CLIENT_SIDE_LABELS.get(e.kind, e.kind)}</b>\n{_client_body(e)}\n📅 {fmt_date(e.entry_date)}"
+    if e.note:
+        text += f"\n<i>{escape(e.note)}</i>"
+    if e.by_client:
+        text += "\n✍️ O'zingiz yozdingiz"
+    return text
+
+
+def client_side_balance(balance: dict) -> str:
+    """Mijozning o'ziga: «📌 Qarzingiz: 1 400 000 so'm» / «✅ Hisob yopilgan»."""
+    owes = {c: v for c, v in balance.items() if v > 0}
+    prepaid = {c: -v for c, v in balance.items() if v < 0}
+    parts = []
+    if owes:
+        parts.append(f"📌 Qarzingiz: <b>{fmt_totals(owes)}</b>")
+    if prepaid:
+        parts.append(f"💵 Oldindan to'lagansiz: <b>{fmt_totals(prepaid)}</b>")
+    return "\n".join(parts) or "✅ Hisob yopilgan"
+
+
+def _balance_short(balance: dict, client_side: bool) -> str:
+    """Kun oxiridagi qoldiq: «qarzi 1 400 000 so'm» (mijozga — «qarzingiz …»)."""
+    owes = {c: v for c, v in balance.items() if v > 0}
+    prepaid = {c: -v for c, v in balance.items() if v < 0}
+    parts = []
+    if owes:
+        parts.append(("qarzingiz " if client_side else "qarzi ") + fmt_totals(owes))
+    if prepaid:
+        parts.append(("oldindan to'lagansiz " if client_side else "oldindan to'lagan ") + fmt_totals(prepaid))
+    return ", ".join(parts) or "hisob yopilgan"
+
+
+CLIENT_LEDGER_ROWS = 25
+CLIENT_LEDGER_BUDGET = 3000
+
+
+async def client_ledger_blocks(session: AsyncSession, client: Client, client_side: bool) -> tuple[list[str], bool]:
+    """Kunma-kun oldi-berdi (eskisi tepada), har kun oxirida qoldiq. Qaytadi: (bloklar, oldingilari ham bormi)."""
+    rows, more = await repo.client_ledger(session, client.owner_id, client.id, limit=CLIENT_LEDGER_ROWS)
+    labels = CLIENT_SIDE_LABELS if client_side else CLIENT_KIND_LABELS
+    days: list[tuple[object, list[repo.ClientLedgerRow]]] = []
+    for r in reversed(rows):
+        if days and days[-1][0] == r.entry.entry_date:
+            days[-1][1].append(r)
+        else:
+            days.append((r.entry.entry_date, [r]))
+    blocks: list[str] = []
+    used = 0
+    for day, items in reversed(days):  # yangisidan boshlab, joy yetguncha
+        lines = []
+        for r in items:
+            line = f"{labels.get(r.entry.kind, r.entry.kind)}: {_client_body(r.entry)}"
+            if r.entry.note:
+                line += f" <i>({escape(r.entry.note)})</i>"
+            lines.append(line + (" ✍️" if r.entry.by_client else ""))
+        rows_text = "\n".join(lines)
+        if len(rows_text) > CLIENT_LEDGER_BUDGET:  # bir kunda juda ko'p yozuv — kunning oxirgilari
+            rows_text = "…\n" + rows_text[-CLIENT_LEDGER_BUDGET:].split("\n", 1)[-1]
+            more = True
+        block = f"📅 <b>{fmt_date(day)}</b>\n" + rows_text
+        block += f"\n   <i>= {_balance_short(items[-1].balance, client_side)}</i>"
+        if blocks and used + len(block) > CLIENT_LEDGER_BUDGET:
+            more = True
+            break
+        blocks.append(block)
+        used += len(block)
+    blocks.reverse()
+    return blocks, more
+
+
+async def client_side_ledger(session: AsyncSession, client: Client) -> str:
+    """Mijozning o'ziga: korxona bilan hisob-kitobi."""
+    owner = await session.get(User, client.owner_id)
+    owner_name = escape(owner.name) if owner else "Korxona"
+    title = f"🧾 <b>{owner_name} bilan hisob-kitob</b>"
+    blocks, more = await client_ledger_blocks(session, client, client_side=True)
+    example = "💡 Yozish: <i>«10 komplekt oldim»</i>, <i>«2 million berdim»</i>, <i>«3 komplekt qaytardim»</i>"
+    if not blocks:
+        return f"{title}\n\nHali oldi-berdi yo'q.\n\n{example}"
+    parts = [title]
+    if more:
+        parts.append("<i>… oldingi yozuvlar ko'rsatilmadi</i>")
+    parts.extend(blocks)
+    parts.append(client_side_balance(await repo.client_balance(session, client.owner_id, client.id)))
+    parts.append(f"{example}\n✍️ — o'zingiz yozgansiz")
+    return "\n\n".join(parts)
+
+
+async def client_deleted_message(
+    session: AsyncSession, owner: User, entry: ClientEntry
+) -> tuple[int, str] | None:
+    """Egasi mijoz yozuvini o'chirdi — ulangan mijozga xabar: (chat, matn)."""
+    client = entry.client
+    if not client.is_active or not client.tg_id:
+        return None
+    balance = await repo.client_balance(session, owner.id, client.id)
+    text = (
+        f"🗑 <b>{escape(owner.name)}</b> bu yozuvni o'chirdi:\n\n<s>{client_side_text(entry)}</s>\n\n"
+        + client_side_balance(balance)
+    )
+    return client.tg_id, text
 
 
 def material_text(e: MaterialEntry, supplier: bool = True) -> str:
@@ -354,32 +467,6 @@ async def on_debts(call: CallbackQuery, callback_data: kbs.DebtsCb, session: Asy
     await call.answer("Yangilandi")
 
 
-# --- Mijozlar ---------------------------------------------------------------
-
-@router.message(F.text == kbs.BTN_CLIENTS)
-async def clients(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
-    await state.clear()
-    stats = [st for st in await repo.client_stats(session, user.id) if st.count]
-    if not stats:
-        text = (
-            "🛍 <b>Mijozlar</b>\n\nHali mijoz bilan oldi-berdi yozilmagan.\n\n"
-            "Yozish uchun: <i>«Tohirga 10 komplekt maksima berdim, 140 mingdan»</i>, "
-            "<i>«Tohir 2 million to'ladi»</i>."
-        )
-    else:
-        owes: dict[str, Decimal] = defaultdict(Decimal)
-        rows = []
-        for st in stats:
-            rows.append("• " + client_balance_text(st.client.name, {c: v for c, v in st.balance.items() if v}))
-            for currency, value in st.balance.items():
-                if value > 0:
-                    owes[currency] += value
-        text = "🛍 <b>Mijozlar</b>\n\n" + "\n".join(rows[:40])
-        if owes:
-            text += f"\n\nJami mijozlar qarzi: <b>{fmt_totals(dict(owes))}</b>"
-    await message.answer(text, reply_markup=kbs.clients_kb())
-
-
 # --- O'chirish --------------------------------------------------------------
 
 async def _get(
@@ -428,7 +515,12 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
             extra = "\n\n" + await client_balance_line(session, user.id, entry.client)
         await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi{extra}")
         await call.answer("O'chirildi")
-        if isinstance(entry, MaterialEntry) and (notice := await supplier_deleted_message(session, user, entry)):
+        notice = None
+        if isinstance(entry, MaterialEntry):
+            notice = await supplier_deleted_message(session, user, entry)
+        elif isinstance(entry, ClientEntry):
+            notice = await client_deleted_message(session, user, entry)
+        if notice:
             await notify_user(call.bot, *notice)
     else:
         await call.answer()

@@ -16,6 +16,8 @@ from bot import advisor, drafts
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import (
+    Client,
+    ClientEntry,
     ClientKind,
     DebtDirection,
     EntryStatus,
@@ -460,7 +462,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         if not user.is_owner:
             raise IntakeError("Ruxsat yo'q.", drop=True)
         if draft["section"] == "client":
-            return await _save_client(session, user, draft)
+            return await _save_client(session, bot, user, draft)
         if draft["section"] == "price":
             return await _save_prices(session, user, draft)
         if draft["section"] == "material":
@@ -808,15 +810,20 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
     )
 
 
-async def _save_client(session: AsyncSession, user: User, draft: dict) -> Saved:
+async def _save_client(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
+    """Mijoz bilan oldi-berdi. Botga ulangan mijozga xabar boradi; yangi mijoz bo'lsa — uning taklif havolasi."""
+    from bot.handlers.admin import invite_link
     from bot.handlers.money import client_balance_line, client_text
 
     entry_date = date.fromisoformat(draft["date"])
     entries = []
+    created: list[Client] = []
     for c in draft["client"]:
         client = await repo.get_client(session, user.id, c["client_id"]) if c["client_id"] else None
         if client is None:
-            client = await repo.get_or_create_client(session, user.id, c["client_name"] or c["client_q"])
+            client, new = await repo.get_or_create_client(session, user.id, c["client_name"] or c["client_q"])
+            if new:
+                created.append(client)
         entries.append(
             await repo.create_client_entry(
                 session,
@@ -841,5 +848,152 @@ async def _save_client(session: AsyncSession, user: User, draft: dict) -> Saved:
     clients = list({e.client_id: e.client for e in entries}.values())
     balance = [await client_balance_line(session, user.id, client) for client in clients]
     header += "\n\n" + "\n".join(balance)
+    notified = await _notify_clients(bot, session, user, entries)
+    if notified:
+        header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
+    new_ids = {c.id for c in created}
+    for client in created:
+        header += (
+            f"\n\n🆕 <b>{escape(client.name)}</b> — yangi mijoz. Ushbu havolani unga yuboring: bosganda botga "
+            "ulanadi va siz bilan oldi-berdini ko'rib turadi, o'zi ham yozadi («10 komplekt oldim», "
+            f"«2 million berdim»):\n{await invite_link(bot, client.invite_token, 'cli')}"
+        )
+    waiting = [c.name for c in clients if c.is_active and not c.tg_id and c.invite_token and c.id not in new_ids]
+    if waiting:
+        header += (
+            f"\n🔗 {', '.join(escape(name) for name in waiting)} hali botga ulanmagan — xabar bormadi. "
+            "Taklif havolasi: «🛍 Mijozlar»."
+        )
     last = len(entries) - 1
     return Saved(header, [(client_text(e), kbs.money_entry_kb("c", e.id, app=i == last)) for i, e in enumerate(entries)])
+
+
+async def _notify_clients(bot: Bot, session: AsyncSession, owner: User, entries: list[ClientEntry]) -> list[str]:
+    """Egasi yozdi: botga ulangan har bir mijozga uning yozuvlari bitta xabarda, yangi qoldig'i bilan.
+    Xabar borgan mijozlar ismi qaytadi."""
+    from bot.handlers.entries import notify_user
+    from bot.handlers.money import client_side_balance, client_side_text
+
+    by_client: dict[int, tuple[Client, list[ClientEntry]]] = {}
+    for e in entries:
+        by_client.setdefault(e.client_id, (e.client, []))[1].append(e)
+    notified = []
+    for client, own in by_client.values():
+        if not client.is_active or not client.tg_id:
+            continue
+        text = f"🛍 <b>{escape(owner.name)}</b> yozdi\n\n" + "\n\n".join(client_side_text(e) for e in own)
+        text += "\n\n" + client_side_balance(await repo.client_balance(session, owner.id, client.id))
+        if await notify_user(bot, client.tg_id, text, kbs.my_client_kb(client.id)):
+            notified.append(client.name)
+    return notified
+
+
+# --- Mijozning o'zi yozadi: «10 komplekt oldim», «2 million berdim» ----------------
+
+def _draft_link(links: list[Client], draft: dict | None) -> Client | None:
+    """Qoralama qaysi ulanishga (korxonaga) tegishli: tanlangan bo'lsa — o'sha, bitta bo'lsa — o'sha."""
+    chosen = {c["client_id"] for c in (draft or {}).get("client", []) if c["client_id"]}
+    if len(chosen) == 1:
+        return next((x for x in links if x.id in chosen), None)
+    return links[0] if len(links) == 1 else None
+
+
+async def analyze_for_client(session: AsyncSession, links: list[Client], text: str, draft: dict | None) -> dict:
+    """Mijoz yozgan xabardan qoralama (section client, mijoz — o'zi). links — mijozning ulanishlari (har biri
+    boshqa korxonada); bir nechta bo'lsa va tanlanmagan bo'lsa — qaysi korxona ekani keyin so'raladi."""
+    correcting = draft is not None and not drafts.is_stale(draft)
+    link = _draft_link(links, draft if correcting else None)
+    ctx = link or links[0]
+    known = {"models": [m.name for m in await repo.list_models(session, ctx.owner_id)]}
+    set_size = await repo.set_size(session, ctx.owner_id)
+    info = f"Bir komplekt = {set_size} dona (har razmerdan bittadan)."
+    try:
+        if correcting:
+            ext = await llm.correct(drafts.for_llm(draft), text, today(), known, info=info, client_name=ctx.name)
+        else:
+            ext = await llm.extract(text, today(), known, info=info, client_name=ctx.name)
+    except llm.LlmError:
+        raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
+
+    said = f"🗣 <i>«{escape(text)}»</i>"
+    if not drafts.is_client(ext):
+        hint = ext.question or "Tushunmadim. Masalan: «10 komplekt oldim», «2 million berdim», «3 komplekt qaytardim»."
+        raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
+    raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
+    currency = (await repo.enabled_currencies(session, ctx.owner_id))[0]
+    new = drafts.from_extraction(ext, raw, default_currency=currency, set_size=set_size)
+    for c in new["client"]:
+        c.update(
+            client_id=link.id if link else None, client_name=link.name if link else None,
+            client_q=ctx.name, client_new=False,
+        )
+    return new
+
+
+async def pick_client_link(session: AsyncSession, draft: dict, link: Client) -> None:
+    """Mijoz bir nechta korxonaga ulangan: yozuv shu korxona bilan (komplekt soni uning o'lchamida)."""
+    set_size = await repo.set_size(session, link.owner_id)
+    draft["set_size"] = set_size
+    for c in draft["client"]:
+        c.update(client_id=link.id, client_name=link.name)
+        drafts.client_total(c, set_size)
+
+
+def set_client_side_kind(draft: dict, kind: str) -> bool:
+    """«📦 Mol oldim» / «💵 Pul berdim» / «↩️ Mol qaytardim» tugmasi — turi so'ralgan yozuvga."""
+    missing = drafts.next_missing(draft)
+    if missing is None or missing[0] != "client_kind" or kind not in CLIENT_KINDS:
+        return False
+    return set_client_kind(draft, kbs.ClientKindCb(line=missing[1], kind=kind))
+
+
+async def save_for_client(session: AsyncSession, bot: Bot, links: list[Client], draft: dict) -> Saved:
+    """Mijoz yozgani darhol hisobga kiradi; egasiga xabar boradi (xato bo'lsa — o'chirish tugmasi bilan)."""
+    from bot.handlers.entries import notify_owner
+    from bot.handlers.money import client_balance_line, client_side_balance, client_side_text, client_text
+
+    if drafts.next_missing(draft) is not None:
+        raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
+    by_id = {x.id: x for x in links}
+    entries: list[ClientEntry] = []
+    for c in draft["client"]:
+        client = by_id.get(c["client_id"])
+        if client is None:
+            raise IntakeError("⚠️ Korxona bilan ulanish topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
+        entries.append(
+            await repo.create_client_entry(
+                session,
+                owner_id=client.owner_id,
+                client_id=client.id,
+                kind=c["kind"],
+                product=c["product"],
+                sets=c["sets"],
+                pieces=c["pieces"],
+                unit_price=Decimal(c["price"]) if c["price"] else None,
+                price_unit=c["price_unit"] if c["price"] else None,
+                amount=Decimal(c["total"]),
+                currency=c["currency"],
+                note=c["note"],
+                entry_date=date.fromisoformat(draft["date"]),
+                raw_text=draft["raw_text"],
+                created_by=client.owner_id,
+                by_client=True,
+            )
+        )
+
+    header = "✅ <b>Hisobga yozildi</b>"
+    if said := drafts.short_raw(draft):
+        header += "\n" + said
+    for client in {e.client_id: e.client for e in entries}.values():
+        own = [e for e in entries if e.client_id == client.id]
+        owner = await session.get(User, client.owner_id)
+        header += "\n\n" + client_side_balance(await repo.client_balance(session, client.owner_id, client.id))
+        if owner is not None:
+            header += f"\n📨 Xabar yuborildi: {escape(owner.name)}"
+        text = (
+            f"🛍 <b>{escape(client.name)} yozdi</b>\n\n" + "\n\n".join(client_text(e) for e in own)
+            + "\n\n" + await client_balance_line(session, client.owner_id, client)
+        )
+        markup = kbs.money_entry_kb("c", own[0].id, app=True) if len(own) == 1 else kbs.app_kb("clients")
+        await notify_owner(bot, session, client.owner_id, text, markup=markup)
+    return Saved(header, [(client_side_text(e), kbs.my_client_kb(e.client_id, e.id)) for e in entries])

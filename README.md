@@ -62,6 +62,21 @@ o'chirilsa — ta'minotchiga ham xabar boradi. Ta'minotchi botga yozsa — kimni
 olinganlar ko'rinadi. Ro'yxatda yo'q odam aytilsa — avvalgidek, faqat ismi yoziladi. Ta'minotchini qo'shganda
 avval shu ism bilan yozilgan xaridlar ham unga bog'lanadi.
 
+**🛍 Mijozlar bilan o'zaro hisob:** mijozni qo'shing — botda «🛍 Mijozlar → ➕ Mijoz qo'shish» (ismini yozasiz),
+ilovada «Mijozlar → + Qo'shish» — bot bir martalik taklif havolasini beradi (start=cli_…). Ovoz bilan yangi mijoz
+aytilsa («Tohirga 10 komplekt berdim») ham — saqlangach havolasi chiqadi. Mijoz bosganda botga ulanadi (ishchi
+bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
+- Egasi yozsa («Tohirga 10 komplekt maksima berdim, 140 mingdan», «Tohir 2 million to'ladi») — mijozga xabar boradi:
+  «📦 Mol oldingiz … 📌 Qarzingiz: 1 400 000 so'm», egasiga «📨 Xabar yuborildi: Tohir». O'chirilsa — mijozga ham xabar.
+- Mijoz o'zi yozsa (ovoz yoki matn): «10 komplekt oldim», «Maksimadan 5 komplekt oldim, 140 mingdan» — mol,
+  «2 million berdim», «pul tashladim» — to'lov, «3 komplekt qaytardim» — qaytgan mol. Darhol hisobga kiradi (qoldiq
+  o'zgaradi) va egasiga «🛍 Tohir yozdi» xabari «🗑 O'chirish» tugmasi bilan boradi. Narx yoki soni aytilmasa — bot
+  so'raydi. Mijoz o'zi yozganini o'zi o'chira oladi, egasi yozganini — faqat egasi. Yozuvlarda «✍️» — mijoz yozgan.
+- Mijoz botda «🧾 Hisob-kitob» — kunma-kun oldi-berdi, har kun oxiridagi qoldiq va qarzi; egasida — «🛍 Mijozlar» →
+  mijoz kartasi (xuddi shu ro'yxat, holati: ✅ ulangan / 🔗 ulanmagan, havola), ilovada mijoz oynasi.
+- Bitta odam bir nechta korxonaning mijozi bo'lsa — yozganda qaysi biri bilan ekani so'raladi. Mijoz o'chirilsa —
+  xabar bormaydi va u yoza olmaydi. Avvaldan bor mijozga havola: kartadagi «🔗 Taklif havolasi».
+
 **Rasmdan yozish:** botga yoki ilovaga (yuqoridagi 📷 tugma — «Suratga olish» yoki «Galereyadan», yozish
 oynasida ham 📷 / 🖼, kompyuterda Ctrl+V yoki sudrab tashlash) bank ilovasidan skrinshot, chek yoki daftar rasmini
 yuboring — Claude rasmni o'qib (o'zbekcha lotin va kirill, ruscha, koreyscha), har bir tranzaksiyani sanasi
@@ -174,7 +189,7 @@ bot/
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
   reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)
   monitor/           kuzatuv boti: harakatlarni yozish (hooks, tracker), statistika, admin boti
-  handlers/          Telegram handlerlar
+  handlers/          Telegram handlerlar (clients.py — havola orqali ulangan mijozning o'zi)
   web/server.py      veb-server: Mini App, API, webhook
   web/api.py         Mini App uchun JSON API
   web/auth.py        Telegram initData tekshiruvi

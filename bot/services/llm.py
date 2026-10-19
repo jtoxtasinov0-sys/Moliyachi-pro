@@ -423,11 +423,35 @@ def _worker_rules(worker_name: str) -> str:
     )
 
 
+def _client_rules(client_name: str) -> str:
+    return (
+        f"Bu xabarni korxonaning mijozi {client_name} yozdi — u korxonadan optom mol oladi va pul to'laydi. "
+        f"Bo'lim faqat client bo'lishi mumkin (yoki tushunarsiz bo'lsa unknown). client_name har doim "
+        f"\"{client_name}\". Mijoz tilidan: \"10 komplekt oldim\", \"Maksimadan 5 komplekt oldim, 140 mingdan\", "
+        "\"1 millionlik mol oldim\" — sale (korxona mijozga mol berdi); \"2 million berdim\", \"2 million "
+        "to'ladim\", \"pul tashladim\", \"pul o'tkazdim\" — payment; \"3 komplekt qaytardim\", \"molni "
+        "qaytardim\" — return. Mol aytilmay faqat pul bilan \"oldim\" (\"500 ming oldim\") — mol emas, unknown: "
+        "question'da \"Mol oldingizmi yoki pul berdingizmi?\" deb so'ra."
+    )
+
+
+def _side_rules(worker_name: str | None, client_name: str | None) -> str:
+    if worker_name:
+        return _worker_rules(worker_name)
+    return _client_rules(client_name) if client_name else ""
+
+
 async def extract(
-    text: str, today: date, known: dict[str, list[str]], worker_name: str | None = None, info: str = ""
+    text: str,
+    today: date,
+    known: dict[str, list[str]],
+    worker_name: str | None = None,
+    info: str = "",
+    client_name: str | None = None,
 ) -> Extraction:
-    """worker_name berilsa — yozuvchi ishchi, bo'lim har doim "work" va ishchi o'zi."""
-    extra = _worker_rules(worker_name) if worker_name else ""
+    """worker_name berilsa — yozuvchi ishchi, bo'lim har doim "work" va ishchi o'zi. client_name — yozuvchi
+    korxonaning mijozi (taklif havolasi orqali ulangan), bo'lim faqat "client"."""
+    extra = _side_rules(worker_name, client_name)
     content = f"{_context_block(today, known, info)}\n\nXabar:\n«{text}»"
     return await _call(content, extra)
 
@@ -439,11 +463,12 @@ async def correct(
     known: dict[str, list[str]],
     worker_name: str | None = None,
     info: str = "",
+    client_name: str | None = None,
 ) -> Extraction:
     """Mavjud qoralamaga foydalanuvchi tuzatishini qo'llaydi."""
     extra = "Senga joriy qoralama va tuzatish beriladi. Tuzatishni qo'llab, TO'LIQ yangilangan natijani qaytar."
-    if worker_name:
-        extra += " " + _worker_rules(worker_name)
+    if side := _side_rules(worker_name, client_name):
+        extra += " " + side
     content = (
         f"{_context_block(today, known, info)}\n\n"
         f"Joriy qoralama:\n{json.dumps(draft, ensure_ascii=False)}\n\n"

@@ -200,6 +200,10 @@ class WorkerPayment(TimestampMixin, Base):
 # --- 2. Mijozlar: optom savdo ---------------------------------------------
 
 class Client(Base):
+    """Optom mijoz. Egasi taklif havolasini yuboradi; mijoz ulangach oldi-berdini botda ko'radi va o'zi ham
+    yozadi («10 komplekt oldim», «2 million berdim»). Users jadvalida emas (ta'minotchidek): bitta Telegram
+    akkaunt bir nechta eganing mijozi yoki o'zi ham ega/ishchi bo'lishi mumkin."""
+
     __tablename__ = "clients"
     __table_args__ = (UniqueConstraint("owner_id", "name"),)
 
@@ -209,6 +213,9 @@ class Client(Base):
     phone: Mapped[str | None] = mapped_column(String(30))
     note: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True)
+    tg_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # Taklif havolasi orqali ulanmaguncha shu token saqlanadi
+    invite_token: Mapped[str | None] = mapped_column(String(32), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -244,7 +251,9 @@ class ClientEntry(TimestampMixin, Base):
     note: Mapped[str | None] = mapped_column(Text)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
+    # Mijoz o'zi yozganida — egasining id si (mijoz users jadvalida yo'q), by_client belgisi bilan
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    by_client: Mapped[bool] = mapped_column(default=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     client: Mapped[Client] = relationship(lazy="joined")

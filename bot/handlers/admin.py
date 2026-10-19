@@ -1,4 +1,6 @@
-"""Egasi uchun: ishchilar, kasblar, modellar, ta'minotchilar va sozlamalar."""
+"""Egasi uchun: ishchilar, kasblar, modellar, ta'minotchilar, mijozlar va sozlamalar."""
+from collections import defaultdict
+from decimal import Decimal
 from html import escape
 
 from aiogram import Bot, F, Router
@@ -12,9 +14,9 @@ from bot import drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import ItemModel, Supplier, User
+from bot.db.models import Client, ItemModel, Supplier, User
 from bot.handlers.entries import ledger_text, tracked
-from bot.handlers.money import supplier_month_line
+from bot.handlers.money import client_balance_text, client_ledger_blocks, supplier_month_line
 from bot.middlewares import IsOwner
 from bot.services.utils import CURRENCY_LABELS, fmt_money, fmt_totals, parse_price, today
 
@@ -29,12 +31,13 @@ class AdminSG(StatesGroup):
     model_name = State()
     model_price = State()
     supplier_name = State()
+    client_name = State()
 
 
 # --- Ishchilar --------------------------------------------------------------
 
-async def _invite_link(bot: Bot, token: str, prefix: str = "inv") -> str:
-    """Taklif havolasi: ishchiga — inv_, ta'minotchiga — sup_."""
+async def invite_link(bot: Bot, token: str, prefix: str = "inv") -> str:
+    """Taklif havolasi: ishchiga — inv_, ta'minotchiga — sup_, mijozga — cli_."""
     me = await bot.me()
     return f"https://t.me/{me.username}?start={prefix}_{token}"
 
@@ -170,7 +173,7 @@ async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session
         return
     worker = await repo.create_worker(session, user.id, name)
     await state.clear()
-    link = await _invite_link(bot, worker.invite_token)
+    link = await invite_link(bot, worker.invite_token)
     await message.answer(
         f"✅ <b>{escape(name)}</b> qo'shildi.\n\n"
         f"Ushbu havolani ishchiga yuboring — u bosganda bot unga ulanadi:\n{link}\n\n"
@@ -188,7 +191,7 @@ async def worker_link(
     if worker is None:
         return
     token = await repo.new_invite_token(session, worker)
-    link = await _invite_link(bot, token)
+    link = await invite_link(bot, token)
     await call.message.answer(f"🔗 <b>{escape(worker.name)}</b> uchun yangi havola:\n{link}")
     await call.answer()
 
@@ -349,7 +352,7 @@ async def supplier_add_name(message: Message, bot: Bot, state: FSMContext, sessi
         return
     supplier = await repo.create_supplier(session, user.id, name)
     await state.clear()
-    link = await _invite_link(bot, supplier.invite_token, "sup")
+    link = await invite_link(bot, supplier.invite_token, "sup")
     await message.answer(
         f"✅ <b>{escape(supplier.name)}</b> qo'shildi.\n\n"
         "Ushbu havolani unga yuboring — u bosganda bot unga ulanadi va undan xom ashyo olganingizda "
@@ -366,7 +369,7 @@ async def supplier_link(
     supplier = await _get_supplier(call, session, user, callback_data.supplier_id)
     if supplier is None:
         return
-    link = await _invite_link(bot, await repo.new_supplier_token(session, supplier), "sup")
+    link = await invite_link(bot, await repo.new_supplier_token(session, supplier), "sup")
     await call.message.answer(f"🔗 <b>{escape(supplier.name)}</b> uchun yangi havola:\n{link}")
     await call.answer()
 
@@ -383,6 +386,189 @@ async def supplier_toggle(
     text, kb = await _supplier_card(session, supplier)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer("Faollashtirildi" if supplier.is_active else "O'chirildi — endi xabar bormaydi")
+
+
+# --- Mijozlar: optom savdo ------------------------------------------------------
+
+CLIENTS_BUDGET = 3000
+CLIENT_BUTTONS = 40
+CLIENT_HOWTO = (
+    "Ulangan mijoz siz bilan oldi-berdini botda ko'rib turadi: siz yozganingiz unga boradi, u "
+    "<i>«10 komplekt oldim»</i>, <i>«2 million berdim»</i> desa — hisobga yoziladi va sizga xabar keladi (✍️)."
+)
+
+
+def _client_status(c: Client) -> str:
+    if not c.is_active:
+        return "⛔ o'chirilgan"
+    return "✅ ulangan" if c.tg_id else "🔗 ulanmagan"
+
+
+async def _clients_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    stats = await repo.client_stats(session, owner_id)
+    kb = InlineKeyboardBuilder()
+    lines = []
+    budget = CLIENTS_BUDGET
+    owes: dict[str, Decimal] = defaultdict(Decimal)
+    for st in stats:
+        balance = {c: v for c, v in st.balance.items() if v}
+        for currency, value in balance.items():
+            if value > 0:
+                owes[currency] += value
+        line = f"• {client_balance_text(st.client.name, balance)} · {_client_status(st.client)}"
+        if len(line) <= budget:
+            budget -= len(line) + 1
+            lines.append(line)
+    if len(lines) < len(stats):
+        lines.append(f"… yana {len(stats) - len(lines)} ta — ilovada")
+    buttons = stats[:CLIENT_BUTTONS]
+    for st in buttons:
+        kb.button(text=f"👤 {st.client.name}", callback_data=kbs.ClientCb(action="open", client_id=st.client.id))
+    kb.button(text="➕ Mijoz qo'shish", callback_data=kbs.ClientCb(action="add"))
+    kb.adjust(*_rows(len(buttons), 2), 1)
+    kbs.add_app_button(kb, "clients")
+    if not stats:
+        text = (
+            "🛍 <b>Mijozlar</b>\n\nHali mijoz yo'q.\n\n«➕ Mijoz qo'shish» — ismini yozing, bot taklif havolasini "
+            "beradi. Yoki ovoz bilan ayting: <i>«Tohirga 10 komplekt maksima berdim, 140 mingdan»</i>, "
+            "<i>«Tohir 2 million to'ladi»</i>."
+        )
+        return text, kb.as_markup()
+    text = "🛍 <b>Mijozlar</b>\n\n" + "\n".join(lines)
+    if owes:
+        text += f"\n\nJami mijozlar qarzi: <b>{fmt_totals(dict(owes))}</b>"
+    text += "\n\n💡 Mijozni bosing — oldi-berdi va taklif havolasi. " + CLIENT_HOWTO
+    return text, kb.as_markup()
+
+
+async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple[str, InlineKeyboardMarkup]:
+    balance = await repo.client_balance(session, client.owner_id, client.id)
+    blocks, more = await client_ledger_blocks(session, client, client_side=False)
+    kb = InlineKeyboardBuilder()
+    if client.is_active and not client.tg_id:
+        label = "🔗 Yangi taklif havolasi" if client.invite_token else "🔗 Taklif havolasi"
+        kb.button(text=label, callback_data=kbs.ClientCb(action="link", client_id=client.id))
+    kb.button(
+        text="⛔ O‘chirish (xabar bormaydi)" if client.is_active else "✅ Qayta faollashtirish",
+        callback_data=kbs.ClientCb(action="toggle", client_id=client.id),
+    )
+    kb.button(text="↩️ Mijozlar", callback_data=kbs.ClientCb(action="list"))
+    kb.adjust(1)
+    kbs.add_app_button(kb, "clients")
+
+    head = f"👤 <b>{escape(client.name)}</b>"
+    if client.phone:
+        head += f"\n📞 {escape(client.phone)}"
+    parts = [head, f"Holati: {_client_status(client)}\n{client_balance_text(client.name, balance)}"]
+    if blocks:
+        parts.append("🕘 <b>Oldi-berdi</b>" + ("\n<i>… oldingilari — ilovada</i>" if more else ""))
+        parts.extend(blocks)
+    if not client.is_active:
+        parts.append("O'chirilgan: mijozga xabar bormaydi, u botda yoza olmaydi.")
+    elif client.tg_id:
+        parts.append(CLIENT_HOWTO)
+    elif client.invite_token:
+        link = await invite_link(bot, client.invite_token, "cli")
+        parts.append(f"Ushbu havolani mijozga yuboring — bosganda botga ulanadi:\n{link}\n\n{CLIENT_HOWTO}")
+    else:
+        parts.append(f"«🔗 Taklif havolasi»ni bosing va havolani mijozga yuboring. {CLIENT_HOWTO}")
+    return "\n\n".join(parts), kb.as_markup()
+
+
+async def _get_client(call: CallbackQuery, session: AsyncSession, user: User, client_id: int) -> Client | None:
+    client = await repo.get_client(session, user.id, client_id)
+    if client is None:
+        await call.answer("Mijoz topilmadi.", show_alert=True)
+    return client
+
+
+@router.message(F.text == kbs.BTN_CLIENTS)
+async def clients(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    text, kb = await _clients_view(session, user.id)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action == "list"))
+async def clients_list(call: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
+    await state.clear()
+    text, kb = await _clients_view(session, user.id)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action == "open"))
+async def client_open(
+    call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    client = await _get_client(call, session, user, callback_data.client_id)
+    if client is None:
+        return
+    text, kb = await _client_card(bot, session, client)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action == "add"))
+async def client_add(call: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AdminSG.client_name)
+    await call.message.answer("Mijozning ismini yozing (masalan: <i>Tohir</i>):")
+    await call.answer()
+
+
+@router.message(AdminSG.client_name, F.text, ~F.text.in_(kbs.MENU_TEXTS))
+async def client_add_name(message: Message, bot: Bot, state: FSMContext, session: AsyncSession, user: User) -> None:
+    name = message.text.strip()[:100]
+    if not name or name.startswith("/"):
+        await message.answer("Ism bo'sh bo'lmasin. Qaytadan yozing:")
+        return
+    await state.clear()
+    client = await repo.get_client_by_name(session, user.id, name)
+    if client is not None:
+        if not client.is_active:
+            client.is_active = True
+        if not client.tg_id and not client.invite_token:
+            await repo.new_client_token(session, client)
+        await message.answer(f"ℹ️ <b>{escape(client.name)}</b> ro'yxatda bor:")
+    else:
+        client = await repo.create_client(session, user.id, name)
+        link = await invite_link(bot, client.invite_token, "cli")
+        await message.answer(
+            f"✅ <b>{escape(client.name)}</b> qo'shildi.\n\n"
+            "Ushbu havolani mijozga yuboring — u bosganda botga ulanadi va siz bilan oldi-berdini ko'rib turadi. "
+            f"U «10 komplekt oldim», «2 million berdim» desa ham — hisobga yoziladi:\n{link}\n\nHavola bir martalik."
+        )
+    text, kb = await _client_card(bot, session, client)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action == "link"))
+async def client_link(
+    call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    client = await _get_client(call, session, user, callback_data.client_id)
+    if client is None:
+        return
+    link = await invite_link(bot, await repo.new_client_token(session, client), "cli")
+    await call.message.answer(
+        f"🔗 <b>{escape(client.name)}</b> uchun taklif havolasi (bir martalik):\n{link}\n\n"
+        "Mijozga yuboring — bosganda botga ulanadi va siz bilan oldi-berdini ko'radi."
+    )
+    await call.answer()
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action == "toggle"))
+async def client_toggle(
+    call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    client = await _get_client(call, session, user, callback_data.client_id)
+    if client is None:
+        return
+    client.is_active = not client.is_active
+    await session.flush()
+    text, kb = await _client_card(bot, session, client)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer("Faollashtirildi" if client.is_active else "O'chirildi — endi xabar bormaydi")
 
 
 # --- Kasblar ----------------------------------------------------------------

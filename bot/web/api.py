@@ -987,16 +987,22 @@ def _client_entry_json(e: ClientEntry) -> dict:
         "currency": e.currency,
         "note": e.note,
         "raw_text": e.raw_text,
+        "by_client": e.by_client,
     }
 
 
-def _client_json(st: repo.ClientStats) -> dict:
+def _client_json(st: repo.ClientStats, bot_username: str) -> dict:
     c = st.client
+    link = None
+    if c.is_active and not c.tg_id and c.invite_token:
+        link = f"https://t.me/{bot_username}?start=cli_{c.invite_token}"
     return {
         "id": c.id,
         "name": c.name,
         "phone": c.phone,
         "is_active": c.is_active,
+        "linked": c.tg_id is not None,
+        "invite_link": link,
         "balance": _money({cur: v for cur, v in st.balance.items() if v}),
         "sold": _money(st.sold),
         "paid": _money(st.paid),
@@ -1024,6 +1030,7 @@ async def clients(request: web.Request, session: AsyncSession, user: User) -> we
     t = today()
     b = _period_bounds(period, t)
     stats = await repo.client_stats(session, user.id, b["start"], b["end"])
+    username = (await request.app["bot"].me()).username
     return web.json_response(
         {
             "period": period,
@@ -1031,7 +1038,7 @@ async def clients(request: web.Request, session: AsyncSession, user: User) -> we
             "end": b["end"].isoformat(),
             "today": t.isoformat(),
             "set_size": await repo.set_size(session, user.id),
-            "items": [_client_json(st) for st in stats],
+            "items": [_client_json(st, username) for st in stats],
             "totals": {
                 "owed": _sum_money([{c: v for c, v in st.balance.items() if v > 0} for st in stats]),
                 "prepaid": _sum_money([{c: -v for c, v in st.balance.items() if v < 0} for st in stats]),
@@ -1059,7 +1066,8 @@ async def add_client(request: web.Request, session: AsyncSession, user: User) ->
     if await repo.get_client_by_name(session, user.id, name):
         raise ApiError(400, "Bunday mijoz bor")
     client = await repo.create_client(session, user.id, name, phone)
-    return web.json_response(_client_json(repo.ClientStats(client=client)))
+    username = (await request.app["bot"].me()).username
+    return web.json_response(_client_json(repo.ClientStats(client=client), username))
 
 
 @routes.patch(r"/api/clients/{id:\d+}")
@@ -1085,6 +1093,20 @@ async def update_client(request: web.Request, session: AsyncSession, user: User)
     return web.json_response({"ok": True})
 
 
+@routes.post(r"/api/clients/{id:\d+}/invite")
+@endpoint(owner_only=True)
+async def reinvite_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Yangi taklif havolasi: avval havolasi bo'lmagan mijozga yoki boshqa Telegram akkauntga o'tkazish uchun."""
+    client = await repo.get_client(session, user.id, int(request.match_info["id"]))
+    if client is None:
+        raise ApiError(404, "Mijoz topilmadi")
+    if not client.is_active:
+        raise ApiError(400, "Avval mijozni faollashtiring")
+    token = await repo.new_client_token(session, client)
+    bot_me = await request.app["bot"].me()
+    return web.json_response({"invite_link": f"https://t.me/{bot_me.username}?start=cli_{token}"})
+
+
 @routes.get("/api/clients/entries")
 @endpoint(owner_only=True)
 async def client_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
@@ -1102,10 +1124,14 @@ async def client_entries(request: web.Request, session: AsyncSession, user: User
 @routes.delete(r"/api/clients/entries/{id:\d+}")
 @endpoint(owner_only=True)
 async def delete_client_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    from bot.handlers.money import client_deleted_message  # aylanma importdan qochish uchun
+
     entry = await repo.get_client_entry(session, user.id, int(request.match_info["id"]))
     if entry is None:
         raise ApiError(404, "Yozuv topilmadi")
     await repo.soft_delete(session, entry)
+    if notice := await client_deleted_message(session, user, entry):
+        _notify(request, *notice)
     return web.json_response({"ok": True})
 
 

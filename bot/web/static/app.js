@@ -396,6 +396,7 @@ function feedRow(e, opts = {}) {
     icon = CLIENT_ICON[e.kind] || "❔";
     iconCls = e.kind === "payment" ? "in" : e.kind === "return" ? "out" : "";
     title = opts.noWho ? CLIENT_KIND[e.kind] : `${e.client.name} · ${CLIENT_KIND[e.kind] || ""}`;
+    if (e.by_client) title += " ✍️";
     amt = money(e.amount, e.currency);
     amtCls = e.kind === "payment" ? "pos" : "";
     if (!opts.noWho) sub.push("Mijoz");
@@ -1295,7 +1296,7 @@ function renderClients() {
   }
   $("clientList").innerHTML = d.items.map((c) => {
     const b = clientBalance(c);
-    const sub = [c.sets ? `${fmtNum(c.sets)} komplekt` : "", c.last_date ? dateLabel(c.last_date) : "yozuv yo'q"].filter(Boolean).join(" · ");
+    const sub = [c.linked ? "✅ ulangan" : "", c.sets ? `${fmtNum(c.sets)} komplekt` : "", c.last_date ? dateLabel(c.last_date) : "yozuv yo'q"].filter(Boolean).join(" · ");
     return `
       <button class="row-card${c.is_active ? "" : " off"}" data-client="${c.id}">
         <div class="avatar">${esc(initials(c.name))}</div>
@@ -1336,21 +1337,41 @@ async function clientSheet(id) {
   if (!c) return;
   const b = clientBalance(c);
   const periodLabel = { day: "bugun", week: "shu hafta", month: "shu oy", year: "shu yil" }[c.period] || "";
+  const status = !c.is_active ? "⛔ O'chirilgan — mijozga xabar bormaydi, u botda yoza olmaydi."
+    : c.linked ? "✅ Botga ulangan — oldi-berdini ko'radi, «10 komplekt oldim», «2 million berdim» desa hisobga yoziladi (✍️)."
+    : "🔗 Havolani yuboring — mijoz bosganda botga ulanadi va siz bilan oldi-berdini ko'rib turadi, o'zi ham yozadi.";
+  const invite = c.invite_link
+    ? `<div class="field"><label>Taklif havolasi (bir martalik)</label><div class="link-box">${esc(c.invite_link)}</div></div>
+       <button class="primary" id="clShare">📤 Mijozga yuborish</button>
+       <button class="secondary" id="clCopy">Nusxalash</button>`
+    : c.is_active && !c.linked ? `<button class="primary" id="clInvite">🔗 Taklif havolasi</button>` : "";
   openSheet(`
     <h3>${esc(c.name)}</h3>
+    <p class="muted small">${status}</p>
     ${c.phone ? `<a class="link-box phone" href="tel:${esc(c.phone.replace(/[^+\d]/g, ""))}">📞 ${esc(c.phone)}</a>` : ""}
     <div class="stat-pair">
       <div><b class="amt ${b.cls}">${esc(b.text)}</b><small>${b.label}</small></div>
       <div><b>${fmtNum(c.sets)} komplekt</b><small>${periodLabel} · ${esc(moneyList(c.sold) || "0")}</small></div>
     </div>
     <div id="clientHistory">${SKELETONS}</div>
+    ${invite}
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
   `);
   $("clEdit").onclick = () => clientEditSheet(c);
+  if ($("clShare")) $("clShare").onclick = () => shareInvite(c.invite_link, `${c.name}, biz bilan oldi-berdingizni ko'rib turish uchun Moliyachi botiga ulaning:`);
+  if ($("clCopy")) $("clCopy").onclick = () => copyText(c.invite_link);
+  if ($("clInvite")) $("clInvite").onclick = async () => {
+    try {
+      const upd = await api(`/api/clients/${c.id}/invite`, { method: "POST" });
+      state.clients.byId[c.id] = { ...c, invite_link: upd.invite_link };
+      clientSheet(c.id);
+    } catch (e) { fail(e); }
+  };
   try {
     const data = await api(`/api/clients/entries?client_id=${id}&limit=100`);
     if (!$("clientHistory")) return;
     $("clientHistory").innerHTML = data.items.map((e) => feedRow({ type: "client", ...e }, { date: true, del: true, noWho: true })).join("")
+      + (data.items.some((e) => e.by_client) ? `<p class="muted small">✍️ — mijoz o'zi botda yozgan</p>` : "")
       || `<p class="muted">Hali oldi-berdi yo'q</p>`;
     $("clientHistory").onclick = (ev) => {
       const btn = ev.target.closest("[data-del-feed]");
@@ -1366,6 +1387,7 @@ function clientEditSheet(c) {
     <h3>${isNew ? "Yangi mijoz" : esc(c.name)}</h3>
     <div class="field"><label>Ismi</label><input class="input" id="clName" maxlength="100" value="${esc(c.name)}" placeholder="Masalan: Tohir" autocomplete="off"></div>
     <div class="field"><label>Telefon (ixtiyoriy)</label><input class="input" id="clPhone" maxlength="30" inputmode="tel" value="${esc(c.phone || "")}" placeholder="+998 90 123 45 67"></div>
+    ${isNew ? `<p class="muted small">Qo'shilgach taklif havolasini mijozga yuboring. U botga ulansa, siz bilan oldi-berdini ko'rib turadi va o'zi ham yozadi: «10 komplekt oldim», «2 million berdim».</p>` : ""}
     ${isNew ? "" : `<label class="switch-row"><div>Faol<small>O'chirilgan mijoz ro'yxat oxirida turadi, yozuvlari saqlanadi</small></div><span class="switch"><input type="checkbox" id="clActive" ${c.is_active ? "checked" : ""}><i></i></span></label>`}
     <button class="primary" id="clSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
   `);
@@ -1376,8 +1398,15 @@ function clientEditSheet(c) {
     if (!isNew) body.is_active = $("clActive").checked;
     $("clSave").disabled = true;
     try {
-      if (isNew) await api("/api/clients", { method: "POST", body });
-      else await api(`/api/clients/${c.id}`, { method: "PATCH", body });
+      if (isNew) {
+        const created = await api("/api/clients", { method: "POST", body });
+        state.clients.byId[created.id] = { ...created, period: state.clients.period };
+        toast("Qo'shildi — havolani mijozga yuboring");
+        refreshView();
+        clientSheet(created.id);
+        return;
+      }
+      await api(`/api/clients/${c.id}`, { method: "PATCH", body });
       closeSheet();
       toast("Saqlandi");
       refreshView();
