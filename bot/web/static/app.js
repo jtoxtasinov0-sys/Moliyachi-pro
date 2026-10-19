@@ -1792,7 +1792,11 @@ function jobSheet(j, onCreated) {
         <div class="price-row"><span>Valyuta</span><select class="select" id="jCur" style="margin:0" aria-label="Valyuta">${curOptions}</select></div>
       </div>
     </div>
-    <label class="switch-row"><div>Model so'ralmaydi<small>Kroy, brsovka: «50 ta ish qildim» desa — kasb narxi bilan darhol hisoblanadi</small></div><span class="switch"><input type="checkbox" id="jFree" ${j.model_free ? "checked" : ""}><i></i></span></label>`}
+    <div class="field"><label>Modellar bo'yicha narx (shu kasb uchun)</label>
+      <div class="price-list" id="jModelPrices"><div class="skeleton"></div></div>
+      <p class="muted small">Bo'sh — umumiy narx olinadi. Tikuvchi va kroychining narxi alohida: har bir kasbga o'z narxi.</p>
+    </div>
+    <label class="switch-row"><div>✂️ Modelsiz ham bo'ladi<small>Kroy, brsovka: modellarga narx qo'yilmagan bo'lsa «50 ta ish qildim» umumiy narx bilan darhol yoziladi; qo'yilgan bo'lsa — modellar narxi bilan variant chiqadi</small></div><span class="switch"><input type="checkbox" id="jFree" ${j.model_free ? "checked" : ""}><i></i></span></label>`}
     <button class="primary" id="jSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
     ${isNew
       ? '<p class="muted small" style="margin-top:12px">Kasb ishchiga beriladi, har bir modelga esa shu kasb uchun alohida narx qo\'yiladi («Modellar»).</p>'
@@ -1801,6 +1805,19 @@ function jobSheet(j, onCreated) {
   `);
   const input = $("jName");
   if (isNew) setTimeout(() => input.focus(), 250);
+  // Modellar va ularning shu kasb narxi
+  let modelIds = [];
+  if (!isNew) {
+    api("/api/models").then((data) => {
+      if (!$("jModelPrices")) return;
+      const models = data.items.filter((m) => m.is_active);
+      modelIds = models.map((m) => m.id);
+      $("jModelPrices").innerHTML = models.map((m) => {
+        const p = (m.prices || []).find((x) => x.job_id === j.id);
+        return `<div class="price-row"><span>${esc(m.name)}</span><input class="input" data-model-price="${m.id}" inputmode="decimal" value="${p ? p.price : ""}" placeholder="—" aria-label="${esc(m.name)}"></div>`;
+      }).join("") || `<p class="muted small">Hali model yo'q — «Modellar»da qo'shing.</p>`;
+    }).catch(fail);
+  }
   $("jSave").onclick = async () => {
     const name = input.value.trim();
     if (!name) return input.focus();
@@ -1810,7 +1827,10 @@ function jobSheet(j, onCreated) {
         ? await api("/api/jobs", { method: "POST", body: { name } })
         : await api(`/api/jobs/${j.id}`, {
           method: "PATCH",
-          body: { name, price: $("jPrice").value.trim() || null, currency: $("jCur").value, model_free: $("jFree").checked },
+          body: {
+            name, price: $("jPrice").value.trim() || null, currency: $("jCur").value, model_free: $("jFree").checked,
+            ...(modelIds.length ? { model_prices: Object.fromEntries([...document.querySelectorAll("[data-model-price]")].map((el) => [el.dataset.modelPrice, el.value.trim() || null])) } : {}),
+          },
         });
       state.jobs = res.items;
       if (isNew && onCreated) {
@@ -1821,7 +1841,7 @@ function jobSheet(j, onCreated) {
       }
       toast(isNew ? "Kasb qo'shildi" : "Saqlandi");
       if (state.view === "workers") loadWorkers();
-      if (state.view === "models") renderModelList();
+      if (state.view === "models") loadModels();
     } catch (e) { fail(e); $("jSave").disabled = false; }
   };
   if ($("jDel")) $("jDel").onclick = async () => {

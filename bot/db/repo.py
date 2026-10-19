@@ -365,6 +365,18 @@ async def set_model_price(
     await session.flush()
 
 
+async def priced_jobs(session: AsyncSession, owner_id: int) -> set[int]:
+    """Modellarga alohida narx qo'yilgan kasblar (faol modellarda): bunday kasbda ish topshirilganda model so'raladi —
+    narx modelga qarab farq qiladi (Loafer kroyi va Sapog kroyi)."""
+    rows = await session.scalars(
+        select(ModelPrice.job_id)
+        .join(ItemModel, ItemModel.id == ModelPrice.model_id)
+        .where(ItemModel.owner_id == owner_id, ItemModel.is_active.is_(True))
+        .distinct()
+    )
+    return set(rows)
+
+
 async def clear_model_prices(session: AsyncSession, model_id: int) -> None:
     await session.execute(delete(ModelPrice).where(ModelPrice.model_id == model_id))
 

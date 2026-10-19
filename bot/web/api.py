@@ -687,18 +687,28 @@ async def add_job(request: web.Request, session: AsyncSession, user: User) -> we
 @routes.patch(r"/api/jobs/{id:\d+}")
 @endpoint(owner_only=True)
 async def update_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """{name, price, currency, model_free} — berilganlari o'zgaradi. price — kasbning o'z narxi (hamma modellar
-    uchun), null — olib tashlanadi; model_free — ish topshirilganda model so'ralmaydi (kroy, brsovka)."""
+    """{name, price, currency, model_free, model_prices} — berilganlari o'zgaradi. price — kasbning o'z narxi (hamma
+    modellar uchun), null — olib tashlanadi; model_free — modelsiz ham bo'ladi (kroy, brsovka); model_prices —
+    {model_id: narx yoki null}: shu kasbning modellar bo'yicha narxi (Loafer kroyi, Sapog kroyi)."""
     job = await _get_job(request, session, user)
     data = await _json(request)
     if "name" in data and not await repo.rename_job(session, job, _job_name(data)):
         raise ApiError(400, "Bunday kasb bor")
+    currency = data.get("currency") or (await repo.enabled_currencies(session, user.id))[0]
+    if currency not in repo.ALL_CURRENCIES:
+        raise ApiError(400, "Valyuta noto'g'ri")
     if "price" in data:
-        currency = data.get("currency") or (await repo.enabled_currencies(session, user.id))[0]
-        if currency not in repo.ALL_CURRENCIES:
-            raise ApiError(400, "Valyuta noto'g'ri")
         price = _parse_price(data["price"])
         await repo.set_job_price(session, job, price if price else None, currency)
+    if "model_prices" in data:
+        prices = data["model_prices"]
+        if not isinstance(prices, dict):
+            raise ApiError(400, "Narxlar noto'g'ri")
+        for key, value in prices.items():
+            model = await repo.get_model(session, user.id, int(key)) if str(key).isdigit() else None
+            if model is None:
+                raise ApiError(400, "Model noto'g'ri")
+            await repo.set_model_price(session, model, job.id, _parse_price(value) or None, currency)
     if "model_free" in data:
         job.model_free = bool(data["model_free"])
         await session.flush()

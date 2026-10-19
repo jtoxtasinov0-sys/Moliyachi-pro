@@ -11,7 +11,9 @@ Qoralama FSM holatida oddiy dict sifatida saqlanadi. Ish topshirish:
              job_id, job_name, job_q, job_auto, model_free, quantity, price, currency}],
 }
 job_q — xabarda aytilgan kasb («brsovka»). Aytilmasa va job_auto bo'lsa — ishchining o'z kasbi olinadi.
-model_free — kasbda model so'ralmaydi (kroy, brsovka): model aytilmasa — kasbning o'z narxi bilan saqlanadi.
+model_free — model aytilmasa so'ralmaydi, kasbning o'z narxi bilan saqlanadi: kasbda «Modelsiz ham bo'ladi» (kroy,
+brsovka) va modellarga shu kasb narxi qo'yilmagan, yoki model_none — «✂️ Modelsiz» tugmasi bosilgan. Modellarga
+kasb narxi qo'yilgan bo'lsa — model narxi bilan variant bo'lib so'raladi.
 Narx (price) — model va kasb bo'yicha: modelning kasb narxi, kasbning o'z narxi, modelning umumiy narxi.
 date — qatorning o'z sanasi (yozishma skrinshotida har xil kunlar), None — umumiy sana.
 Ishchi bilan pul (avans, ish haqi, qaytarilgan pul, hisob holati) — shu qoralamada "pays" (ish bo'lmasa ham):
@@ -84,7 +86,7 @@ def _empty_line() -> dict:
     return {
         "worker_id": None, "worker_name": None, "worker_q": None,
         "model_id": None, "model_name": None, "model_q": None,
-        "job_id": None, "job_name": None, "job_q": None, "job_auto": True, "model_free": False,
+        "job_id": None, "job_name": None, "job_q": None, "job_auto": True, "model_free": False, "model_none": False,
         "quantity": None, "price": None, "currency": None, "date": None,
     }
 
@@ -357,6 +359,7 @@ def from_entry(entry: WorkEntry) -> dict:
         job_id=entry.job_id, job_name=entry.job.name if entry.job else None,
         job_q=entry.job.name if entry.job else None, job_auto=False,
         model_free=entry.job is not None and entry.job.model_free,
+        model_none=entry.model_id is None,
         quantity=entry.quantity,
         price=str(entry.unit_price) if entry.unit_price is not None else None,
         currency=entry.price_currency,
@@ -543,6 +546,7 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     job_aliases = await repo.get_aliases(session, acc, "job")
     workers_by_id = {w.id: w for w in workers}
     workers_by_id[user.id] = user
+    priced = await repo.priced_jobs(session, acc)
 
     pays = draft.setdefault("pays", [])
     for item in [*draft["lines"], *pays]:
@@ -576,10 +580,17 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
             job = jobs_by_id.get(worker.job_id) if worker else None
             line["job_id"], line["job_name"] = (job.id, job.name) if job else (None, None)
         job = jobs_by_id.get(line["job_id"])
-        line["model_free"] = job is not None and job.model_free
+        # Modellarga shu kasb narxi qo'yilgan bo'lsa — model so'raladi (narx modelga qarab), «✂️ Modelsiz» ham bor
+        line["model_free"] = (
+            job is not None and job.model_free and (line.get("model_none", False) or job.id not in priced)
+        )
 
     await price_lines(session, draft, acc)
     await _pay_balances(session, draft, user)
+
+
+# «✂️ Modelsiz» tugmasi (model tanlash savolida): kasbning o'z narxi bilan, modelsiz
+MODEL_NONE = -1
 
 
 def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
@@ -1398,17 +1409,33 @@ async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, 
         allow_new = None  # ishchi faqat taklif havolasi orqali qo'shiladi
         label = "ishchi"
     else:
-        items = [(m.id, m.name) for m in await repo.list_models(session, acc)]
+        models = await repo.list_models(session, acc)
+        items = [(m.id, m.name) for m in models]
         aliases = await repo.get_aliases(session, acc, "model")
         query = line["model_q"]
         allow_new = query if (user.is_owner and query) else None
         label = "model"
+        job = await repo.get_job(session, acc, line["job_id"])
+        labels: dict[int, str] = {}
+        if job is not None:
+            # Shu kasb narxi qo'yilgan modellar birinchi, narxi bilan: «Loafer · 1 500 so'm»
+            prices = await repo.model_prices(session, [m.id for m in models])
+            own = {mid: p[job.id] for mid, p in prices.items() if job.id in p}
+            items.sort(key=lambda item: item[0] not in own)
+            names = dict(items)
+            labels = {mid: f"{names[mid]} · {fmt_money(row.price, row.currency)}" for mid, row in own.items()}
 
     options: list[tuple[int, str]] = []
     if query:
         options = [(o[0], o[1]) for o in matcher.match(query, items, aliases).options]
     if not options:
         options = items[:20]
+    if kind == "model":
+        options = [(oid, labels.get(oid, name)) for oid, name in options]
+        if job is not None and job.model_free:
+            # Model kerak bo'lmasa — kasbning o'z narxi bilan
+            rate = f" · {fmt_money(job.price, job.currency)}" if job.price is not None else ""
+            options.append((MODEL_NONE, f"✂️ Modelsiz{rate}"))
 
     if not items and not allow_new:
         hint = (
@@ -1422,4 +1449,6 @@ async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, 
         question = f"❓ «{escape(query)}» — qaysi {label}?"
     else:
         question = f"❓ Qaysi {label}?"
+    if kind == "model" and job is not None and labels:
+        question += f" Narxi — {escape(job.name)} narxi."
     return text + f"\n\n{question}", kbs.resolve_kb(kind, i, options, allow_new)

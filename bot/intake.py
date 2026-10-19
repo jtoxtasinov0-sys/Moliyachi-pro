@@ -74,11 +74,14 @@ async def analyze(
         raise IntakeError("⚠️ Xabarni tahlil qilib bo'lmadi. Birozdan keyin qayta urinib ko'ring.")
 
     raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
+    # Tuzatishda «✂️ Modelsiz» tanlovi saqlanadi (model hali ham aytilmagan bo'lsa)
+    modelless = [bool(old.get("model_none")) for old in draft.get("lines", [])] if correcting else []
     new = await _build(
         session, user, ext, raw, set_size,
         said=f"🗣 <i>«{escape(text)}»</i>",
         entry_id=draft["entry_id"] if correcting else None,
         source=draft.get("source") if correcting else None,
+        modelless=modelless,
     )
     if worker is not None and user.is_owner and new["section"] == "work":
         drafts.share_worker(new, worker.id, worker.name)
@@ -202,7 +205,9 @@ async def _build(
     said: str,
     entry_id: int | None = None,
     source: str | None = None,
+    modelless: list[bool] | None = None,
 ) -> dict:
+    """modelless — tuzatilayotgan qoralamaning qaysi qatorlarida «✂️ Modelsiz» tanlangan edi."""
     if entry_id is None:
         await _reroute_debts(session, user, ext)
     if not _understood(user, ext):
@@ -221,6 +226,9 @@ async def _build(
         raise IntakeError("Tahrirlashda faqat bitta yozuv bo'lishi kerak. Qaytadan ayting.")
     if source:
         new_draft["source"] = source
+    for line, none in zip(new_draft.get("lines", []), modelless or []):
+        if none and not line["model_q"]:
+            line["model_none"] = True
 
     await drafts.resolve(session, new_draft, user)
     if source == "image" and new_draft["section"] == "money":
@@ -263,6 +271,12 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
 
     if cb.kind == "worker" and user.is_owner:
         await _pick_worker(session, user, draft, line, cb.item_id)
+    elif cb.kind == "model" and cb.item_id == drafts.MODEL_NONE:
+        # «✂️ Modelsiz» — model so'ralmaydigan kasbda, kasbning o'z narxi bilan
+        job = await repo.get_job(session, user.account_id, line["job_id"])
+        if job is None or not job.model_free:
+            return False
+        line.update(model_id=None, model_name=None, model_q=None, model_none=True)
     elif cb.kind == "model":
         model = await _pick_model(session, user, line, cb.item_id)
         if model is None:

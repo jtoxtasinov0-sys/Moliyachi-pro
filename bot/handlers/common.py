@@ -37,8 +37,8 @@ OWNER_HELP = """\
 • <i>Robiyaga 500 ming berdim</i> — ishchiga pul: uning qoldig'idan ayriladi
 • <i>Robiyaga 900 ming qarzman</i>, <i>Robiya bilan hisob yopildi</i> — ishchi bilan hisob holati
 • <i>A-12 modelga brsovka 2000dan, kroy 1500</i> — model narxi kasb bo'yicha
-• <i>kroy 2000dan</i> — kasb narxi hamma modellar uchun: kroychi «50 ta ish qildim» desa,
-  model so'ralmay darhol hisoblanadi
+• <i>kroy 2000dan</i> — kasb narxi hamma modellar uchun; <i>Loafer kroy 1500dan</i> — shu model kroyi:
+  kroychi «10 ta kroy qildim» desa — modellar narxi bilan variant chiqadi («🏷 Kasblar»da ham qo'yiladi)
 • <i>10 millionlik teri oldim, nomi Shirin gul</i> — xom ashyo
 • <i>Xayrulloh Uz charmdan 1 millionlik material oldim</i> — ta'minotchiga ham xabar boradi
 • <i>Bozorga 50 ming won, benzinga 40 ming</i> — shaxsiy xarajat

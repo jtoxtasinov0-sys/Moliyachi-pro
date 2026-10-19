@@ -71,6 +71,42 @@ _PRICE_WORD = re.compile(
 )
 
 
+# «Loafer 1500», «Sapog BG: 2 ming», «A-12 1 500 so'm» — model nomi, oxirida narx (model kodida raqam bo'lishi mumkin)
+_NAME_PRICE = re.compile(
+    r"^(?P<name>.+?)\s*[-—:=]?\s+(?P<price>(?:\d{1,3}(?:[ \u00a0.,]\d{3})+|\d+)(?:[.,]\d+)?"
+    r"(?:\s*(?:ming|минг|k|mln|million|млн)\w*)?(?:\s*(?:so'm|som|sum|сўм|сум|uzs|\$|usd|dollar\w*|won|krw))?"
+    r"(?:dan|дан)?)$",
+    re.IGNORECASE,
+)
+
+
+def parse_model_prices(
+    text: str, models: list[tuple[int, str]], default_currency: str, saved: list[tuple[int, str]] | None = None
+) -> tuple[list[tuple[int, Decimal | None, str]], str | None]:
+    """«Loafer 1500, Sapog BG 2000» -> [(model id, narx yoki None — o'chirish, valyuta)].
+
+    Tushunilmasa — ([], foydalanuvchiga xato matni)."""
+    t = text.replace("‘", "'").replace("’", "'").replace("ʻ", "'")
+    chunks = [c.strip() for c in re.split(r",(?!\d{3})|;|\n", t) if c.strip()]
+    result: list[tuple[int, Decimal | None, str]] = []
+    for chunk in chunks:
+        m = _NAME_PRICE.match(chunk)
+        if m is None:
+            return [], f"«{chunk}» — model nomi va narxini yozing, masalan: Loafer 1500"
+        name = m["name"].strip(" .:-—=")
+        res = matcher.match(name, models, saved)
+        if res.exact_id is None:
+            return [], f"«{name}» — bunday model topilmadi. Modelni tugmadan tanlang."
+        parsed = parse_price(m["price"], default_currency)
+        if parsed is None:
+            return [], f"«{m['price']}» — narxni tushunmadim. Masalan: 1500 yoki 2 ming"
+        value, currency = parsed
+        result.append((res.exact_id, value if value > 0 else None, currency))
+    if not result:
+        return [], "Masalan: «Loafer 1500, Sapog 2000»."
+    return result, None
+
+
 def split_prices(text: str) -> list[tuple[str, str]]:
     """«kroy 1500, brsovka 2 mingdan» -> [("kroy", "1500"), ("brsovka", "2 mingdan")].
 

@@ -151,6 +151,14 @@ class JobCb(CallbackData, prefix="jb"):
     job_id: int = 0
 
 
+class JobPriceCb(CallbackData, prefix="jp"):
+    """Kasbning modellar bo'yicha narxi: «Kroychi: Loafer 1500, Sapog 2000»."""
+
+    action: str  # list | model (model_id — narxi so'raladigan model)
+    job_id: int
+    model_id: int = 0
+
+
 class ModelCb(CallbackData, prefix="md"):
     action: str  # add | price | toggle | pjob (value — kasb, 0 — umumiy narx) | done
     model_id: int = 0

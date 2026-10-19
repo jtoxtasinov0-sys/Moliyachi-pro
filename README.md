@@ -15,14 +15,18 @@ oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». 
 yozilmagan bo'lsa — kasbning o'z narxi, u ham bo'lmasa — modelning umumiy narxi. Hisobotda har bir model qaysi
 bosqichdan (kroy, brsovka, tikuv...) qancha o'tgani ko'rinadi.
 
-**✂️ Kroy va brsovka — modelsiz:** Kroychi va Brsovkachida model so'ralmaydi. Kasbga o'z narxini qo'ying (hamma
-modellar uchun): ovoz yoki matn bilan «kroy 2000dan», «brsovka 1500 bo'lsin», botda «👷 Ishchilar → 🏷 Kasblar →
-Kroychi → 💰 Narxi», ilovada «Jamoa → kasb». Keyin kroychi «50 ta ish qildim» desa (yoki egasi «Nodira 50 ta kroy
-qildi») — model tanlash tugmalari chiqmaydi, darhol 50 × 2000 = 100 000 so'm bo'lib yoziladi. Model aytilsa — u ham
-yoziladi (modelga shu kasb narxi qo'yilgan bo'lsa — o'sha narx). Tikuvchi, Tortuvchi va boshqa kasblarda model
-avvalgidek so'raladi. Qaysi kasbda model so'ralmasligi — kasb kartasidagi «Model so'ralmaydi» tugmasi (Kroychi va
-Brsovkachida sukut bo'yicha yoqiq). Kasb narxi yozilmagan bo'lsa ham ish saqlanadi va egasiga eslatma chiqadi; narx
-qo'yilgach hisobot va qoldiqda shu narx bilan hisoblanadi. Hisobotda bunday ishlar «Modelsiz» bo'lib ko'rinadi.
+**✂️ Kroy va brsovka — modellar narxi yoki modelsiz:** har bir kasbning o'z narxlari bor — tikuvchi va kroychining
+narxi alohida. Kasbga umumiy narx (hamma modellar uchun): «kroy 2000dan», botda «👷 Ishchilar → 🏷 Kasblar → Kroychi →
+💰 Umumiy narx». Modellar bo'yicha narx (Loafer kroyi — 1500, Sapog kroyi — 2500, Loafer tikuvi esa — 6000): botda
+«🏷 Kasblar → Kroychi → 🧵 Modellar narxi» (modelni bosib son yozasiz yoki bir yo'la «Loafer 1500, Sapog 2500»),
+ovoz bilan «Loafer kroy 1500dan», ilovada «Jamoa → kasb» oynasida har bir model qatori yoki model oynasida.
+Kroychi «10 ta kroy qildim» desa: modellarga Kroychi narxi qo'yilgan bo'lsa — narxi bilan variantlar chiqadi
+(«Loafer · 1 500 so'm», «Sapog BG · 2 500 so'm», «✂️ Modelsiz · 2 000 so'm»), tanlangani o'z narxida hisoblanadi;
+qo'yilmagan bo'lsa — model so'ralmay umumiy narx bilan darhol yoziladi (50 × 2000 = 100 000 so'm). Bu — kasb
+kartasidagi «✂️ Modelsiz ham bo'ladi» (Kroychi va Brsovkachida sukut bo'yicha yoqiq); o'chirilsa — har doim model
+so'raladi, Tikuvchi va Tortuvchidagidek. Narx tartibi: modelning shu kasb narxi → kasbning umumiy narxi → modelning
+umumiy narxi. Narx yozilmagan bo'lsa ham ish saqlanadi va egasiga eslatma chiqadi. Hisobotda modelsiz ishlar
+«Modelsiz» bo'lib ko'rinadi.
 
 **⚡ Darhol saqlash:** ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, soni yoki summasi aytildi)
 bot «To'g'rimi?» deb so'ramay darhol saqlaydi va nima saqlanganini ko'rsatadi — xato bo'lsa, kartadagi «✏️ Tahrirlash»
