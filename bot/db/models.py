@@ -83,7 +83,10 @@ class ItemModel(Base):
 
 
 class Job(Base):
-    """Kasb (ish turi): Kroychi, Brsovkachi, Tikuvchi... Egasi o'zi qo'shadi va nomini o'zgartiradi."""
+    """Kasb (ish turi): Kroychi, Brsovkachi, Tikuvchi... Egasi o'zi qo'shadi va nomini o'zgartiradi.
+
+    price — kasbning o'z narxi (bir dona ish, hamma modellar uchun): modelga shu kasb narxi qo'yilmagan bo'lsa
+    shu olinadi. model_free — ish topshirilganda model so'ralmaydi («50 ta ish qildim» — kroy, brsovka)."""
 
     __tablename__ = "jobs"
     __table_args__ = (UniqueConstraint("owner_id", "name"),)
@@ -93,12 +96,15 @@ class Job(Base):
     name: Mapped[str] = mapped_column(String(50))
     position: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    model_free: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ModelPrice(Base):
     """Model bo'yicha kasb narxi: A-12 — Brsovkachi uchun bir dona 2000 so'm.
-    Kasb narxi bo'lmasa — modelning umumiy narxi (ItemModel.price) olinadi."""
+    Bo'lmasa — kasbning o'z narxi (Job.price), u ham bo'lmasa — modelning umumiy narxi (ItemModel.price)."""
 
     __tablename__ = "model_prices"
 
@@ -143,7 +149,8 @@ class WorkEntry(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     worker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    model_id: Mapped[int] = mapped_column(ForeignKey("item_models.id"))
+    # Model so'ralmaydigan kasbda (kroy, brsovka) aytilmasa — bo'sh
+    model_id: Mapped[int | None] = mapped_column(ForeignKey("item_models.id"))
     # Qaysi kasb bo'yicha ish (kroy, brsovka, tikuv...), bo'lmasa — umumiy
     job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"))
     quantity: Mapped[int]
@@ -159,7 +166,7 @@ class WorkEntry(TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     worker: Mapped[User] = relationship(foreign_keys=[worker_id], lazy="joined")
-    model: Mapped[ItemModel] = relationship(lazy="joined")
+    model: Mapped[ItemModel | None] = relationship(lazy="joined")
     job: Mapped[Job | None] = relationship(lazy="joined")
 
 

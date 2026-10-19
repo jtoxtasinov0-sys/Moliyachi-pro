@@ -31,12 +31,17 @@ STATUS_LABELS = {
 }
 
 
+# Model aytilmagan ish (kroy, brsovka) hisobotda shu nom bilan
+NO_MODEL = "Modelsiz"
+
+
 def entry_text(entry: WorkEntry) -> str:
     job = f" · {escape(entry.job.name)}" if entry.job else ""
+    model = f"{escape(entry.model.name)} — " if entry.model else ""
     text = (
         f"<b>#{entry.id}</b> · {fmt_date(entry.work_date)}\n"
         f"👷 {escape(entry.worker.name)}{job}\n"
-        f"🧵 {escape(entry.model.name)} — <b>{entry.quantity} ta</b>"
+        f"🧵 {model}<b>{entry.quantity} ta</b>"
     )
     if entry.unit_price is not None and entry.price_currency:
         text += f"\n💰 {fmt_money(entry.unit_price * entry.quantity, entry.price_currency)}"
@@ -254,7 +259,9 @@ def _add(totals: dict[str, Decimal], row: repo.WorkReportRow) -> None:
 
 
 def _model_label(r: repo.WorkReportRow, with_job: bool) -> str:
-    """«A-12» yoki «A-12 (Brsovkachi)»."""
+    """«A-12» yoki «A-12 (Brsovkachi)»; model aytilmagan ishda — kasbi («Kroychi»)."""
+    if r.model_name is None:
+        return escape(r.job_name or NO_MODEL)
     name = escape(r.model_name)
     return f"{name} ({escape(r.job_name)})" if with_job and r.job_name else name
 
@@ -312,7 +319,9 @@ def _owner_report(rows: list[repo.WorkReportRow], balances: dict[int, repo.Worke
         by_model[r.model_name][r.job_name] += r.quantity
         _add(grand, r)
     model_lines = []
-    for name, jobs in sorted(by_model.items()):
+    # Model aytilmagan ishlar (kroy, brsovka) — oxirida
+    for name, jobs in sorted(by_model.items(), key=lambda kv: (kv[0] is None, kv[0] or "")):
+        name = name or NO_MODEL
         if set(jobs) == {None}:
             model_lines.append(f"• {escape(name)} — {jobs[None]} ta")
         else:
@@ -403,7 +412,8 @@ def _ledger_row(r: repo.LedgerRow, owner_view: bool) -> str:
     if r.kind == "work":
         job = f" · {escape(e.job.name)}" if e.job else ""
         pay = f" · +{fmt_totals(r.delta)}" if r.delta else " · narx yo'q"
-        text = f"🧵 {escape(e.model.name)} — {e.quantity} ta{job}{pay}"
+        model = f"{escape(e.model.name)} — " if e.model else ""
+        text = f"🧵 {model}{e.quantity} ta{job}{pay}"
     else:
         amount = fmt_money(abs(e.amount), e.currency)
         text = drafts.pay_line(e.kind, amount, None, e.amount < 0, not e.amount, owner_view)

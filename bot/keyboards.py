@@ -147,7 +147,7 @@ class MyClientCb(CallbackData, prefix="mc"):
 
 
 class JobCb(CallbackData, prefix="jb"):
-    action: str  # list | add | rename | del
+    action: str  # list | open | add | rename | price | modelfree | del | del_yes
     job_id: int = 0
 
 

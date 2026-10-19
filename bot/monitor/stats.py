@@ -229,7 +229,7 @@ async def recent_entries(session: AsyncSession, user: User, limit: int = 12) -> 
         await session.execute(select(WorkEntry).where(work_where).order_by(WorkEntry.id.desc()).limit(limit))
     ).scalars():
         items.append((e.created_at, (
-            f"🧵 {_when(e)} · {escape(e.worker.name)}: {escape(e.model.name)} × {e.quantity} "
+            f"🧵 {_when(e)} · {escape(e.worker.name)}: {escape(e.model.name if e.model else e.job.name if e.job else '—')} × {e.quantity} "
             f"(sana {e.work_date:%d.%m}, {e.status}){_raw(e.raw_text)}"
         )))
     items.sort(key=lambda item: local(item[0]).timestamp(), reverse=True)

@@ -49,6 +49,9 @@ log = logging.getLogger(__name__)
 
 routes = web.RouteTableDef()
 
+# Model aytilmagan ish (kroy, brsovka) hisobotda shu nom bilan
+NO_MODEL = "Modelsiz"
+
 Handler = Callable[[web.Request, AsyncSession, User], Awaitable[web.StreamResponse]]
 
 
@@ -236,6 +239,8 @@ def _group(rows: list[repo.WorkStatRow], attr: str) -> list[dict]:
         item = {"qty": g["qty"], "pay": _money(g["pay"])}
         if attr == "worker_id":
             item.update(id=k, name=g["rows"][0].worker_name)
+        elif attr == "model_name" and k is None:
+            item.update(name=NO_MODEL)  # kroy, brsovka — model aytilmagan ish
         else:
             item.update(name=k)
         out.append(item)
@@ -435,7 +440,7 @@ def _entry_json(e: WorkEntry) -> dict:
         "id": e.id,
         "date": e.work_date.isoformat(),
         "worker": {"id": e.worker_id, "name": e.worker.name},
-        "model": e.model.name,
+        "model": e.model.name if e.model else None,  # model so'ralmaydigan kasbda (kroy, brsovka) — bo'sh
         "job": e.job.name if e.job else None,
         "qty": e.quantity,
         "unit_price": _num(e.unit_price),
@@ -629,7 +634,14 @@ async def reinvite_worker(request: web.Request, session: AsyncSession, user: Use
 # --- Kasblar ----------------------------------------------------------------
 
 def _job_json(j: Job, counts: dict[int, int]) -> dict:
-    return {"id": j.id, "name": j.name, "workers": counts.get(j.id, 0)}
+    return {
+        "id": j.id,
+        "name": j.name,
+        "workers": counts.get(j.id, 0),
+        "price": _num(j.price),
+        "currency": j.currency,
+        "model_free": j.model_free,
+    }
 
 
 async def _jobs_list(session: AsyncSession, owner_id: int) -> list[dict]:
@@ -675,9 +687,21 @@ async def add_job(request: web.Request, session: AsyncSession, user: User) -> we
 @routes.patch(r"/api/jobs/{id:\d+}")
 @endpoint(owner_only=True)
 async def update_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{name, price, currency, model_free} — berilganlari o'zgaradi. price — kasbning o'z narxi (hamma modellar
+    uchun), null — olib tashlanadi; model_free — ish topshirilganda model so'ralmaydi (kroy, brsovka)."""
     job = await _get_job(request, session, user)
-    if not await repo.rename_job(session, job, _job_name(await _json(request))):
+    data = await _json(request)
+    if "name" in data and not await repo.rename_job(session, job, _job_name(data)):
         raise ApiError(400, "Bunday kasb bor")
+    if "price" in data:
+        currency = data.get("currency") or (await repo.enabled_currencies(session, user.id))[0]
+        if currency not in repo.ALL_CURRENCIES:
+            raise ApiError(400, "Valyuta noto'g'ri")
+        price = _parse_price(data["price"])
+        await repo.set_job_price(session, job, price if price else None, currency)
+    if "model_free" in data:
+        job.model_free = bool(data["model_free"])
+        await session.flush()
     return await _jobs_response(session, user.id)
 
 
@@ -702,10 +726,15 @@ def _model_json(m: ItemModel, prices: dict[int, ModelPrice]) -> dict:
     }
 
 
-def _worker_model_json(m: ItemModel, prices: dict[int, ModelPrice], job_id: int | None) -> dict:
-    """Ishchiga faqat o'z kasbining narxi (bo'lmasa umumiy narx) ko'rinadi."""
-    row = prices.get(job_id) if job_id else None
-    price, currency = (row.price, row.currency) if row else (m.price, m.currency)
+def _worker_model_json(m: ItemModel, prices: dict[int, ModelPrice], job: Job | None) -> dict:
+    """Ishchiga faqat o'z kasbining narxi (bo'lmasa kasbning o'z narxi, u ham bo'lmasa umumiy narx) ko'rinadi."""
+    row = prices.get(job.id) if job else None
+    if row:
+        price, currency = row.price, row.currency
+    elif job is not None and job.price is not None:
+        price, currency = job.price, job.currency
+    else:
+        price, currency = m.price, m.currency
     return {"id": m.id, "name": m.name, "price": _num(price), "currency": currency, "is_active": m.is_active}
 
 
@@ -767,7 +796,8 @@ async def models(request: web.Request, session: AsyncSession, user: User) -> web
         return web.json_response(
             {"items": [_model_json(m, prices.get(m.id, {})) for m in items], "jobs": await _jobs_list(session, user.id)}
         )
-    return web.json_response({"items": [_worker_model_json(m, prices.get(m.id, {}), user.job_id) for m in items]})
+    job = await repo.get_job(session, user.account_id, user.job_id)
+    return web.json_response({"items": [_worker_model_json(m, prices.get(m.id, {}), job) for m in items]})
 
 
 @routes.post("/api/models")

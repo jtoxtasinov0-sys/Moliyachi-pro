@@ -28,6 +28,7 @@ router.callback_query.filter(IsOwner())
 class AdminSG(StatesGroup):
     worker_name = State()
     job_name = State()  # yangi kasb yoki kasb nomini o'zgartirish
+    job_price = State()  # kasbning o'z narxi (hamma modellar uchun)
     model_name = State()
     model_price = State()
     supplier_name = State()
@@ -573,6 +574,10 @@ async def client_toggle(
 
 # --- Kasblar ----------------------------------------------------------------
 
+def _job_price(j) -> str:
+    return fmt_money(j.price, j.currency) if j.price is not None else "narx yo'q"
+
+
 async def _jobs_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineKeyboardMarkup]:
     jobs = await repo.list_jobs(session, owner_id)
     counts = await repo.job_worker_counts(session, owner_id)
@@ -580,18 +585,47 @@ async def _jobs_view(session: AsyncSession, owner_id: int) -> tuple[str, InlineK
     lines = []
     for j in jobs:
         n = counts.get(j.id)
-        lines.append(f"• <b>{escape(j.name)}</b>" + (f" — {n} ishchi" if n else ""))
-        kb.button(text=f"✏️ {j.name}", callback_data=kbs.JobCb(action="rename", job_id=j.id))
-        kb.button(text="🗑", callback_data=kbs.JobCb(action="del", job_id=j.id))
+        mode = "model so'ralmaydi" if j.model_free else "model tanlanadi"
+        lines.append(f"• <b>{escape(j.name)}</b> — {_job_price(j)} · {mode}" + (f" · {n} ishchi" if n else ""))
+        kb.button(text=f"🏷 {j.name}", callback_data=kbs.JobCb(action="open", job_id=j.id))
     kb.button(text="➕ Kasb qo'shish", callback_data=kbs.JobCb(action="add"))
     kb.button(text="↩️ Ishchilar", callback_data=kbs.WorkerCb(action="list"))
-    kb.adjust(*([2] * len(jobs)), 2)
+    kb.adjust(*_rows(len(jobs), 2), 2)
     text = (
         "🏷 <b>Kasblar</b>\n\n"
         + ("\n".join(lines) if lines else "Hali kasb yo'q.")
-        + "\n\nHar bir ishchiga kasb beriladi («👷 Ishchilar»), har bir modelga esa kasb bo'yicha narx "
-        "qo'yiladi («🧵 Modellar»). Ish topshirilganda kasb aytilsa — o'sha kasb, aytilmasa — ishchining "
-        "o'z kasbi narxi olinadi."
+        + "\n\nKasbni bosing — narxi va model so'ralishi. «Model so'ralmaydi» (kroy, brsovka): ishchi "
+        "<i>«50 ta ish qildim»</i> desa — kasb narxi bilan darhol hisoblanadi. Qolganlarida model tanlanadi va "
+        "narx modeldan olinadi («🧵 Modellar»)."
+    )
+    return text, kb.as_markup()
+
+
+async def _job_card(session: AsyncSession, job) -> tuple[str, InlineKeyboardMarkup]:
+    n = (await repo.job_worker_counts(session, job.owner_id)).get(job.id, 0)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💰 Narxi", callback_data=kbs.JobCb(action="price", job_id=job.id))
+    kb.button(
+        text=f"{'✅' if job.model_free else '⬜'} Model so'ralmaydi",
+        callback_data=kbs.JobCb(action="modelfree", job_id=job.id),
+    )
+    kb.button(text="✏️ Nomi", callback_data=kbs.JobCb(action="rename", job_id=job.id))
+    kb.button(text="🗑 O'chirish", callback_data=kbs.JobCb(action="del", job_id=job.id))
+    kb.button(text="↩️ Kasblar", callback_data=kbs.JobCb(action="list"))
+    kb.adjust(2, 2, 1)
+    price = f"<b>{_job_price(job)}</b>" if job.price is not None else "yozilmagan"
+    if job.model_free:
+        mode = (
+            "🧵 Model so'ralmaydi: <i>«50 ta ish qildim»</i> deyilsa — kasb narxi bilan darhol hisoblanadi "
+            "(model aytilsa — u ham yoziladi)."
+        )
+    else:
+        mode = "🧵 Har bir ishda model so'raladi (tanlash tugmalari chiqadi)."
+    text = (
+        f"🏷 <b>{escape(job.name)}</b>" + (f" · {n} ishchi" if n else "") + "\n\n"
+        f"💰 Bir dona ish narxi (hamma modellar uchun): {price}\n{mode}\n\n"
+        "Modelga shu kasb uchun alohida narx qo'yilgan bo'lsa («🧵 Modellar») — o'sha olinadi. Ovoz bilan ham "
+        "aytish mumkin: <i>«kroy 2000dan»</i>."
     )
     return text, kb.as_markup()
 
@@ -602,6 +636,70 @@ async def jobs_list(call: CallbackQuery, state: FSMContext, session: AsyncSessio
     text, kb = await _jobs_view(session, user.id)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer()
+
+
+@router.callback_query(kbs.JobCb.filter(F.action == "open"))
+async def job_open(
+    call: CallbackQuery, callback_data: kbs.JobCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    await state.clear()
+    job = await repo.get_job(session, user.id, callback_data.job_id)
+    if job is None:
+        await call.answer("Kasb topilmadi.", show_alert=True)
+        return
+    text, kb = await _job_card(session, job)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(kbs.JobCb.filter(F.action == "modelfree"))
+async def job_model_free(call: CallbackQuery, callback_data: kbs.JobCb, session: AsyncSession, user: User) -> None:
+    job = await repo.get_job(session, user.id, callback_data.job_id)
+    if job is None:
+        await call.answer("Kasb topilmadi.", show_alert=True)
+        return
+    job.model_free = not job.model_free
+    await session.flush()
+    text, kb = await _job_card(session, job)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer("Model so'ralmaydi" if job.model_free else "Model so'raladi")
+
+
+@router.callback_query(kbs.JobCb.filter(F.action == "price"))
+async def job_ask_price(
+    call: CallbackQuery, callback_data: kbs.JobCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    job = await repo.get_job(session, user.id, callback_data.job_id)
+    if job is None:
+        await call.answer("Kasb topilmadi.", show_alert=True)
+        return
+    await state.set_state(AdminSG.job_price)
+    await state.update_data(job_id=job.id)
+    await call.message.answer(
+        f"💰 <b>{escape(job.name)}</b> — bir dona ish narxi qancha? Yozing, masalan: <i>2000</i> yoki <i>2 ming</i>. "
+        "«0» — narxni olib tashlash."
+    )
+    await call.answer()
+
+
+@router.message(AdminSG.job_price, F.text, ~F.text.in_(kbs.MENU_TEXTS))
+async def job_price_value(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+    data = await state.get_data()
+    job = await repo.get_job(session, user.id, data.get("job_id"))
+    if job is None:
+        await state.clear()
+        return
+    currency = (await repo.enabled_currencies(session, user.id))[0]
+    parsed = parse_price(message.text, currency)
+    if parsed is None:
+        await message.answer("🤔 Narxni tushunmadim. Masalan: <i>2000</i> yoki <i>2 ming</i>")
+        return
+    value, cur = parsed
+    await repo.set_job_price(session, job, value if value > 0 else None, cur)
+    await state.clear()
+    text, kb = await _job_card(session, job)
+    done = f"✅ {escape(job.name)}: {fmt_money(value, cur)}" if value > 0 else f"🗑 {escape(job.name)}: narx olib tashlandi"
+    await message.answer(f"{done}\n\n{text}", reply_markup=kb)
 
 
 @router.callback_query(kbs.JobCb.filter(F.action.in_({"add", "rename"})))
@@ -645,6 +743,8 @@ async def job_name_value(message: Message, state: FSMContext, session: AsyncSess
         worker.job_id = job.id
         await session.flush()
         text, kb = await _worker_card(session, worker)
+    elif data.get("job_id"):
+        text, kb = await _job_card(session, job)
     else:
         text, kb = await _jobs_view(session, user.id)
     await message.answer(f"✅ Kasb: <b>{escape(job.name)}</b>\n\n{text}", reply_markup=kb)

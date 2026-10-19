@@ -12,8 +12,17 @@ qo'lda qo'shgan boshqa kasb («👷 Ishchilar → 🏷 Kasblar», ilovada «Jamo
 narxi qo'yiladi: «🧵 Modellar → 💰 A-12» da tugma bilan yoki «brsovka 2000, kroy 1500» deb yozib, ilovada model
 oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». Ish topshirilganda kasb aytilsa
 («A-12 dan 40 ta brsovka qildim») — o'sha kasb narxi, aytilmasa — ishchining o'z kasbi narxi olinadi; kasb narxi
-yozilmagan bo'lsa — modelning umumiy narxi. Hisobotda har bir model qaysi bosqichdan (kroy, brsovka, tikuv...)
-qancha o'tgani ko'rinadi.
+yozilmagan bo'lsa — kasbning o'z narxi, u ham bo'lmasa — modelning umumiy narxi. Hisobotda har bir model qaysi
+bosqichdan (kroy, brsovka, tikuv...) qancha o'tgani ko'rinadi.
+
+**✂️ Kroy va brsovka — modelsiz:** Kroychi va Brsovkachida model so'ralmaydi. Kasbga o'z narxini qo'ying (hamma
+modellar uchun): ovoz yoki matn bilan «kroy 2000dan», «brsovka 1500 bo'lsin», botda «👷 Ishchilar → 🏷 Kasblar →
+Kroychi → 💰 Narxi», ilovada «Jamoa → kasb». Keyin kroychi «50 ta ish qildim» desa (yoki egasi «Nodira 50 ta kroy
+qildi») — model tanlash tugmalari chiqmaydi, darhol 50 × 2000 = 100 000 so'm bo'lib yoziladi. Model aytilsa — u ham
+yoziladi (modelga shu kasb narxi qo'yilgan bo'lsa — o'sha narx). Tikuvchi, Tortuvchi va boshqa kasblarda model
+avvalgidek so'raladi. Qaysi kasbda model so'ralmasligi — kasb kartasidagi «Model so'ralmaydi» tugmasi (Kroychi va
+Brsovkachida sukut bo'yicha yoqiq). Kasb narxi yozilmagan bo'lsa ham ish saqlanadi va egasiga eslatma chiqadi; narx
+qo'yilgach hisobot va qoldiqda shu narx bilan hisoblanadi. Hisobotda bunday ishlar «Modelsiz» bo'lib ko'rinadi.
 
 **⚡ Darhol saqlash:** ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, soni yoki summasi aytildi)
 bot «To'g'rimi?» deb so'ramay darhol saqlaydi va nima saqlanganini ko'rsatadi — xato bo'lsa, kartadagi «✏️ Tahrirlash»

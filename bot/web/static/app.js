@@ -419,7 +419,7 @@ function feedRow(e, opts = {}) {
     if (e.note) sub.push(e.note);
   } else {
     icon = "🧵";
-    title = `${e.model} · ${fmtNum(e.qty)} dona`;
+    title = `${e.model || e.job || "Ish"} · ${fmtNum(e.qty)} dona`;
     amt = e.total != null ? money(e.total, e.currency) : "";
     sub.push(e.worker.name, e.job, STATUS[e.status] || e.status);
   }
@@ -596,7 +596,7 @@ function entryCard(e) {
   return `
     <div class="entry" id="entry-${e.id}">
       <div class="entry-main">
-        <div class="model-badge">${esc(e.model)}</div>
+        <div class="model-badge">${esc(e.model || e.job || "—")}</div>
         <div class="entry-info">
           <b>${fmtNum(e.qty)} dona</b>
           ${isOwner ? `<small>👷 ${esc(e.worker.name)}${e.job ? " · " + esc(e.job) : ""}</small>` : e.job ? `<small>🏷 ${esc(e.job)}</small>` : ""}<small>${unit ? esc(unit) + " / dona" : "narx yo'q"}</small>
@@ -722,7 +722,7 @@ function payTitle(e, owner) {
 function ledgerRow(e, owner) {
   let title, amt, cls;
   if (e.type === "work") {
-    title = `🧵 ${e.model} — ${fmtNum(e.qty)} dona`;
+    title = `🧵 ${e.model || e.job || "Ish"} — ${fmtNum(e.qty)} dona`;
     amt = Object.keys(e.delta).length ? "+" + moneyList(e.delta) : "narx yo'q";
     cls = "work";
   } else {
@@ -1779,9 +1779,20 @@ function addWorkerSheet(name = "", jobId = null) {
 // Kasb qo'shish yoki tahrirlash. onCreated(job) — yangi kasb qo'shilgach (masalan, ishchiga berish uchun)
 function jobSheet(j, onCreated) {
   const isNew = !j;
+  const cur = (j && j.currency) || state.me.currencies[0];
+  const curOptions = state.me.currencies.concat(state.me.currencies.includes(cur) ? [] : [cur])
+    .map((c) => `<option value="${c}" ${c === cur ? "selected" : ""}>${CUR[c] || c}</option>`).join("");
   openSheet(`
     <h3>${isNew ? "Yangi kasb" : esc(j.name)}</h3>
     <div class="field"><label>Kasb nomi</label><input class="input" id="jName" maxlength="50" value="${esc(j ? j.name : "")}" placeholder="Masalan: Upakovkachi" autocomplete="off"></div>
+    ${isNew ? "" : `
+    <div class="field"><label>Bir dona ish narxi (hamma modellar uchun)</label>
+      <div class="price-list">
+        <div class="price-row"><span>Narx<small>modelga shu kasb narxi qo'yilmagan bo'lsa</small></span><input class="input" id="jPrice" inputmode="decimal" value="${j.price != null ? j.price : ""}" placeholder="—" aria-label="Kasb narxi"></div>
+        <div class="price-row"><span>Valyuta</span><select class="select" id="jCur" style="margin:0" aria-label="Valyuta">${curOptions}</select></div>
+      </div>
+    </div>
+    <label class="switch-row"><div>Model so'ralmaydi<small>Kroy, brsovka: «50 ta ish qildim» desa — kasb narxi bilan darhol hisoblanadi</small></div><span class="switch"><input type="checkbox" id="jFree" ${j.model_free ? "checked" : ""}><i></i></span></label>`}
     <button class="primary" id="jSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
     ${isNew
       ? '<p class="muted small" style="margin-top:12px">Kasb ishchiga beriladi, har bir modelga esa shu kasb uchun alohida narx qo\'yiladi («Modellar»).</p>'
@@ -1789,7 +1800,7 @@ function jobSheet(j, onCreated) {
          <p class="muted small" style="margin-top:12px">${j.workers ? `${j.workers} ta ishchi kasbsiz qoladi. ` : ""}Eski yozuvlar o'zgarmaydi.</p>`}
   `);
   const input = $("jName");
-  setTimeout(() => input.focus(), 250);
+  if (isNew) setTimeout(() => input.focus(), 250);
   $("jSave").onclick = async () => {
     const name = input.value.trim();
     if (!name) return input.focus();
@@ -1797,7 +1808,10 @@ function jobSheet(j, onCreated) {
     try {
       const res = isNew
         ? await api("/api/jobs", { method: "POST", body: { name } })
-        : await api(`/api/jobs/${j.id}`, { method: "PATCH", body: { name } });
+        : await api(`/api/jobs/${j.id}`, {
+          method: "PATCH",
+          body: { name, price: $("jPrice").value.trim() || null, currency: $("jCur").value, model_free: $("jFree").checked },
+        });
       state.jobs = res.items;
       if (isNew && onCreated) {
         const job = state.jobs.find((x) => x.name.toLowerCase() === name.toLowerCase()) || state.jobs[state.jobs.length - 1];

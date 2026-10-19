@@ -8,10 +8,11 @@ Qoralama FSM holatida oddiy dict sifatida saqlanadi. Ish topshirish:
   "raw_text": "...",
   "created": "ISO vaqt",
   "lines": [{worker_id, worker_name, worker_q, model_id, model_name, model_q,
-             job_id, job_name, job_q, job_auto, quantity, price, currency}],
+             job_id, job_name, job_q, job_auto, model_free, quantity, price, currency}],
 }
 job_q — xabarda aytilgan kasb («brsovka»). Aytilmasa va job_auto bo'lsa — ishchining o'z kasbi olinadi.
-Narx (price) — model va kasb bo'yicha: kasb narxi, u bo'lmasa modelning umumiy narxi.
+model_free — kasbda model so'ralmaydi (kroy, brsovka): model aytilmasa — kasbning o'z narxi bilan saqlanadi.
+Narx (price) — model va kasb bo'yicha: modelning kasb narxi, kasbning o'z narxi, modelning umumiy narxi.
 date — qatorning o'z sanasi (yozishma skrinshotida har xil kunlar), None — umumiy sana.
 Ishchi bilan pul (avans, ish haqi, qaytarilgan pul, hisob holati) — shu qoralamada "pays" (ish bo'lmasa ham):
 {
@@ -27,7 +28,8 @@ Model narxini belgilash — "section": "price":
   ..., "prices": [{model_id, model_name, model_q, job_id, job_name, job_q,
                    price, currency, cur_said, old}],
 }
-job_q yo'q — umumiy narx. old — hozirgi narx {price, currency}, bo'lmasa None.
+job_q yo'q — umumiy narx. Model aytilmay faqat kasb («kroy 2000dan») — kasbning o'z narxi (hamma modellar uchun).
+old — hozirgi narx {price, currency}, bo'lmasa None.
 Xom ashyo xaridi — "section": "material":
 {
   ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier, supplier_id, supplier_free}],
@@ -82,7 +84,7 @@ def _empty_line() -> dict:
     return {
         "worker_id": None, "worker_name": None, "worker_q": None,
         "model_id": None, "model_name": None, "model_q": None,
-        "job_id": None, "job_name": None, "job_q": None, "job_auto": True,
+        "job_id": None, "job_name": None, "job_q": None, "job_auto": True, "model_free": False,
         "quantity": None, "price": None, "currency": None, "date": None,
     }
 
@@ -348,11 +350,13 @@ def from_extraction(
 
 def from_entry(entry: WorkEntry) -> dict:
     line = _empty_line()
+    model_name = entry.model.name if entry.model else None
     line.update(
         worker_id=entry.worker_id, worker_name=entry.worker.name, worker_q=entry.worker.name,
-        model_id=entry.model_id, model_name=entry.model.name, model_q=entry.model.name,
+        model_id=entry.model_id, model_name=model_name, model_q=model_name,
         job_id=entry.job_id, job_name=entry.job.name if entry.job else None,
         job_q=entry.job.name if entry.job else None, job_auto=False,
+        model_free=entry.job is not None and entry.job.model_free,
         quantity=entry.quantity,
         price=str(entry.unit_price) if entry.unit_price is not None else None,
         currency=entry.price_currency,
@@ -571,6 +575,8 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
             worker = workers_by_id.get(line["worker_id"])
             job = jobs_by_id.get(worker.job_id) if worker else None
             line["job_id"], line["job_name"] = (job.id, job.name) if job else (None, None)
+        job = jobs_by_id.get(line["job_id"])
+        line["model_free"] = job is not None and job.model_free
 
     await price_lines(session, draft, acc)
     await _pay_balances(session, draft, user)
@@ -673,12 +679,15 @@ async def _resolve_prices(session: AsyncSession, draft: dict, acc: int) -> None:
     prices = await repo.model_prices(session, [p["model_id"] for p in draft["prices"] if p["model_id"]])
     for p in draft["prices"]:
         model = models_by_id.get(p["model_id"])
+        job = jobs_by_id.get(p["job_id"])
         old = None
         if model is not None and p["job_id"]:
             row = prices.get(model.id, {}).get(p["job_id"])
             old = (row.price, row.currency) if row else None
         elif model is not None and not p["job_q"] and model.price is not None:
             old = (model.price, model.currency)
+        elif model is None and not p["model_q"] and job is not None and job.price is not None:
+            old = (job.price, job.currency)  # kasbning o'z narxi
         p["old"] = {"price": str(old[0]), "currency": old[1]} if old else None
         if not p["cur_said"]:
             if old:
@@ -756,7 +765,8 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
         return None
     if draft["section"] == "price":
         for i, p in enumerate(draft["prices"]):
-            if p["model_id"] is None:
+            # Model aytilmay faqat kasb («kroy 2000dan») — kasbning o'z narxi, model so'ralmaydi
+            if p["model_id"] is None and (p["model_q"] or not p["job_q"]):
                 return "pmodel", i
             if p["job_q"] and p["job_id"] is None:
                 return "pjob", i
@@ -790,10 +800,11 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
     for i, line in enumerate(draft["lines"]):
         if line["worker_id"] is None:
             return "worker", i
-        if line["model_id"] is None:
-            return "model", i
+        # Kasb avval: model so'raladimi — kasbga bog'liq (kroy, brsovkada model aytilmasa so'ralmaydi)
         if line["job_q"] and line["job_id"] is None:
             return "job", i
+        if line["model_id"] is None and (line["model_q"] or not line.get("model_free")):
+            return "model", i
         if not line["quantity"]:
             return "quantity", i
     for i, p in enumerate(draft.get("pays", [])):
@@ -839,10 +850,16 @@ def _render(draft: dict, owner: bool = True) -> str:
 
     totals: dict[str, Decimal] = {}
     rows = []
+    no_price: list[str] = []
     for ln in lines:
         model = escape(ln["model_name"] or (f"{ln['model_q']}?" if ln["model_q"] else "?"))
         qty = f"{ln['quantity']} ta" if ln["quantity"] else "? ta"
         job = ln["job_name"] or (f"{ln['job_q']}?" if ln["job_q"] else None)
+        if ln["model_id"] is None and not ln["model_q"] and ln.get("model_free") and job:
+            # Model so'ralmaydigan ish: «Kroychi — 50 ta × 2 000 so'm»
+            model, job = escape(job), None
+            if not ln["price"] and ln["job_name"] not in no_price:
+                no_price.append(ln["job_name"])
         if job:
             qty += f" · {escape(job)}"
         row = f"• {model} — {qty}"
@@ -858,6 +875,10 @@ def _render(draft: dict, owner: bool = True) -> str:
         parts.append("\n".join(rows))
     if totals:
         parts.append(f"💰 Ish haqi: <b>{fmt_totals(totals)}</b>")
+    if no_price and owner:
+        names = ", ".join(escape(name) for name in no_price)
+        example = escape(jobs_mod.price_example(no_price[0]))
+        parts.append(f"💡 {names} narxi yozilmagan — ayting: <i>«{example}»</i> yoki «👷 Ishchilar → 🏷 Kasblar»da qo'ying.")
 
     if pays:
         pay_rows = []
@@ -1140,6 +1161,8 @@ def _render_price(draft: dict) -> str:
     for p in draft["prices"]:
         model = escape(p["model_name"] or (f"{p['model_q']}?" if p["model_q"] else "?"))
         job = escape(p["job_name"] or (f"{p['job_q']}?" if p["job_q"] else "umumiy narx"))
+        if p["model_id"] is None and not p["model_q"] and p["job_q"]:
+            model, job = job, "hamma modellar"  # kasbning o'z narxi
         row = f"• {model} — {job}: {_money_amount(p['price'], p['currency'])}"
         old = p.get("old")
         if old and p["price"] and (Decimal(old["price"]), old["currency"]) != (Decimal(p["price"]), p["currency"]):
@@ -1148,6 +1171,8 @@ def _render_price(draft: dict) -> str:
     parts.append("\n".join(rows))
     if any(not p["job_q"] for p in draft["prices"]):
         parts.append("ℹ️ Umumiy narx — kasbining narxi yozilmagan ishlarga olinadi.")
+    if any(p["model_id"] is None and not p["model_q"] and p["job_q"] for p in draft["prices"]):
+        parts.append("ℹ️ Kasbning o'z narxi — hamma modellarga (modelga shu kasb narxi qo'yilmagan bo'lsa).")
     return "\n\n".join(parts)
 
 
@@ -1179,6 +1204,8 @@ async def _present_price(session: AsyncSession, draft: dict, user: User) -> tupl
         )
     who = escape(p["model_name"] or "")
     job = escape(p["job_name"] or "umumiy narx")
+    if p["model_id"] is None:  # kasbning o'z narxi
+        who, job = job, "hamma modellar"
     return text + f"\n\n❓ <b>{who} — {job}</b>: bir donasi qancha? Yozing yoki ayting.", kbs.cancel_only_kb()
 
 

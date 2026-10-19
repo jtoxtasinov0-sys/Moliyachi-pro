@@ -12,6 +12,8 @@ from bot.services.utils import parse_price
 
 # Oyoq kiyim ishlab chiqarish tartibida: kesish → shilish → tikish → padosh yopishtirish → sotuvga tayyorlash
 DEFAULT_JOBS = ("Kroychi", "Brsovkachi", "Tikuvchi", "Tortuvchi", "Pardozchi")
+# Bu ishlarda model so'ralmaydi: «50 ta ish qildim» — kasbning o'z narxi bilan hisoblanadi
+MODEL_FREE_JOBS = ("Kroychi", "Brsovkachi")
 
 # Standart kasblarning boshqacha aytilishi (normallashgan ko'rinishda)
 SYNONYMS = {
@@ -27,6 +29,12 @@ def _stems(name: str) -> list[str]:
     """«Kroychi» -> «kroy», «Tikuvchi» -> «tikuv»: kasb ham, ish ham shu so'z bilan aytiladi."""
     n = matcher.normalize(name)
     return [n[: -len(suffix)] for suffix in ("chi", "shi") if n.endswith(suffix) and len(n) > len(suffix) + 2]
+
+
+def price_example(name: str) -> str:
+    """Narx aytish namunasi: «Kroychi» -> «kroy 2000dan», «Brsovkachi» -> «brsovka 2000dan»."""
+    stems = _stems(name)
+    return f"{stems[0] if stems else name.lower()} 2000dan"
 
 
 def aliases(jobs: list[Job], saved: list[tuple[int, str]] | None = None) -> list[tuple[int, str]]:

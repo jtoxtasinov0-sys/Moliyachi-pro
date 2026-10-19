@@ -40,7 +40,9 @@ ITEM_DATE_TEXT = (
 
 class WorkItem(BaseModel):
     worker_name: str | None = Field(description="Ishchi ismi, aytilmagan bo'lsa null")
-    model_name: str | None = Field(description="Model nomi/kodi, aytilmagan bo'lsa null")
+    model_name: str | None = Field(
+        description="Model nomi/kodi, aytilmagan bo'lsa null (o'zingdan qo'shma: kroy, brsovkada model aytilmaydi)"
+    )
     job: str = Field(
         description="Qanday ish qilingani — kasb nomi \"Kasblar\" ro'yxatidan (kroy — Kroychi, brsovka — "
         "Brsovkachi, tikish — Tikuvchi...). Faqat ish turi aytilsa, aks holda bo'sh satr"
@@ -50,7 +52,9 @@ class WorkItem(BaseModel):
 
 
 class PriceItem(BaseModel):
-    model_name: str = Field(description="Model nomi/kodi, aytilmagan bo'lsa bo'sh satr")
+    model_name: str = Field(
+        description="Model nomi/kodi; aytilmagan bo'lsa bo'sh satr (\"kroy 2000dan\" — kasbning hamma modellar uchun narxi)"
+    )
     job: str = Field(
         description="Qaysi kasb uchun narx — \"Kasblar\" ro'yxatidan. Kasb aytilmasa (umumiy narx) bo'sh satr"
     )
@@ -174,13 +178,15 @@ Vazifang: matndan yozuvlarni ajratib, berilgan JSON sxemada qaytarish.
 
 Bo'limlar:
 - work — ishchi ish topshirdi: "Alisher A-12 dan 50 ta topshirdi", "bugun B5 modeldan 30 ta tikdim", \
-"Vali A-12 dan 40 ta brsovka qildi", "kecha 100 ta kroy qildim A-12".
+"Vali A-12 dan 40 ta brsovka qildi", "kecha 100 ta kroy qildim A-12". Kroychi va brsovkachi ko'pincha modelsiz \
+aytadi: "50 ta ish qildim", "bugun 80 ta kroy", "Nodira 50 ta brsovka qildi" — model_name null.
 - pay — ishchi bilan pul hisob-kitobi: ishchiga avans yoki ish haqi berildi, ishchi pul oldi yoki \
 qaytardi, ishchi bilan hisob holati aytildi: "Robiyaga 500 ming berdim", "Robiya 500 ming avans oldi", \
 "Robiya 200 ming qaytardi", "Robiyaga 900 ming qarzman", "Robiya bilan hisob yopildi".
 - price — egasi model uchun bir dona ish haqi narxini belgilaydi (kasb bo'yicha yoki umumiy): \
 "A-12 modelga brsovka 2000dan", "A-12: kroy 1500, tikuv 5000, tortish 3000", "B-5 narxi 4000 bo'lsin". \
-Ishchi ismi va dona soni aytilmaydi.
+Model aytilmay faqat kasb narxi — kasbning hamma modellar uchun narxi, model_name bo'sh satr: "kroy 2000dan", \
+"kroychiga 2000 so'mdan", "brsovka 1500 bo'lsin". Ishchi ismi va dona soni aytilmaydi.
 - material — korxona uchun xom ashyo sotib olindi: teri, material (mato), podklad, kley (yelim), padosh \
 (tag), ip, furnitura (zamok, tugma, lenta), upakovka (karobka, paket): "1 list teri oldim", \
 "10 millionlik teri oldim, nomi Shirin gul", "Lider terisidan 5 list, listi 300 ming", \

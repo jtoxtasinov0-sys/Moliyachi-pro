@@ -13,6 +13,7 @@ from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import advisor, drafts
+from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import (
@@ -481,8 +482,8 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         entry.worker_id = line["worker_id"]
         # Model yoki kasb o'zgarmasa — yozilgan paytdagi narx qoladi
         if (entry.model_id, entry.job_id) != (line["model_id"], line["job_id"]):
-            model = await repo.get_model(session, acc, line["model_id"])
-            if model is not None:
+            model = await repo.get_model(session, acc, line["model_id"]) if line["model_id"] else None
+            if model is not None or line["model_id"] is None:
                 await repo.reprice_entry(session, entry, model, line["job_id"])
         entry.quantity = line["quantity"]
         entry.work_date = date.fromisoformat(drafts.item_date(draft, line))
@@ -526,6 +527,8 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
         notified = await _notify_workers(bot, session, user, saved, payments, edited)
         if notified:
             header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
+        if hint := job_price_hint(saved):
+            header += "\n\n" + hint
     else:
         await _notify_owner(bot, session, user, saved, payments, edited)
     cards = [(entry_text(e), kbs.entry_kb(e, user)) for e in saved]
@@ -574,6 +577,18 @@ async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> 
         status=EntryStatus.APPROVED if approved else EntryStatus.PENDING,
         raw_text=draft["raw_text"],
         created_by=user.id,
+    )
+
+
+def job_price_hint(entries: list[WorkEntry]) -> str | None:
+    """Model so'ralmaydigan kasbda (kroy, brsovka) narx yozilmagan bo'lsa — egasiga qanday qo'yish."""
+    jobs = sorted({e.job.name for e in entries if e.model_id is None and e.unit_price is None and e.job is not None})
+    if not jobs:
+        return None
+    return (
+        f"💡 {', '.join(escape(name) for name in jobs)} narxi yozilmagan — ayting: "
+        f"<i>«{escape(jobs_mod.price_example(jobs[0]))}»</i> yoki «👷 Ishchilar → 🏷 Kasblar»da qo'ying. "
+        "Qo'yilgach bu ish ham shu narx bilan hisoblanadi."
     )
 
 
@@ -644,6 +659,8 @@ async def _notify_owner(
     if done:
         action = "yozuvini o'zgartirdi" if edited else "yozdi"
         text = f"🧾 <b>{escape(worker.name)} {action}</b>\n\n" + "\n\n".join(entry_text(e) for e in done)
+        if hint := job_price_hint(done):
+            text += "\n\n" + hint
         markup = kbs.entry_kb(done[0], owner) if len(done) == 1 else kbs.app_kb("entries")
         await notify_owner(bot, session, owner.id, text, markup=markup)
     for e in payments:
@@ -659,17 +676,23 @@ async def _notify_owner(
 async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
     rows = []
     for p in draft["prices"]:
-        model = await repo.get_model(session, user.id, p["model_id"])
+        model = await repo.get_model(session, user.id, p["model_id"]) if p["model_id"] else None
         job = await repo.get_job(session, user.id, p["job_id"]) if p["job_id"] else None
-        if model is None or (p["job_id"] and job is None):
+        if (p["model_id"] and model is None) or (p["job_id"] and job is None) or (model is None and job is None):
             raise IntakeError("⚠️ Model yoki kasb topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
         price = Decimal(p["price"])
+        if model is None:
+            # «kroy 2000dan» — kasbning o'z narxi, hamma modellar uchun
+            await repo.set_job_price(session, job, price, p["currency"])
+            rows.append(f"• {escape(job.name)} — hamma modellar: <b>{fmt_money(price, p['currency'])}</b>")
+            continue
         await repo.set_model_price(session, model, job.id if job else None, price, p["currency"])
         what = escape(job.name) if job else "umumiy narx"
         rows.append(f"• {escape(model.name)} — {what}: <b>{fmt_money(price, p['currency'])}</b>")
     header = (
         "✅ <b>Narx saqlandi</b> (bir dona uchun)\n\n" + "\n".join(rows)
-        + "\n\nYangi narx shu paytdan keyingi yozuvlarga qo'llanadi. Hamma narxlar — «🧵 Modellar»da."
+        + "\n\nYangi narx shu paytdan keyingi yozuvlarga qo'llanadi. Hamma narxlar — «🧵 Modellar» va "
+        "«👷 Ishchilar → 🏷 Kasblar»da."
     )
     return Saved(header)
 
