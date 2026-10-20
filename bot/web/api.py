@@ -1427,7 +1427,7 @@ async def ledger(request: web.Request, session: AsyncSession, user: User) -> web
 @endpoint()
 async def add_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """Tez yozish: {worker_id (egasida), kind: pay|return|balance, amount, worker_owes, whole}.
-    Javobda pending — yozuv egasining tasdig'ini kutadimi (ishchi yozganda)."""
+    Javobda pending — yozuv egasi tasdiqlagach qoldiqqa kiradimi (ishchi yozganda; «oldim» — darhol kiradi)."""
     data = await _json(request)
     worker = await _ledger_worker(request, session, user, data.get("worker_id"))
     kind = data.get("kind")
@@ -1487,7 +1487,7 @@ async def _payment_for(request: web.Request, session: AsyncSession, user: User) 
 @routes.post(r"/api/payments/{id:\d+}/{action:approve|reject}")
 @endpoint(owner_only=True)
 async def review_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    from bot.handlers.entries import pay_text
+    from bot.handlers.entries import pay_summary, pay_text
 
     entry = await _payment_for(request, session, user)
     approve = request.match_info["action"] == "approve"
@@ -1495,7 +1495,8 @@ async def review_payment(request: web.Request, session: AsyncSession, user: User
     worker = entry.worker
     if worker.tg_id and worker.id != user.id:
         verdict = "✅ tasdiqlandi" if approve else "🚫 rad etildi"
-        _notify(request, worker.tg_id, f"Yozuvingiz {verdict}:\n\n" + pay_text(entry, worker))
+        text = f"{pay_text(entry, worker)}\n\n{await pay_summary(session, [entry], worker)}"
+        _notify(request, worker.tg_id, f"Yozuvingiz {verdict}:\n\n{text}")
     return web.json_response(_pay_json(entry, user))
 
 
@@ -1508,7 +1509,7 @@ async def delete_payment(request: web.Request, session: AsyncSession, user: User
     if not user.is_owner and entry.created_by != user.id:
         raise ApiError(403, "Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi")
     await repo.soft_delete(session, entry)
-    if not user.is_owner and entry.status == EntryStatus.APPROVED:
+    if not user.is_owner and repo.pay_counts(entry):
         owner = await session.get(User, user.owner_id)
         if owner and owner.tg_id:
             _notify(request, owner.tg_id, f"🗑 {escape(user.name)} pul yozuvini o'chirdi:\n\n<s>{pay_text(entry, owner)}</s>")

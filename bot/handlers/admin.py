@@ -1132,8 +1132,9 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
-        f"• 💵 Ishchi yozgan pul («oldim», «qaytardim»): {'egasi tasdiqlagandan keyin' if pay_approval else 'darhol'} "
-        "hisob-kitobga kiradi\n"
+        "• 💵 Ishchi «oldim» desa — qoldiqdan darhol ayriladi"
+        + (" (siz tasdiqlaysiz, rad etsangiz qaytadi)" if pay_approval else "")
+        + f", «qaytardim» — {'siz tasdiqlagandan keyin' if pay_approval else 'darhol'} qo'shiladi\n"
         "• ⚡ Ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, summa aytildi): "
         + ("«To'g'rimi?» so'ralmay darhol saqlanadi, ikkinchi tomonga xabar boradi" if auto_save
            else "«To'g'rimi?» deb so'raladi, «✅ Saqlash» bosilgach saqlanadi")

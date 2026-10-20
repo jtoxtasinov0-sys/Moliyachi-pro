@@ -601,11 +601,12 @@ def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
 
 
 def pay_counted(draft: dict, p: dict) -> bool:
-    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» / «qaytardim» desa —
-    «Pul yozuvlarini tasdiqlash» o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
-    if draft.get("by_owner", True):
+    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» desa — ha, o'zi olganini
+    aytdi («Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi keyin tasdiqlaydi, rad etsa — qaytadi);
+    «qaytardim» — tasdiqlash o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
+    if draft.get("by_owner", True) or p["kind"] == PayKind.PAY:
         return True
-    return p["kind"] in (PayKind.PAY, PayKind.RETURN) and draft.get("pay_ok", False)
+    return p["kind"] == PayKind.RETURN and draft.get("pay_ok", False)
 
 
 def dec_str(value: Decimal) -> str:
@@ -930,14 +931,16 @@ def signed_hint(totals: dict[str, Decimal]) -> str:
     return fmt_signed(totals) + (" <i>(avans)</i>" if any(v < 0 for v in totals.values()) else "")
 
 
-def balance_text(balance: dict[str, Decimal], name: str | None = None) -> str:
-    """Ishchi qoldig'i. name — egasiga ko'rsatiladi («Robiyaga berishingiz kerak»), None — ishchining o'ziga."""
+def balance_text(balance: dict[str, Decimal], name: str | None = None, left: bool = False) -> str:
+    """Ishchi qoldig'i. name — egasiga ko'rsatiladi («Robiyaga berishingiz kerak»), None — ishchining o'ziga.
+    left — pul olingandan keyin: «Qoldi — olishingiz kerak»."""
     due = {c: v for c, v in balance.items() if v > 0}
     over = {c: -v for c, v in balance.items() if v < 0}
     who = escape(name) if name else None
     rows = []
     if due:
-        label = f"💰 {who}ga berishingiz kerak" if who else "💰 Olishingiz kerak"
+        label = f"{who}ga berishingiz kerak" if who else "olishingiz kerak"
+        label = f"💰 Qoldi — {label}" if left else f"💰 {label[0].upper()}{label[1:]}"
         rows.append(f"{label}: <b>{fmt_totals(due)}</b>")
     if over:
         label = f"📌 {who} ortiqcha olgan (avans)" if who else "📌 Ortiqcha olgansiz (avans)"
@@ -945,6 +948,22 @@ def balance_text(balance: dict[str, Decimal], name: str | None = None) -> str:
     if not rows:
         rows.append(f"✅ {who} bilan hisob yopilgan" if who else "✅ Hisob yopilgan")
     return "\n".join(rows)
+
+
+def day_pay_line(
+    day: date, paid: dict[str, Decimal], returned: dict[str, Decimal], name: str | None = None
+) -> str:
+    """Kun bo'yicha ishchi olgan pul: ishchiga — «📅 20.10.2026 (bugun) — oldingiz: 50 000 so'm», egasiga —
+    «Robiya oldi»; qaytargan bo'lsa — u ham."""
+    who = escape(name) if name else None
+    took, gave = (f"{who} oldi", "qaytardi") if who else ("oldingiz", "qaytardingiz")
+    parts = []
+    if paid:
+        parts.append(f"{took}: <b>{fmt_totals(paid)}</b>")
+    if returned:
+        verb = gave if paid or not who else f"{who} {gave}"
+        parts.append(f"{verb}: <b>{fmt_totals(returned)}</b>")
+    return f"📅 {fmt_date(day)} — {', '.join(parts)}"
 
 
 def pay_line(
