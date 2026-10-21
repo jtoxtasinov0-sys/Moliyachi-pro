@@ -733,9 +733,7 @@ function ledgerRow(e, owner) {
   const sub = [];
   if (e.type === "work" && e.job) sub.push(e.job);
   if (e.note) sub.push(e.note);
-  // Tasdiq kutayotgan «oldim» qoldiqdan ayrilgan bo'lsa ham — ⏳
-  if (e.status === "pending") sub.push("⏳ tasdiq kutmoqda");
-  else if (!e.counted) sub.push(STATUS[e.status] || "");
+  if (!e.counted) sub.push(e.status === "pending" ? "⏳ tasdiq kutmoqda" : STATUS[e.status] || "");
   let acts = "";
   const review = owner && e.type === "pay" && e.status === "pending";
   if (review) {
@@ -2407,7 +2405,7 @@ function settingsSheet() {
     <h3>Sozlamalar</h3>
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
-    <label class="switch-row"><div>💵 Pul yozuvlarini tasdiqlash<small>Ishchi «500 ming oldim» desa — qoldiqdan darhol ayriladi, yoqilgan bo'lsa siz tasdiqlaysiz (rad etsangiz qaytadi). «200 ming qaytardim» — yoqilgan bo'lsa siz tasdiqlagandan keyin qo'shiladi, o'chiq bo'lsa darhol. Har safar sizga xabar boradi. Hisob holatini ishchi yozsa — har doim tasdiqlaysiz.</small></div>
+    <label class="switch-row"><div>💵 Pul yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi yozgan pul («500 ming oldim», «200 ming qaytardim») siz tasdiqlagandan keyin hisob-kitobga kiradi, tasdiqlanmagani bo'lsa — har kuni ertalab (9:00) botda eslatiladi. O'chiq bo'lsa — darhol kiradi, sizga xabar boradi. Hisob holatini ishchi yozsa — har doim tasdiqlaysiz.</small></div>
       <span class="switch"><input type="checkbox" id="sPayApproval" ${me.require_pay_approval ? "checked" : ""}><i></i></span></label>
     <label class="switch-row"><div>⚡ Darhol saqlash<small>Yoqilgan bo'lsa, ovoz yoki matn to'liq tushunilganda (ishchi, model, mijoz topildi, summa aytildi) «To'g'rimi?» so'ralmay darhol saqlanadi: «Robiyaga 500 ming berdim» — Robiya hisobidan ayriladi, ikkalangizga xabar boradi. Xato bo'lsa — yozuvni o'chirasiz. O'chiq bo'lsa — har safar «✅ Saqlash» ni bosasiz.</small></div>
       <span class="switch"><input type="checkbox" id="sAutoSave" ${me.auto_save ? "checked" : ""}><i></i></span></label>

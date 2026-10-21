@@ -601,12 +601,11 @@ def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
 
 
 def pay_counted(draft: dict, p: dict) -> bool:
-    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» desa — ha, o'zi olganini
-    aytdi («Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi keyin tasdiqlaydi, rad etsa — qaytadi);
-    «qaytardim» — tasdiqlash o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
-    if draft.get("by_owner", True) or p["kind"] == PayKind.PAY:
+    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» / «qaytardim» desa —
+    «Pul yozuvlarini tasdiqlash» o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
+    if draft.get("by_owner", True):
         return True
-    return p["kind"] == PayKind.RETURN and draft.get("pay_ok", False)
+    return p["kind"] in (PayKind.PAY, PayKind.RETURN) and draft.get("pay_ok", False)
 
 
 def dec_str(value: Decimal) -> str:

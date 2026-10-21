@@ -64,7 +64,8 @@ def pay_text(entry: WorkerPayment, viewer: User) -> str:
 
 async def pay_summary(session: AsyncSession, payments: list[WorkerPayment], viewer: User) -> str:
     """Bitta ishchining pul yozuvlari: har bir kuni qancha olgani («📅 20.10.2026 (bugun) — oldingiz: 50 000 so'm»)
-    va hozirgi qoldiq («💰 Qoldi — olishingiz kerak: 330 000 so'm»). Egasiga — ishchi ismi bilan."""
+    va hozirgi qoldiq («💰 Qoldi — olishingiz kerak: 330 000 so'm»). Egasiga — ishchi ismi bilan.
+    Tasdiq kutayotgan pul qoldiqqa kirmaydi — tasdiqlansa qancha qolishi alohida qatorda."""
     first = payments[0]
     name = first.worker.name if viewer.is_owner else None
     days = sorted({p.entry_date for p in payments if p.kind in (PayKind.PAY, PayKind.RETURN)})
@@ -72,6 +73,13 @@ async def pay_summary(session: AsyncSession, payments: list[WorkerPayment], view
     rows = [drafts.day_pay_line(day, *totals[day], name) for day in days if any(totals[day])]
     balance = (await repo.worker_balance(session, first.owner_id, first.worker_id)).balance
     rows.append(drafts.balance_text(balance, name, left=bool(rows)))
+    waiting = [p for p in payments if p.status == EntryStatus.PENDING and p.kind in (PayKind.PAY, PayKind.RETURN)]
+    if waiting:
+        after = dict(balance)
+        for p in waiting:
+            after[p.currency] = after.get(p.currency, Decimal(0)) + (-p.amount if p.kind == PayKind.PAY else p.amount)
+        who = "Tasdiqlasangiz" if viewer.is_owner else "Boshlig'ingiz tasdiqlasa"
+        rows.append(f"⏳ {who} — qoldi: <b>{drafts.signed_hint(after)}</b>")
     return "\n".join(rows)
 
 
@@ -402,7 +410,7 @@ async def on_pay_delete(call: CallbackQuery, callback_data: kbs.PayCb, session: 
     name = entry.worker.name if user.is_owner else None
     await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi\n\n{drafts.balance_text(balance, name)}")
     await call.answer("O'chirildi")
-    if not user.is_owner and repo.pay_counts(entry):
+    if not user.is_owner and entry.status == EntryStatus.APPROVED:
         owner = await session.get(User, user.owner_id)
         if owner is not None:
             await notify_owner(
@@ -430,8 +438,7 @@ def _ledger_row(r: repo.LedgerRow, owner_view: bool) -> str:
         text = drafts.pay_line(e.kind, amount, None, e.amount < 0, not e.amount, owner_view)
         if e.note:
             text += f" <i>({escape(e.note)})</i>"
-    # Tasdiq kutayotgan «oldim» qoldiqqa kirgan bo'lsa ham ⏳ — egasi hali tasdiqlamagan
-    return text + (" ⏳" if not r.counted or e.status == EntryStatus.PENDING else "")
+    return text + ("" if r.counted else " ⏳")
 
 
 async def ledger_text(session: AsyncSession, viewer: User, worker: User) -> str:

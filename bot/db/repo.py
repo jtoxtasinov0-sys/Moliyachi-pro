@@ -58,6 +58,8 @@ DEFAULT_SETTINGS = {
     "reminder_hour": "21",
     # Eslatma oxirgi marta yuborilgan sana (YYYY-MM-DD) — bir kunda ikki marta yubormaslik uchun
     "reminder_sent": "",
+    # Tasdiqlanmagan pul yozuvlari eslatmasi oxirgi marta tekshirilgan sana — kuniga bir marta
+    "pay_reminder_sent": "",
     # Qo'llanma videosining Telegram file_id si — har safar qayta yuklamaslik uchun
     "guide_video_id": "",
     # Standart kasblar (Kroychi, Brsovkachi...) bir marta qo'shilgan: egasi o'chirsa, qaytib chiqmaydi
@@ -765,21 +767,6 @@ async def count_pending_payments(session: AsyncSession, owner_id: int, worker_id
     return int(await session.scalar(q) or 0)
 
 
-# Qoldiqqa kiradigan pul yozuvlari: tasdiqlangan va ishchining tasdiq kutayotgan «oldim» yozuvi — ishchi o'zi
-# olganini aytdi (egasiga zarar yo'q), darhol ayriladi; egasi rad etsa — qaytadi
-_PAY_COUNTED = or_(
-    WorkerPayment.status == EntryStatus.APPROVED,
-    and_(WorkerPayment.status == EntryStatus.PENDING, WorkerPayment.kind == PayKind.PAY),
-)
-
-
-def pay_counts(entry: WorkerPayment) -> bool:
-    """Pul yozuvi qoldiqqa kiradimi: tasdiqlangan yoki tasdiq kutayotgan «oldim»."""
-    return entry.status == EntryStatus.APPROVED or (
-        entry.status == EntryStatus.PENDING and entry.kind == PayKind.PAY
-    )
-
-
 def _dec(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
@@ -823,13 +810,15 @@ async def worker_balances(
 ) -> dict[int, WorkerBalance]:
     """Ishchilar qoldig'i: oxirgi aytilgan hisob holati + undan keyingi ishlar − olingan + qaytarilgan pul.
 
-    Tasdiqlangan yozuvlar va tasdiq kutayotgan «oldim». before=(sana, vaqt) — shu paytgacha bo'lgan qoldiq
-    (hisob-kitob ro'yxati uchun). Harakatlar tartibi: sana, keyin kiritilgan vaqti.
+    Faqat tasdiqlangan yozuvlar. before=(sana, vaqt) — shu paytgacha bo'lgan qoldiq (hisob-kitob ro'yxati uchun).
+    Harakatlar tartibi: sana, keyin kiritilgan vaqti.
     """
-    alive = (WorkerPayment.owner_id == owner_id, WorkerPayment.deleted_at.is_(None))
-    st_q = select(WorkerPayment).where(
-        *alive, WorkerPayment.status == EntryStatus.APPROVED, WorkerPayment.kind == PayKind.BALANCE
+    alive = (
+        WorkerPayment.owner_id == owner_id,
+        WorkerPayment.deleted_at.is_(None),
+        WorkerPayment.status == EntryStatus.APPROVED,
     )
+    st_q = select(WorkerPayment).where(*alive, WorkerPayment.kind == PayKind.BALANCE)
     if worker_ids is not None:
         st_q = st_q.where(WorkerPayment.worker_id.in_(worker_ids))
     if before is not None:
@@ -887,7 +876,6 @@ async def worker_balances(
         select(WorkerPayment.worker_id, WorkerPayment.kind, WorkerPayment.currency, func.sum(WorkerPayment.amount))
         .where(
             *alive,
-            _PAY_COUNTED,
             WorkerPayment.kind.in_((PayKind.PAY, PayKind.RETURN)),
             *scope(WorkerPayment.entry_date, WorkerPayment.created_at, WorkerPayment.worker_id),
         )
@@ -913,7 +901,7 @@ async def worker_balance(session: AsyncSession, owner_id: int, worker_id: int) -
 async def worker_day_payments(
     session: AsyncSession, owner_id: int, worker_id: int, days: list[date]
 ) -> dict[date, tuple[dict[str, Decimal], dict[str, Decimal]]]:
-    """Kunlar bo'yicha ishchi olgan va qaytargan pul (qoldiqqa kirganlari): kun -> (olgan, qaytargan)."""
+    """Kunlar bo'yicha ishchi olgan va qaytargan pul (tasdiqlanganlari): kun -> (olgan, qaytargan)."""
     out: dict[date, tuple[dict[str, Decimal], dict[str, Decimal]]] = {d: ({}, {}) for d in days}
     if not days:
         return out
@@ -925,7 +913,7 @@ async def worker_day_payments(
             WorkerPayment.deleted_at.is_(None),
             WorkerPayment.kind.in_((PayKind.PAY, PayKind.RETURN)),
             WorkerPayment.entry_date.in_(days),
-            _PAY_COUNTED,
+            WorkerPayment.status == EntryStatus.APPROVED,
         )
         .group_by(WorkerPayment.entry_date, WorkerPayment.kind, WorkerPayment.currency)
     )
@@ -941,7 +929,7 @@ class LedgerRow:
     entry: WorkEntry | WorkerPayment
     # Qoldiqqa ta'siri (ishda — ish haqi, olinganda — manfiy); BALANCE da — aytilgan qoldiq
     delta: dict[str, Decimal]
-    counted: bool  # qoldiqqa kirgan: tasdiqlangan yoki tasdiq kutayotgan «oldim»
+    counted: bool  # tasdiqlangan — qoldiqqa kirgan
     balance: dict[str, Decimal] = field(default_factory=dict)  # shu yozuvdan keyingi qoldiq
 
     @property
@@ -984,7 +972,7 @@ async def worker_ledger(
     session: AsyncSession, owner_id: int, worker_id: int, limit: int = 30, offset: int = 0
 ) -> tuple[list[LedgerRow], bool]:
     """Ishchi hisob-kitobi (yangisi birinchi): ishlar va pul harakatlari, har biridan keyingi qoldiq bilan.
-    Rad etilganlar ko'rsatilmaydi, tasdiq kutayotganlar — qoldiqqa kirmasdan («oldim» — darhol kiradi)."""
+    Rad etilganlar ko'rsatilmaydi, tasdiq kutayotganlar — qoldiqqa kirmasdan."""
     need = offset + limit + 1
     works = list(
         await session.scalars(
@@ -1014,7 +1002,7 @@ async def worker_ledger(
     for p in payments:
         amount = _dec(p.amount)
         delta = {p.currency: -amount if p.kind == PayKind.PAY else amount}
-        rows.append(LedgerRow(p.kind, p, delta, pay_counts(p)))
+        rows.append(LedgerRow(p.kind, p, delta, p.status == EntryStatus.APPROVED))
     rows.sort(key=_ledger_key, reverse=True)
     rows = rows[:need]
 

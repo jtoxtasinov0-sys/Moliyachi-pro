@@ -18,6 +18,7 @@ from bot.db.models import Client, ItemModel, Supplier, User
 from bot.handlers.entries import ledger_text, tracked
 from bot.handlers.money import client_balance_text, client_ledger_blocks, supplier_month_line
 from bot.middlewares import IsOwner
+from bot.reminders import PAY_REMINDER_HOUR
 from bot.services.utils import CURRENCY_LABELS, fmt_money, fmt_totals, parse_price, today
 
 router = Router(name="admin")
@@ -1132,9 +1133,8 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"
         f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
-        "• 💵 Ishchi «oldim» desa — qoldiqdan darhol ayriladi"
-        + (" (siz tasdiqlaysiz, rad etsangiz qaytadi)" if pay_approval else "")
-        + f", «qaytardim» — {'siz tasdiqlagandan keyin' if pay_approval else 'darhol'} qo'shiladi\n"
+        f"• 💵 Ishchi yozgan pul («oldim», «qaytardim»): {'egasi tasdiqlagandan keyin' if pay_approval else 'darhol'} "
+        f"hisob-kitobga kiradi; tasdiqlanmagani bo'lsa — har kuni {PAY_REMINDER_HOUR}:00 da eslatiladi\n"
         "• ⚡ Ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, summa aytildi): "
         + ("«To'g'rimi?» so'ralmay darhol saqlanadi, ikkinchi tomonga xabar boradi" if auto_save
            else "«To'g'rimi?» deb so'raladi, «✅ Saqlash» bosilgach saqlanadi")

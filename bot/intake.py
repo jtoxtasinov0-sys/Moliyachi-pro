@@ -531,11 +531,8 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if needs_approval and saved:
         header += "\n⏳ Ish yozuvlari egasining tasdig'ini kutmoqda."
-    pending = [p for p in payments if p.status == EntryStatus.PENDING]
-    if any(not repo.pay_counts(p) for p in pending):
+    if any(p.status == EntryStatus.PENDING for p in payments):
         header += "\n⏳ Pul yozuvlari egasining tasdig'ini kutmoqda."
-    elif pending:
-        header += "\n⏳ Qoldiqdan ayrildi, boshlig'ingiz tasdig'ini kutmoqda."
     balance = await _balance_lines(session, user, [e.worker for e in saved], payments)
     if balance:
         header += "\n\n" + "\n".join(balance)
@@ -692,8 +689,6 @@ async def _notify_owner(
             f"{title} — {escape(worker.name)} yozdi\n\n{pay_text(e, owner)}\n\n"
             f"{await pay_summary(session, [e], owner)}"
         )
-        if e.status == EntryStatus.PENDING and repo.pay_counts(e):
-            text += "\n<i>Qoldiqdan ayrildi. Rad etsangiz — qaytadi.</i>"
         await notify_owner(bot, session, e.owner_id, text, markup=kbs.pay_entry_kb(e, owner))
 
 

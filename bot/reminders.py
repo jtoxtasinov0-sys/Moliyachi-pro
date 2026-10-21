@@ -1,4 +1,5 @@
-"""Kundalik eslatma: har kuni belgilangan soatda egaga «bugungi pulingizni kiriting» xabari.
+"""Kundalik eslatma: har kuni belgilangan soatda egaga «bugungi pulingizni kiriting» xabari. Ishchi yozgan pul
+(«500 ming oldim») tasdiqlanmay qolgan bo'lsa — har kuni ertalab «tasdiqlanmagan pul bor» xabari.
 
 Server (Render bepul tarifi) 15 daqiqa so'rovsiz qolsa uxlaydi va eslatma vaqti o'tib ketadi. Shuning uchun
 serverda bot har 10 daqiqada o'z manziliga /health so'rovini yuborib, o'zini uyg'oq ushlab turadi.
@@ -8,6 +9,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from html import escape
 
 import aiohttp
 from aiogram import Bot
@@ -18,11 +20,15 @@ from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
+from bot.db.models import EntryStatus, WorkerPayment
 
 log = logging.getLogger(__name__)
 
 CHECK_EVERY = 60  # soniya
 PING_EVERY = 10 * 60
+# Tasdiqlanmagan pul eslatmasi — har kuni shu soatdan (mahalliy vaqt), tasdiqlash tugmalari bilan shuncha yozuv
+PAY_REMINDER_HOUR = 9
+PAY_REMINDER_CARDS = 10
 
 
 async def send_due(bot: Bot) -> None:
@@ -51,6 +57,56 @@ async def send_due(bot: Bot) -> None:
             log.exception("Eslatma yuborilmadi: %s", tg_id)
 
 
+def _pending_pays_text(pending: list[WorkerPayment]) -> str:
+    per_worker: dict[str, int] = {}
+    for e in pending:
+        per_worker[e.worker.name] = per_worker.get(e.worker.name, 0) + 1
+    names = ", ".join(f"{escape(name)} — {count} ta" for name, count in per_worker.items())
+    text = (
+        f"🔔 <b>Tasdiqlanmagan pul bor</b> — {len(pending)} ta yozuv\n👷 {names}\n\n"
+        "Tasdiqlamaguningizcha ishchi qoldig'iga kirmaydi. Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting."
+    )
+    if len(pending) > PAY_REMINDER_CARDS:
+        text += (
+            f"\n\nPastda — eng eskilari ({PAY_REMINDER_CARDS} ta), qolganlari — «👷 Ishchilar» bo'limida yoki ilovada."
+        )
+    return text
+
+
+async def send_pending_pays(bot: Bot) -> None:
+    """Ishchi yozgan pul tasdiqlanmay qolgan bo'lsa — egaga kuniga bir marta eslatma va har bir yozuv
+    tasdiqlash tugmalari bilan (eskisi birinchi)."""
+    from bot.handlers.entries import pay_text  # aylanma importdan qochish uchun
+
+    now = datetime.now(settings.tz)
+    if now.hour < PAY_REMINDER_HOUR:
+        return
+    day = now.date().isoformat()
+    for tg_id in settings.owner_ids:
+        async with session_factory() as session:
+            user = await repo.get_user_by_tg(session, tg_id)
+            if user is None or not user.is_owner:
+                continue
+            if await repo.get_setting(session, user.id, "pay_reminder_sent") == day:
+                continue
+            # Bugun tekshirildi: keyin yozilgan pul haqida egasiga darhol xabar boradi, eslatmasi — ertaga
+            await repo.set_setting(session, user.id, "pay_reminder_sent", day)
+            await session.commit()
+            pending = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=200)
+            if not pending:
+                continue
+            pending.reverse()
+            messages = [(_pending_pays_text(pending), kbs.app_kb())]
+            messages += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in pending[:PAY_REMINDER_CARDS]]
+        try:
+            for text, markup in messages:
+                await bot.send_message(tg_id, text, reply_markup=markup)
+        except TelegramForbiddenError:
+            log.info("Tasdiq eslatmasi yuborilmadi: %s botni bloklagan", tg_id)
+        except TelegramAPIError:
+            log.exception("Tasdiq eslatmasi yuborilmadi: %s", tg_id)
+
+
 async def _ping(http: aiohttp.ClientSession) -> None:
     try:
         async with http.get(f"{settings.base_url}/health", timeout=aiohttp.ClientTimeout(total=20)) as resp:
@@ -68,6 +124,10 @@ async def run(bot: Bot) -> None:
                 await send_due(bot)
             except Exception:
                 log.exception("Eslatmalarni tekshirishda xato")
+            try:
+                await send_pending_pays(bot)
+            except Exception:
+                log.exception("Tasdiqlanmagan pul eslatmasini tekshirishda xato")
             if keep_awake and time.monotonic() - last_ping >= PING_EVERY:
                 last_ping = time.monotonic()
                 await _ping(http)
