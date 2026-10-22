@@ -2394,6 +2394,39 @@ function refreshView() {
   else if (state.view === "materials") loadMaterials();
 }
 
+// --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo — har biri alohida ----------
+
+const RESET = {
+  clients: {
+    name: "Mijozlar",
+    ask: "Mijozlar hisobi 0 qilinsinmi? Mijozlar bilan hamma oldi-berdi (mol, to'lov, qaytgan mol) o'chadi, qarzlar 0 bo'ladi. Mijozlar ro'yxati qoladi.",
+  },
+  workers: {
+    name: "Ishchilar",
+    ask: "Ishchilar hisobi 0 qilinsinmi? Hamma ish va pul yozuvlari (avans, ish haqi) o'chadi, qoldiqlar 0 bo'ladi. Ishchilar, kasblar va modellar qoladi.",
+  },
+  materials: {
+    name: "Xom ashyo",
+    ask: "Xom ashyo hisobi 0 qilinsinmi? Hamma xom ashyo xaridlari o'chadi. Ta'minotchilar ro'yxati qoladi.",
+  },
+};
+
+// Ikki marta so'raladi, ikkalasida ham «OK» bosilsa — 0 qilinadi
+async function resetSection(btn) {
+  const r = RESET[btn.dataset.reset];
+  haptic("warning");
+  if (!(await confirmBox(r.ask))) return;
+  if (!(await confirmBox(`Rostdan ham? ${r.name} hisobi butunlay 0 bo'ladi — o'chgan yozuvlarni qaytarib bo'lmaydi.`))) return;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/reset/${btn.dataset.reset}`, { method: "POST" });
+    toast(res.count ? `${r.name} hisobi 0 qilindi` : `${r.name} hisobi allaqachon 0`);
+    if (btn.dataset.reset === "workers") loadWorkers();
+    else refreshView();
+  } catch (e) { fail(e); }
+  btn.disabled = false;
+}
+
 // --- Sozlamalar --------------------------------------------------------------
 
 function settingsSheet() {
@@ -2823,6 +2856,7 @@ function bind() {
     if (w) workerSheet(w);
   };
   $("addWorkerBtn").onclick = () => addWorkerSheet();
+  document.querySelectorAll("[data-reset]").forEach((b) => (b.onclick = () => resetSection(b)));
   $("jobChips").onclick = (ev) => {
     const b = ev.target.closest("[data-job]");
     if (!b) return;

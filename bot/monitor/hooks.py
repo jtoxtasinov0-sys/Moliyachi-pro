@@ -242,6 +242,9 @@ _ACTIONS = [
     ("DELETE", r"/api/payments/\d+", "Ishchi pul yozuvini o'chirdi"),
     ("POST", r"/api/payments/\d+/approve", "Ishchi pul yozuvini tasdiqladi"),
     ("POST", r"/api/payments/\d+/reject", "Ishchi pul yozuvini rad etdi"),
+    ("POST", r"/api/reset/clients", "🧹 Mijozlar hisobini 0 qildi"),
+    ("POST", r"/api/reset/workers", "🧹 Ishchilar hisobini 0 qildi"),
+    ("POST", r"/api/reset/materials", "🧹 Xom ashyo hisobini 0 qildi"),
 ]
 OPEN_EVERY = 20 * 60  # ilovani ochish — 20 daqiqada bir marta yoziladi
 VIEW_EVERY = 10 * 60  # bir bo'limni ko'rish — 10 daqiqada bir marta

@@ -480,6 +480,26 @@ async def soft_delete(
     await session.flush()
 
 
+async def reset_entries(
+    session: AsyncSession,
+    owner_id: int,
+    tables: tuple[type[WorkEntry | WorkerPayment | ClientEntry | MaterialEntry], ...],
+) -> int:
+    """Bo'lim hisobini 0 qilish: kabinetdagi shu jadvallarning hamma yozuvlari o'chiriladi (deleted_at bilan —
+    bazada qoladi). Mijoz, ishchi, ta'minotchilarning o'zi saqlanadi. Qaytadi: nechta yozuv o'chdi."""
+    now = _now()
+    count = 0
+    for table in tables:
+        result = await session.execute(
+            update(table)
+            .where(table.owner_id == owner_id, table.deleted_at.is_(None))
+            .values(deleted_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        count += result.rowcount or 0
+    return count
+
+
 async def review_work_entry(session: AsyncSession, entry: WorkEntry, reviewer: User, approve: bool) -> None:
     entry.status = EntryStatus.APPROVED if approve else EntryStatus.REJECTED
     entry.reviewed_by = reviewer.id

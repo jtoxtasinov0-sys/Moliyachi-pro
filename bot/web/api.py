@@ -1516,6 +1516,23 @@ async def delete_payment(request: web.Request, session: AsyncSession, user: User
     return web.json_response({"ok": True})
 
 
+# --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo — har biri alohida -------------
+
+RESET_TABLES = {
+    "clients": (ClientEntry,),
+    "workers": (WorkEntry, WorkerPayment),
+    "materials": (MaterialEntry,),
+}
+
+
+@routes.post(r"/api/reset/{section:clients|workers|materials}")
+@endpoint(owner_only=True)
+async def reset_section(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Ilova ikki marta so'ragach: bo'limning hamma yozuvlari o'chadi, odamlar (mijoz, ishchi, ta'minotchi) qoladi."""
+    count = await repo.reset_entries(session, user.id, RESET_TABLES[request.match_info["section"]])
+    return web.json_response({"ok": True, "count": count})
+
+
 # --- Barcha harakatlar: xarajat, daromad, qarz, mijoz, xom ashyo va ish yozuvlari bitta lentada ---
 
 ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work", "pay")
