@@ -1516,16 +1516,17 @@ async def delete_payment(request: web.Request, session: AsyncSession, user: User
     return web.json_response({"ok": True})
 
 
-# --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo — har biri alohida -------------
+# --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo, xarajatlar — har biri alohida ------
 
 RESET_TABLES = {
     "clients": (ClientEntry,),
     "workers": (WorkEntry, WorkerPayment),
     "materials": (MaterialEntry,),
+    "personal": (PersonalEntry,),
 }
 
 
-@routes.post(r"/api/reset/{section:clients|workers|materials}")
+@routes.post(r"/api/reset/{section:clients|workers|materials|personal}")
 @endpoint(owner_only=True)
 async def reset_section(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """Ilova ikki marta so'ragach: bo'limning hamma yozuvlari o'chadi, odamlar (mijoz, ishchi, ta'minotchi) qoladi."""

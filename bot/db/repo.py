@@ -483,7 +483,7 @@ async def soft_delete(
 async def reset_entries(
     session: AsyncSession,
     owner_id: int,
-    tables: tuple[type[WorkEntry | WorkerPayment | ClientEntry | MaterialEntry], ...],
+    tables: tuple[type[WorkEntry | WorkerPayment | ClientEntry | MaterialEntry | PersonalEntry], ...],
 ) -> int:
     """Bo'lim hisobini 0 qilish: kabinetdagi shu jadvallarning hamma yozuvlari o'chiriladi (deleted_at bilan —
     bazada qoladi). Mijoz, ishchi, ta'minotchilarning o'zi saqlanadi. Qaytadi: nechta yozuv o'chdi."""

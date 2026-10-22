@@ -2394,7 +2394,7 @@ function refreshView() {
   else if (state.view === "materials") loadMaterials();
 }
 
-// --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo — har biri alohida ----------
+// --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo, xarajatlar — har biri alohida ----
 
 const RESET = {
   clients: {
@@ -2408,6 +2408,10 @@ const RESET = {
   materials: {
     name: "Xom ashyo",
     ask: "Xom ashyo hisobi 0 qilinsinmi? Hamma xom ashyo xaridlari o'chadi. Ta'minotchilar ro'yxati qoladi.",
+  },
+  personal: {
+    name: "Xarajatlar",
+    ask: "Xarajatlar hisobi 0 qilinsinmi? Hamma xarajat va daromad yozuvlari o'chadi. Qarzlar qoladi.",
   },
 };
 
