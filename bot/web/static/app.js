@@ -1196,6 +1196,21 @@ function debtSource(p) {
   return DEBT_SOURCE[p.type] || "";
 }
 
+// «48,7 mln so'm» — qisqa summa (valyutalar bo'yicha)
+function shortMoney(pay) {
+  return Object.entries(pay || {}).filter(([, v]) => v).map(([c, v]) => `${fmtShort(v)} ${CUR[c] || c}`).join(" + ");
+}
+
+// Qarzlar balansi tarkibi: «📥 Qarzingiz: 🧱 Xom ashyo 48,7 mln so'm · 👷 Ishchilar 2,2 mln so'm»
+function debtPartsHtml(groups) {
+  const NAMES = { debt: "🤝 Odamlar", material: "🧱 Xom ashyo", worker: "👷 Ishchilar", client: "🛍 Mijozlar" };
+  const line = (field, title) => {
+    const parts = groups.filter((g) => shortMoney(g[field])).map((g) => `${NAMES[g.type]} ${esc(shortMoney(g[field]))}`);
+    return parts.length ? `<div>${title}: ${parts.join(" · ")}</div>` : "";
+  };
+  return line("i_owe", "📥 Qarzingiz") + line("owed_to_me", "📤 Sizga");
+}
+
 // Bo'lim jami: «📥 qarzingiz 200 000 so'm · 📤 sizga qarz 50 000 so'm»
 function debtSumHtml(owed, owe) {
   const parts = [];
@@ -1250,6 +1265,7 @@ function renderDebts() {
   renderHomeDebts();
   setMoneyStat("dOwed", d.owed_to_me);
   setMoneyStat("dOwe", d.i_owe);
+  $("dParts").innerHTML = debtPartsHtml(d.groups);
   if (!d.people.length) {
     $("debtList").innerHTML = `<div class="empty"><span class="big">🤝</span>Hali qarz yozilmagan</div>`;
     return;
