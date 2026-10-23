@@ -110,7 +110,7 @@ class ReportCb(CallbackData, prefix="rep"):
 
 
 class PdfCb(CallbackData, prefix="pdf"):
-    period: str  # menu | day | week | month | prev_month | year
+    period: str  # menu | day | week | month | prev_month | year | all
 
 
 class AdviceCb(CallbackData, prefix="adv"):
@@ -251,7 +251,8 @@ def pdf_kb() -> InlineKeyboardMarkup:
     kb.button(text="Shu oy", callback_data=PdfCb(period="month"))
     kb.button(text="O'tgan oy", callback_data=PdfCb(period="prev_month"))
     kb.button(text="Shu yil", callback_data=PdfCb(period="year"))
-    kb.adjust(3, 2)
+    kb.button(text="Hammasi", callback_data=PdfCb(period="all"))
+    kb.adjust(3, 3)
     return kb.as_markup()
 
 

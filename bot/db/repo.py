@@ -1651,6 +1651,15 @@ def _client_delta(e: ClientEntry) -> Decimal:
     return _dec(e.amount) if e.kind == ClientKind.SALE else -_dec(e.amount)
 
 
+async def first_client_date(session: AsyncSession, owner_id: int) -> date | None:
+    """Mijozlar bilan birinchi oldi-berdi sanasi — «Hammasi» PDF hisobotining boshlanishi uchun."""
+    return await session.scalar(
+        select(func.min(ClientEntry.entry_date)).where(
+            ClientEntry.owner_id == owner_id, ClientEntry.deleted_at.is_(None)
+        )
+    )
+
+
 async def client_balance(session: AsyncSession, owner_id: int, client_id: int) -> dict[str, Decimal]:
     """Valyuta -> qoldiq: musbat — mijoz qarzdor, manfiy — oldindan to'lagan."""
     signed = case((ClientEntry.kind == ClientKind.SALE, ClientEntry.amount), else_=-ClientEntry.amount)

@@ -120,7 +120,7 @@ Telegram akkauntini almashtirsa ham shu havola bilan qayta kiradi. Boshqa akkaun
 (eski akkauntga endi xabar bormaydi). Havola begona qo'lga tushsa — «🔄 Yangi havola»: eskisi ishlamay qoladi.
 
 **📄 PDF hisobot:** har kim o'z hisobotini fayl qilib telefoniga saqlab oladi — ilova yopilsa ham, internet
-bo'lmasa ham ochiladi. Ilovada yuqoridagi 📄 tugma → davr (bugun / shu hafta / shu oy / o'tgan oy / shu yil) →
+bo'lmasa ham ochiladi. Ilovada yuqoridagi 📄 tugma → davr (bugun / shu hafta / shu oy / o'tgan oy / shu yil / hammasi — boshidan bugungacha) →
 «📥 Telefonga yuklab olish» yoki «💬 Telegram chatga yuborish». Botda — `/pdf` yoki «📊 Hisobot» → «📄 PDF fayl».
 Egada: ishxona (ishchilar, ish turlari, kunlar bo'yicha, har bir ishchining qoldig'i), ishchilarga berilgan pul,
 daromad-xarajat, mijozlar, xom ashyo va umumiy qarzlar; ishchida — o'zi topshirgan ishlar, olgan pullari va qoldig'i.

@@ -2290,7 +2290,7 @@ function pickImageSheet() {
 // --- PDF hisobot -------------------------------------------------------------
 // Har kim o'z hisobotini fayl qilib telefoniga saqlab oladi: ilova yopilsa ham fayl qoladi
 
-const PDF_PERIODS = [["day", "Bugun"], ["week", "Shu hafta"], ["month", "Shu oy"], ["prev_month", "O'tgan oy"], ["year", "Shu yil"]];
+const PDF_PERIODS = [["day", "Bugun"], ["week", "Shu hafta"], ["month", "Shu oy"], ["prev_month", "O'tgan oy"], ["year", "Shu yil"], ["all", "Hammasi"]];
 
 function pdfSheet() {
   const owner = state.me.is_owner;

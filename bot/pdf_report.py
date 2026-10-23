@@ -28,7 +28,11 @@ PERIODS = {
     "month": "Shu oy",
     "prev_month": "O'tgan oy",
     "year": "Shu yil",
+    "all": "Hammasi",
 }
+
+# «Hammasi»: shu sanadan bugungacha so'raladi, hisobotda esa birinchi yozuv sanasidan ko'rsatiladi
+ALL_START = date(2000, 1, 1)
 
 NAVY = (15, 31, 87)
 BLUE = (43, 79, 201)
@@ -55,13 +59,17 @@ def period_bounds(period: str, t: date | None = None) -> tuple[date, date]:
         return end.replace(day=1), end
     if period == "year":
         return date(t.year, 1, 1), date(t.year, 12, 31)
+    if period == "all":
+        return ALL_START, t
     raise ValueError(period)
 
 
 def range_text(start: date, end: date) -> str:
     if start == end:
         return start.strftime("%d.%m.%Y")
-    return f"{start.strftime('%d.%m')} – {end.strftime('%d.%m.%Y')}"
+    # Har xil yilda bo'lsa (masalan «Hammasi») — boshlanishida ham yil
+    head = start.strftime("%d.%m" if start.year == end.year else "%d.%m.%Y")
+    return f"{head} – {end.strftime('%d.%m.%Y')}"
 
 
 def file_name(user: User, period: str) -> str:
@@ -72,6 +80,8 @@ def file_name(user: User, period: str) -> str:
         tag = start.strftime("%Y-%m")
     elif period == "year":
         tag = str(start.year)
+    elif period == "all":
+        tag = f"hammasi-{end.isoformat()}"
     else:
         tag = f"{start.isoformat()}_{end.isoformat()}"
     # Fayl nomida faqat lotin harflari: kirillcha ism bo'lsa ham telefon nomni buzmasin
@@ -81,8 +91,9 @@ def file_name(user: User, period: str) -> str:
 
 def caption(period: str) -> str:
     start, end = period_bounds(period)
+    when = "boshidan bugungacha" if period == "all" else range_text(start, end)
     return (
-        f"📄 <b>Hisobot — {PERIODS[period].lower()}</b> ({range_text(start, end)})\n\n"
+        f"📄 <b>Hisobot — {PERIODS[period].lower()}</b> ({when})\n\n"
         "Faylni bosing → «⋮» → «Yuklab olish» (iPhone'da «Saqlash»). "
         "Telefoningizda saqlanadi — ilova yopilsa ham, internet bo'lmasa ham ochiladi."
     )
@@ -145,6 +156,16 @@ async def _collect(session: AsyncSession, user: User, period: str) -> ReportData
         data.materials = await repo.material_entries_between(session, acc, start, end)
         # Umumiy qarzlar: odamlar, ta'minotchilar, ishchilar va mijozlar — ilovadagi «Qarzlar»dagidek
         data.debts = [b for b in await repo.debt_overview(session, acc) if not b.settled]
+    if period == "all":
+        dates = [
+            *(r.work_date for r in data.work),
+            *(p.entry_date for p in data.payments),
+            *(e.entry_date for e in data.personal),
+            *(e.entry_date for e in data.materials),
+        ]
+        if user.is_owner and (first := await repo.first_client_date(session, acc)):
+            dates.append(first)
+        data.start = min(dates, default=end)
     return data
 
 
