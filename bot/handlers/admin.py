@@ -66,8 +66,8 @@ async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
         job = jobs.get(w.job_id)
         what = escape(job) if job else "kasbi tanlanmagan"
         line = f"• <b>{escape(w.name)}</b> — {what} · {_status(w)}"
-        if tracked(balances.get(w.id)):
-            line += f"\n   🧾 qoldiq: {drafts.fmt_signed(balances[w.id].balance)}"
+        if (b := balances.get(w.id)) and b.balance:
+            line += f"\n   🧾 qoldiq: {drafts.fmt_signed(b.balance)}"
         lines.append(line)
         label = f"👷 {w.name} · {job}" if job else f"👷 {w.name}"
         kb.button(text=label, callback_data=kbs.WorkerCb(action="open", user_id=w.id))
@@ -75,11 +75,11 @@ async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
     kb.button(text="🏷 Kasblar", callback_data=kbs.JobCb(action="list"))
     kb.adjust(*([1] * len(workers)), 2)
     text = "👷 <b>Ishchilar</b>\n\n" + ("\n".join(lines) if lines else "Hali ishchi yo'q.")
-    # Hisobi boshlangan ishchilar bilan jami — umumiy «🤝 Qarzlar»dagi «Ishchilar» bo'limi
+    # Ishchilar bilan jami — umumiy «🤝 Qarzlar»dagi «Ishchilar» bo'limi
     due: dict[str, Decimal] = defaultdict(Decimal)
     over: dict[str, Decimal] = defaultdict(Decimal)
     for w in workers:
-        if tracked(b := balances.get(w.id)):
+        if (b := balances.get(w.id)) is not None:
             for currency, value in b.balance.items():
                 (due if value > 0 else over)[currency] += abs(value)
     if due or over:

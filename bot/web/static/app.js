@@ -1723,7 +1723,7 @@ function renderWorkers() {
     const tag = !w.is_active ? '<span class="tag off">O\'chirilgan</span>'
       : w.linked ? '<span class="tag ok">Ulangan</span>' : '<span class="tag wait">Havola kutilmoqda</span>';
     const job = w.job ? `<span class="tag job">${esc(w.job.name)}</span>` : '<span class="tag none">Kasbi tanlanmagan</span>';
-    const bal = w.balance && w.balance.tracked ? balanceTag(w.balance.amounts) : "";
+    const bal = w.balance && moneyList(w.balance.amounts) ? balanceTag(w.balance.amounts) : "";
     return `
       <button class="row-card${w.is_active ? "" : " off"}" data-worker="${w.id}">
         <div class="avatar">${esc(initials(w.name))}</div>
@@ -1733,11 +1733,11 @@ function renderWorkers() {
   }).join("");
 }
 
-// Hisobi boshlangan ishchilar bilan jami — umumiy «Qarzlar»dagi «Ishchilar» bo'limi
+// Ishchilar bilan jami — umumiy «Qarzlar»dagi «Ishchilar» bo'limi
 function renderWorkerTotals(items) {
   const due = {}, over = {};
   for (const w of items) {
-    if (!w.balance || !w.balance.tracked) continue;
+    if (!w.balance) continue;
     for (const [c, v] of Object.entries(w.balance.amounts)) {
       if (v > 0) due[c] = (due[c] || 0) + v;
       else if (v < 0) over[c] = (over[c] || 0) - v;

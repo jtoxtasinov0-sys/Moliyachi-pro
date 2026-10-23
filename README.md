@@ -79,9 +79,9 @@ bilan qarz ham shu yerda); 👷 ishchilar (ishchining haqqi — sizning qarzingi
 «sizning qarzingiz» — hamma bo'limlarning jami. Shu qarzlar o'z bo'limida ham alohida turadi: «Jamoa → Ishchilar»da
 «🧾 Ishchilar bilan hisob» (berishingiz kerak / ortiqcha olgan), «Mijozlar»da mijozlar qarzi va oldindan
 to'laganlar, «Jamoa → Xom ashyo»da va bosh sahifadagi xom ashyo kartasida «💳 Ta'minotchilar bilan qarz»; botda
-ham «👷 Ishchilar», «🛍 Mijozlar» va «🧱 Xom ashyo» oxirida jami. Ishchi faqat pul yoki hisob holati yozilgan
-bo'lsa qo'shiladi (yozilmagan bo'lsa qoldig'i — hamma ishlari summasi), hisobi yopilgan ishchi va mijoz
-ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning hisob-kitob oynasi, mijozni — mijoz oynasi,
+ham «👷 Ishchilar», «🛍 Mijozlar» va «🧱 Xom ashyo» oxirida jami. Hamma ishchi avtomatik qo'shiladi: pul yoki hisob
+holati yozilmagan ishchining qoldig'i — tasdiqlangan ishlari summasi (to'g'rilash uchun bir marta «Robiya bilan
+hisob yopildi» yoki «Robiyaga 900 ming qarzman»). Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning hisob-kitob oynasi, mijozni — mijoz oynasi,
 ta'minotchini — qarz va qarzga olingan xom ashyo tarixi ochiladi.
 
 **🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →

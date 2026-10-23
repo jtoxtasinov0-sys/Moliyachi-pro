@@ -1361,8 +1361,8 @@ async def debt_overview(session: AsyncSession, owner_id: int) -> list[DebtBalanc
     """Umumiy qarzlar: qarz yozuvlari, ta'minotchilar (qarzga olingan xom ashyo bilan), ishchilar va mijozlar
     qoldig'i — har biri o'z bo'limida (source), jami hammasidan.
 
-    Ishchi — pul yoki hisob holati yozilgan bo'lsa (yozilmagan bo'lsa qoldiq — hamma ishlari summasi, ishchilar
-    ro'yxatidagidek hisobga olinmaydi): ishchining haqqi — mening qarzim, ortiqcha olgani (avans) — uning qarzi.
+    Ishchi — hammasi avtomatik (pul yoki hisob holati yozilmagan bo'lsa ham — qoldig'i tasdiqlangan ishlari summasi):
+    ishchining haqqi — mening qarzim, ortiqcha olgani (avans) — uning qarzi.
     Mijoz: qarzi — menga qarz, oldindan to'lagani — mening qarzim. Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi.
     Oddiy xom ashyo xaridi (qarzga olinmagan) bu yerga kirmaydi."""
     rows = await _debts_with_suppliers(session, owner_id)
@@ -1371,7 +1371,7 @@ async def debt_overview(session: AsyncSession, owner_id: int) -> list[DebtBalanc
     last = await _worker_last_dates(session, owner_id)
     for worker_id, wb in (await worker_balances(session, owner_id)).items():
         worker = workers.get(worker_id)
-        if worker is None or not wb.balance or not (wb.since or wb.paid or wb.returned):
+        if worker is None or not wb.balance:
             continue
         rows.append(
             DebtBalance(
