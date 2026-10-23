@@ -9,11 +9,12 @@ from html import escape
 from typing import Awaitable, Callable
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import advisor, drafts, intake
+from bot import advisor, drafts, intake, pdf_report
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
@@ -39,7 +40,9 @@ from bot.services import llm, stt
 from bot.services.utils import today
 from bot.web.auth import (
     WEB_TOKEN_DAYS,
+    make_file_token,
     make_web_token,
+    validate_file_token,
     validate_init_data,
     validate_web_token,
     web_token_expiry,
@@ -291,6 +294,69 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
     return web.json_response(data)
 
 
+# --- PDF hisobot ------------------------------------------------------------
+# Har kim o'z hisobotini fayl qilib telefoniga saqlab oladi: ilova yopilsa ham fayl qoladi.
+
+def _pdf_period(value) -> str:
+    period = str(value or "month")
+    if period not in pdf_report.PERIODS:
+        raise ApiError(400, "Noto'g'ri davr")
+    return period
+
+
+@routes.post("/api/report/pdf")
+@endpoint()
+async def report_pdf(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """action=send — bot faylni Telegram chatga yuboradi; aks holda — yuklab olish havolasi."""
+    data = await _json(request)
+    period = _pdf_period(data.get("period"))
+    if data.get("action") == "send":
+        if not user.tg_id:
+            raise ApiError(400, "Telegram akkaunt ulanmagan")
+        pdf, name = await pdf_report.build(session, user, period)
+        try:
+            await request.app["bot"].send_document(
+                user.tg_id, BufferedInputFile(pdf, filename=name), caption=pdf_report.caption(period)
+            )
+        except TelegramAPIError:
+            log.warning("PDF yuborilmadi (chat %s)", user.tg_id, exc_info=True)
+            raise ApiError(400, "Bot sizga fayl yubora olmadi — botni ochib /start bosing")
+        return web.json_response({"ok": True})
+    base = settings.base_url or f"{request.scheme}://{request.host}"
+    token = make_file_token(user.id, period, settings.bot_token)
+    return web.json_response(
+        {"url": f"{base}/api/report/file?t={token}", "file_name": pdf_report.file_name(user, period)}
+    )
+
+
+@routes.get("/api/report/file")
+async def report_file(request: web.Request) -> web.Response:
+    """PDF faylning o'zi. Kirish — /api/report/pdf bergan qisqa muddatli imzoli havola orqali."""
+    found = validate_file_token(request.query.get("t", ""), settings.bot_token)
+    if found is None or found[1] not in pdf_report.PERIODS:
+        raise ApiError(403, "Havola eskirgan — hisobotni ilovadan qayta yuklab oling")
+    user_id, period = found
+    async with session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None or not user.is_active:
+            raise _forbidden()
+        try:
+            pdf, name = await pdf_report.build(session, user, period)
+        except Exception as e:
+            report_error(user.tg_id, e, "PDF hisobot: ")
+            raise
+    return web.Response(
+        body=pdf,
+        content_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            # Telegram Web'dagi «Yuklab olish» oynasi uchun
+            "Access-Control-Allow-Origin": "https://web.telegram.org",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 # --- Foydalanuvchi va sozlamalar --------------------------------------------
 
 @routes.get("/api/me")
@@ -512,8 +578,9 @@ async def _worker_json(
     jobs: dict[int, Job],
     balances: dict[int, repo.WorkerBalance],
 ) -> dict:
+    # Havola doimiy: ulangandan keyin ham ko'rinadi — ishchi undan istalgan vaqt qayta kiradi
     link = None
-    if w.is_active and not w.tg_id and w.invite_token:
+    if w.is_active and w.invite_token:
         bot_me = await request.app["bot"].me()
         link = f"https://t.me/{bot_me.username}?start=inv_{w.invite_token}"
     s = stats.get(w.id, {"qty": 0, "pay": {}})
@@ -530,7 +597,16 @@ async def _worker_json(
     }
 
 
+async def _with_tokens(session: AsyncSession, items: list) -> list:
+    """Ishchi, mijoz, ta'minotchi: faollarining doimiy havolasi bo'lsin (avval ulanganlarda token yo'q edi)."""
+    for item in items:
+        if item.is_active:
+            await repo.invite_token(session, item)
+    return items
+
+
 async def _one_worker_json(request: web.Request, session: AsyncSession, worker: User) -> dict:
+    await _with_tokens(session, [worker])
     owner_id = worker.owner_id
     stats = await _month_stats(session, owner_id)
     balances = await repo.worker_balances(session, owner_id, [worker.id])
@@ -565,7 +641,7 @@ async def _job_arg(session: AsyncSession, owner_id: int, value) -> int | None:
 async def workers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     stats = await _month_stats(session, user.id)
     jobs = await _jobs_by_id(session, user.id)
-    workers_ = await repo.list_workers(session, user.id, active_only=False)
+    workers_ = await _with_tokens(session, await repo.list_workers(session, user.id, active_only=False))
     balances = await repo.worker_balances(session, user.id)
     items = [await _worker_json(request, w, stats, jobs, balances) for w in workers_]
     items.sort(key=lambda w: (not w["is_active"], -w["month_qty"], w["name"].lower()))
@@ -622,13 +698,9 @@ async def reinvite_worker(request: web.Request, session: AsyncSession, user: Use
     worker = await _get_worker(request, session, user)
     if not worker.is_active:
         raise ApiError(400, "Avval ishchini faollashtiring")
+    # Yangi havola: eskisi ishlamay qoladi, avvalgi Telegram bog'lanishi esa saqlanadi
     await repo.new_invite_token(session, worker)
-    # Yangi havola: avvalgi Telegram bog'lanishi saqlanadi, faqat tg_id bo'lmasa ko'rinadi
-    data = await _one_worker_json(request, session, worker)
-    if data["invite_link"] is None:
-        bot_me = await request.app["bot"].me()
-        data["invite_link"] = f"https://t.me/{bot_me.username}?start=inv_{worker.invite_token}"
-    return web.json_response(data)
+    return web.json_response(await _one_worker_json(request, session, worker))
 
 
 # --- Kasblar ----------------------------------------------------------------
@@ -1051,8 +1123,9 @@ def _client_entry_json(e: ClientEntry) -> dict:
 
 def _client_json(st: repo.ClientStats, bot_username: str) -> dict:
     c = st.client
+    # Havola doimiy: ulangandan keyin ham ko'rinadi — mijoz undan istalgan vaqt qayta kiradi
     link = None
-    if c.is_active and not c.tg_id and c.invite_token:
+    if c.is_active and c.invite_token:
         link = f"https://t.me/{bot_username}?start=cli_{c.invite_token}"
     return {
         "id": c.id,
@@ -1088,6 +1161,7 @@ async def clients(request: web.Request, session: AsyncSession, user: User) -> we
     t = today()
     b = _period_bounds(period, t)
     stats = await repo.client_stats(session, user.id, b["start"], b["end"])
+    await _with_tokens(session, [st.client for st in stats])
     username = (await request.app["bot"].me()).username
     return web.json_response(
         {
@@ -1154,7 +1228,7 @@ async def update_client(request: web.Request, session: AsyncSession, user: User)
 @routes.post(r"/api/clients/{id:\d+}/invite")
 @endpoint(owner_only=True)
 async def reinvite_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Yangi taklif havolasi: avval havolasi bo'lmagan mijozga yoki boshqa Telegram akkauntga o'tkazish uchun."""
+    """Yangi havola: eskisi ishlamay qoladi (begona qo'lga tushsa), avvalgi Telegram bog'lanishi saqlanadi."""
     client = await repo.get_client(session, user.id, int(request.match_info["id"]))
     if client is None:
         raise ApiError(404, "Mijoz topilmadi")
@@ -1312,8 +1386,9 @@ async def material_credit(request: web.Request, session: AsyncSession, user: Use
 # --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
 
 async def _supplier_json(request: web.Request, sp: Supplier, stats: dict[int, repo.SupplierStats]) -> dict:
+    # Havola doimiy: ulangandan keyin ham ko'rinadi — ta'minotchi undan istalgan vaqt qayta kiradi
     link = None
-    if sp.is_active and not sp.tg_id and sp.invite_token:
+    if sp.is_active and sp.invite_token:
         bot_me = await request.app["bot"].me()
         link = f"https://t.me/{bot_me.username}?start=sup_{sp.invite_token}"
     st = stats.get(sp.id) or repo.SupplierStats()
@@ -1345,7 +1420,8 @@ async def _get_supplier(request: web.Request, session: AsyncSession, user: User)
 @endpoint(owner_only=True)
 async def suppliers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     stats = await _supplier_stats(session, user.id)
-    items = [await _supplier_json(request, sp, stats) for sp in await repo.list_suppliers(session, user.id, False)]
+    suppliers_ = await _with_tokens(session, await repo.list_suppliers(session, user.id, False))
+    items = [await _supplier_json(request, sp, stats) for sp in suppliers_]
     items.sort(key=lambda sp: (not sp["is_active"], -sp["month_count"], -sp["count"], sp["name"].lower()))
     return web.json_response({"items": items})
 
@@ -1368,6 +1444,7 @@ async def add_supplier(request: web.Request, session: AsyncSession, user: User) 
 async def toggle_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     supplier = await _get_supplier(request, session, user)
     supplier.is_active = not supplier.is_active
+    await _with_tokens(session, [supplier])
     await session.flush()
     return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
 
@@ -1378,13 +1455,9 @@ async def reinvite_supplier(request: web.Request, session: AsyncSession, user: U
     supplier = await _get_supplier(request, session, user)
     if not supplier.is_active:
         raise ApiError(400, "Avval ta'minotchini faollashtiring")
+    # Yangi havola: eskisi ishlamay qoladi, avvalgi Telegram bog'lanishi esa saqlanadi
     await repo.new_supplier_token(session, supplier)
-    data = await _supplier_json(request, supplier, await _supplier_stats(session, user.id))
-    if data["invite_link"] is None:
-        # Avval ulangan bo'lsa ham — yangi havola (boshqa Telegram akkauntga o'tkazish uchun)
-        bot_me = await request.app["bot"].me()
-        data["invite_link"] = f"https://t.me/{bot_me.username}?start=sup_{supplier.invite_token}"
-    return web.json_response(data)
+    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
 
 
 # --- Ishchi bilan hisob-kitob: avans, ish haqi, qaytarilgan pul, qoldiq ------------

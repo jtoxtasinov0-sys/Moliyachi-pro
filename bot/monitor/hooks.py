@@ -239,6 +239,7 @@ _ACTIONS = [
     ("POST", r"/api/suppliers", "Ta'minotchi qo'shdi"),
     ("POST", r"/api/suppliers/\d+/toggle", "Ta'minotchini yoqdi/o'chirdi"),
     ("POST", r"/api/suppliers/\d+/invite", "Ta'minotchi uchun yangi havola oldi"),
+    ("POST", r"/api/report/pdf", "📄 PDF hisobot oldi"),
     ("POST", r"/api/payments", "Ishchi bilan pul yozdi (ilovada)"),
     ("DELETE", r"/api/payments/\d+", "Ishchi pul yozuvini o'chirdi"),
     ("POST", r"/api/payments/\d+/approve", "Ishchi pul yozuvini tasdiqladi"),

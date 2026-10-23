@@ -219,6 +219,10 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
   color: var(--muted); box-shadow: 0 2px 8px rgba(19, 38, 95, .06);
 }
 .chips button.on { background: var(--navy-900); color: #fff; }
+/* Oyna ichida: tugmalar sig'maganda keyingi qatorga o'tadi */
+.chips.wrap { flex-wrap: wrap; overflow: visible; margin: 4px 0 12px; padding: 0; }
+.chips.wrap button { background: var(--bg); box-shadow: none; }
+.chips.wrap button.on { background: var(--navy-900); }
 
 .select, .input {
   width: 100%; height: 48px; border-radius: 16px; border: 1.5px solid var(--line);

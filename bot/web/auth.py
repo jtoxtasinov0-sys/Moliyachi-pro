@@ -71,3 +71,34 @@ def validate_web_token(token: str, bot_token: str) -> int | None:
     if int(parts[1]) < time.time():
         return None
     return int(parts[0])
+
+
+# --- PDF hisobotni yuklab olish havolasi ------------------------------------
+# Telegramning «Yuklab olish» oynasi (downloadFile) faylni o'zi, bizning sarlavhalarsiz
+# yuklaydi, shuning uchun havolaga qisqa muddatli imzo qo'shiladi:
+# "<user_id>.<davr>.<tugash_vaqti>.<imzo>".
+
+FILE_TOKEN_MINUTES = 15
+
+
+def _file_signature(payload: str, bot_token: str) -> str:
+    secret = hashlib.sha256(f"report-file:{bot_token}".encode()).digest()
+    return hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:40]
+
+
+def make_file_token(user_id: int, period: str, bot_token: str) -> str:
+    payload = f"{user_id}.{period}.{int(time.time()) + FILE_TOKEN_MINUTES * 60}"
+    return f"{payload}.{_file_signature(payload, bot_token)}"
+
+
+def validate_file_token(token: str, bot_token: str) -> tuple[int, str] | None:
+    """To'g'ri va muddati o'tmagan bo'lsa (foydalanuvchi id, davr) qaytaradi."""
+    parts = token.split(".")
+    if len(parts) != 4 or not parts[0].isdigit() or not parts[2].isdigit():
+        return None
+    payload = ".".join(parts[:3])
+    if not hmac.compare_digest(_file_signature(payload, bot_token), parts[3]):
+        return None
+    if int(parts[2]) < time.time():
+        return None
+    return int(parts[0]), parts[1]

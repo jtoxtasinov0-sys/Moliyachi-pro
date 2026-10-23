@@ -18,7 +18,7 @@ from bot import drafts, intake
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import Client, User
-from bot.handlers.entries import notify_owner
+from bot.handlers.entries import notify_owner, notify_owner_linked
 from bot.handlers.money import client_balance_line, client_side_balance, client_side_ledger, client_side_text, client_text
 from bot.monitor import heard
 from bot.services import stt
@@ -78,10 +78,11 @@ async def start_client(
     message: Message, command: CommandObject, state: FSMContext, session: AsyncSession, user: User | None
 ) -> None:
     """Mijozning taklif havolasi. Ishchi yoki ega ham bosishi mumkin — u holda menyusi o'zgarmaydi."""
-    client = await repo.link_client(session, command.args.removeprefix("cli_"), message.from_user.id)
-    if client is None:
-        await message.answer("Bu havola eskirgan yoki allaqachon ishlatilgan. Yangisini so'rang.")
+    linked = await repo.link_client(session, command.args.removeprefix("cli_"), message.from_user.id)
+    if linked is None:
+        await message.answer("Bu havola eskirgan yoki o'chirilgan. Yangisini so'rang.")
         return
+    client, previous = linked
     owner = await session.get(User, client.owner_id)
     owner_name = owner.name if owner else "Korxona"
     registered = user is not None and user.is_active
@@ -98,8 +99,8 @@ async def start_client(
         names = [name for _, name in await _owner_names(session, links)]
         await message.answer(f"{text}\n\n{_help(names)}", reply_markup=kbs.client_menu())
         await message.answer(await client_side_ledger(session, client))
-    await notify_owner(
-        message.bot, session, client.owner_id,
+    await notify_owner_linked(
+        message.bot, session, client.owner_id, client.name, previous, message.from_user.id,
         f"🛍 {escape(client.name)} botga ulandi — endi oldi-berdingizni u ham ko'radi va o'zi ham yozishi "
         "mumkin («10 komplekt oldim», «2 million berdim»).",
     )

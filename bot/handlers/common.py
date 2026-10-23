@@ -13,7 +13,7 @@ from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.models import User
-from bot.handlers.entries import notify_owner
+from bot.handlers.entries import notify_owner_linked
 from bot.middlewares import Guest, Registered
 from bot.web.auth import WEB_TOKEN_DAYS, make_web_token
 
@@ -58,6 +58,7 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 
 <b>Menyu</b>
 📊 Hisobot — ishchilar: kunlik / haftalik / oylik
+📄 /pdf — to'liq hisobotni PDF fayl qilib telefonga saqlash
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 💸 Xarajatlar — kategoriyalar bo'yicha hisobot
 🛍 Mijozlar — kim qancha mol oldi va qancha qarzi bor; ➕ qo'shish va taklif havolasi:
@@ -94,6 +95,7 @@ WORKER_HELP = """\
 Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 
 📊 Hisobot — o'z natijangiz va ish haqingiz
+📄 /pdf — hisobotingizni PDF fayl qilib telefonga saqlash
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 🧾 Hisob-kitob — ishlaringiz, olgan pulingiz va qolgan haqqingiz
 """
@@ -102,10 +104,11 @@ Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("sup_")))
 async def start_supplier(message: Message, command: CommandObject, session: AsyncSession, user: User | None) -> None:
     """Ta'minotchining taklif havolasi. Ishchi yoki ega ham bosishi mumkin — u holda menyusi o'zgarmaydi."""
-    supplier = await repo.link_supplier(session, command.args.removeprefix("sup_"), message.from_user.id)
-    if supplier is None:
-        await message.answer("Bu havola eskirgan yoki allaqachon ishlatilgan. Yangisini so'rang.")
+    linked = await repo.link_supplier(session, command.args.removeprefix("sup_"), message.from_user.id)
+    if linked is None:
+        await message.answer("Bu havola eskirgan yoki o'chirilgan. Yangisini so'rang.")
         return
+    supplier, previous = linked
     owner = await session.get(User, supplier.owner_id)
     owner_name = escape(owner.name) if owner else "Korxona egasi"
     registered = user is not None and user.is_active
@@ -114,8 +117,8 @@ async def start_supplier(message: Message, command: CommandObject, session: Asyn
         "ulandingiz.\n\n🧱 U sizdan xom ashyo olganda shu yerga xabar keladi.",
         reply_markup=kbs.main_menu(user) if registered else ReplyKeyboardRemove(),
     )
-    await notify_owner(
-        message.bot, session, supplier.owner_id,
+    await notify_owner_linked(
+        message.bot, session, supplier.owner_id, supplier.name, previous, message.from_user.id,
         f"🏪 {escape(supplier.name)} botga ulandi — undan xom ashyo olganingizda unga xabar boradi.",
     )
 
@@ -126,15 +129,19 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
     if not args.startswith("inv_"):
         await message.answer("Havola noto'g'ri.")
         return
-    user = await repo.link_invite(session, args.removeprefix("inv_"), message.from_user.id)
-    if user is None:
-        await message.answer("Bu havola eskirgan yoki allaqachon ishlatilgan. Egasidan yangisini so'rang.")
+    linked = await repo.link_invite(session, args.removeprefix("inv_"), message.from_user.id)
+    if linked is None:
+        await message.answer("Bu havola eskirgan yoki o'chirilgan. Boshlig'ingizdan yangisini so'rang.")
         return
+    user, previous = linked
     await message.answer(
         f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{WORKER_HELP}",
         reply_markup=kbs.main_menu(user),
     )
-    await notify_owner(message.bot, session, user.owner_id, f"👷 {escape(user.name)} botga ulandi.")
+    await notify_owner_linked(
+        message.bot, session, user.owner_id, user.name, previous, message.from_user.id,
+        f"👷 {escape(user.name)} botga ulandi.",
+    )
 
 
 async def send_guide(message: Message, session: AsyncSession, user: User) -> bool:

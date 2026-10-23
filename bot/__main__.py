@@ -73,6 +73,7 @@ async def main() -> None:
         [
             BotCommand(command="start", description="Bosh menyu"),
             BotCommand(command="hisobot", description="Hisobot"),
+            BotCommand(command="pdf", description="Hisobotni PDF fayl qilib olish"),
             BotCommand(command="oxirgi", description="Oxirgi yozuvlar"),
             BotCommand(command="maslahat", description="Moliyaviy maslahat va reja"),
             BotCommand(command="web", description="Ilovani brauzerda ochish"),

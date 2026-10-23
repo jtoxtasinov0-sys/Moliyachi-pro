@@ -4,6 +4,7 @@ from decimal import Decimal
 from html import escape
 
 from aiogram import Bot, F, Router
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
@@ -43,6 +44,35 @@ async def invite_link(bot: Bot, token: str, prefix: str = "inv") -> str:
     """Taklif havolasi: ishchiga — inv_, ta'minotchiga — sup_, mijozga — cli_."""
     me = await bot.me()
     return f"https://t.me/{me.username}?start={prefix}_{token}"
+
+
+LINK_NOTE = (
+    "Havola doimiy: u shu havola orqali botga istalgan vaqt qayta kira oladi (chatni o'chirib yuborsa yoki "
+    "telefonini almashtirsa ham)."
+)
+
+
+async def _send_link(
+    call: CallbackQuery,
+    bot: Bot,
+    item: User | Supplier | Client,
+    token: str,
+    prefix: str,
+    renewed: bool,
+    relink: CallbackData,
+) -> None:
+    """Kirish havolasi va «🔄 Yangi havola» tugmasi (havola begona qo'lga tushsa — eskisini bekor qilish)."""
+    head = (
+        f"🔄 <b>{escape(item.name)}</b> uchun yangi havola (eskisi endi ishlamaydi):"
+        if renewed
+        else f"🔗 <b>{escape(item.name)}</b> uchun kirish havolasi:"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Yangi havola (eskisi ishlamay qoladi)", callback_data=relink)
+    await call.message.answer(
+        f"{head}\n{await invite_link(bot, token, prefix)}\n\n{LINK_NOTE}", reply_markup=kb.as_markup()
+    )
+    await call.answer()
 
 
 def _status(w: User | Supplier) -> str:
@@ -107,8 +137,8 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     )
     kb.button(text="➕ Yangi kasb", callback_data=kbs.WorkerCb(action="newjob", user_id=worker.id))
     kb.button(text="🧾 Hisob-kitob", callback_data=kbs.WorkerCb(action="ledger", user_id=worker.id))
-    if worker.is_active and not worker.tg_id:
-        kb.button(text="🔗 Yangi taklif havolasi", callback_data=kbs.WorkerCb(action="link", user_id=worker.id))
+    if worker.is_active:
+        kb.button(text="🔗 Kirish havolasi", callback_data=kbs.WorkerCb(action="link", user_id=worker.id))
     kb.button(
         text="⛔ O‘chirish (botdan foydalana olmaydi)" if worker.is_active else "✅ Qayta faollashtirish",
         callback_data=kbs.WorkerCb(action="toggle", user_id=worker.id),
@@ -193,24 +223,27 @@ async def worker_add_name(message: Message, bot: Bot, state: FSMContext, session
     link = await invite_link(bot, worker.invite_token)
     await message.answer(
         f"✅ <b>{escape(name)}</b> qo'shildi.\n\n"
-        f"Ushbu havolani ishchiga yuboring — u bosganda bot unga ulanadi:\n{link}\n\n"
-        "Havola bir martalik."
+        f"Ushbu havolani ishchiga yuboring — u bosganda bot unga ulanadi:\n{link}\n\n{LINK_NOTE}"
     )
     text, kb = await _worker_card(session, worker)
     await message.answer(text, reply_markup=kb)
 
 
-@router.callback_query(kbs.WorkerCb.filter(F.action == "link"))
+@router.callback_query(kbs.WorkerCb.filter(F.action.in_({"link", "relink"})))
 async def worker_link(
     call: CallbackQuery, callback_data: kbs.WorkerCb, bot: Bot, session: AsyncSession, user: User
 ) -> None:
     worker = await _get_worker(call, session, user, callback_data.user_id)
     if worker is None:
         return
-    token = await repo.new_invite_token(session, worker)
-    link = await invite_link(bot, token)
-    await call.message.answer(f"🔗 <b>{escape(worker.name)}</b> uchun yangi havola:\n{link}")
-    await call.answer()
+    if not worker.is_active:
+        await call.answer("Avval ishchini qayta faollashtiring.", show_alert=True)
+        return
+    renew = callback_data.action == "relink"
+    token = await (repo.new_invite_token(session, worker) if renew else repo.invite_token(session, worker))
+    await _send_link(
+        call, bot, worker, token, "inv", renew, kbs.WorkerCb(action="relink", user_id=worker.id)
+    )
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "toggle"))
@@ -291,8 +324,8 @@ async def _supplier_card(session: AsyncSession, supplier: Supplier) -> tuple[str
     st = (await repo.supplier_stats(session, supplier.owner_id, today().replace(day=1))).get(supplier.id)
     recent = await repo.list_material_entries(session, supplier.owner_id, supplier_id=supplier.id, limit=5)
     kb = InlineKeyboardBuilder()
-    if supplier.is_active and not supplier.tg_id:
-        kb.button(text="🔗 Yangi taklif havolasi", callback_data=kbs.SupplierCb(action="link", supplier_id=supplier.id))
+    if supplier.is_active:
+        kb.button(text="🔗 Kirish havolasi", callback_data=kbs.SupplierCb(action="link", supplier_id=supplier.id))
     kb.button(
         text="⛔ O‘chirish (xabar bormaydi)" if supplier.is_active else "✅ Qayta faollashtirish",
         callback_data=kbs.SupplierCb(action="toggle", supplier_id=supplier.id),
@@ -318,7 +351,7 @@ async def _supplier_card(session: AsyncSession, supplier: Supplier) -> tuple[str
             "unga xabar boradi."
         )
     else:
-        parts.append("Taklif havolasini unga yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.")
+        parts.append("«🔗 Kirish havolasi»ni unga yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.")
     return "\n\n".join(parts), kb.as_markup()
 
 
@@ -373,22 +406,27 @@ async def supplier_add_name(message: Message, bot: Bot, state: FSMContext, sessi
     await message.answer(
         f"✅ <b>{escape(supplier.name)}</b> qo'shildi.\n\n"
         "Ushbu havolani unga yuboring — u bosganda bot unga ulanadi va undan xom ashyo olganingizda "
-        f"xabar oladi:\n{link}\n\nHavola bir martalik."
+        f"xabar oladi:\n{link}\n\n{LINK_NOTE}"
     )
     text, kb = await _supplier_card(session, supplier)
     await message.answer(text, reply_markup=kb)
 
 
-@router.callback_query(kbs.SupplierCb.filter(F.action == "link"))
+@router.callback_query(kbs.SupplierCb.filter(F.action.in_({"link", "relink"})))
 async def supplier_link(
     call: CallbackQuery, callback_data: kbs.SupplierCb, bot: Bot, session: AsyncSession, user: User
 ) -> None:
     supplier = await _get_supplier(call, session, user, callback_data.supplier_id)
     if supplier is None:
         return
-    link = await invite_link(bot, await repo.new_supplier_token(session, supplier), "sup")
-    await call.message.answer(f"🔗 <b>{escape(supplier.name)}</b> uchun yangi havola:\n{link}")
-    await call.answer()
+    if not supplier.is_active:
+        await call.answer("Avval ta'minotchini qayta faollashtiring.", show_alert=True)
+        return
+    renew = callback_data.action == "relink"
+    token = await (repo.new_supplier_token(session, supplier) if renew else repo.invite_token(session, supplier))
+    await _send_link(
+        call, bot, supplier, token, "sup", renew, kbs.SupplierCb(action="relink", supplier_id=supplier.id)
+    )
 
 
 @router.callback_query(kbs.SupplierCb.filter(F.action == "toggle"))
@@ -466,9 +504,8 @@ async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple
     balance = await repo.client_balance(session, client.owner_id, client.id)
     blocks, more = await client_ledger_blocks(session, client, client_side=False)
     kb = InlineKeyboardBuilder()
-    if client.is_active and not client.tg_id:
-        label = "🔗 Yangi taklif havolasi" if client.invite_token else "🔗 Taklif havolasi"
-        kb.button(text=label, callback_data=kbs.ClientCb(action="link", client_id=client.id))
+    if client.is_active:
+        kb.button(text="🔗 Kirish havolasi", callback_data=kbs.ClientCb(action="link", client_id=client.id))
     kb.button(
         text="⛔ O‘chirish (xabar bormaydi)" if client.is_active else "✅ Qayta faollashtirish",
         callback_data=kbs.ClientCb(action="toggle", client_id=client.id),
@@ -488,11 +525,9 @@ async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple
         parts.append("O'chirilgan: mijozga xabar bormaydi, u botda yoza olmaydi.")
     elif client.tg_id:
         parts.append(CLIENT_HOWTO)
-    elif client.invite_token:
-        link = await invite_link(bot, client.invite_token, "cli")
-        parts.append(f"Ushbu havolani mijozga yuboring — bosganda botga ulanadi:\n{link}\n\n{CLIENT_HOWTO}")
     else:
-        parts.append(f"«🔗 Taklif havolasi»ni bosing va havolani mijozga yuboring. {CLIENT_HOWTO}")
+        link = await invite_link(bot, await repo.invite_token(session, client), "cli")
+        parts.append(f"Ushbu havolani mijozga yuboring — bosganda botga ulanadi:\n{link}\n\n{CLIENT_HOWTO}")
     return "\n\n".join(parts), kb.as_markup()
 
 
@@ -548,8 +583,6 @@ async def client_add_name(message: Message, bot: Bot, state: FSMContext, session
     if client is not None:
         if not client.is_active:
             client.is_active = True
-        if not client.tg_id and not client.invite_token:
-            await repo.new_client_token(session, client)
         await message.answer(f"ℹ️ <b>{escape(client.name)}</b> ro'yxatda bor:")
     else:
         client = await repo.create_client(session, user.id, name)
@@ -557,25 +590,25 @@ async def client_add_name(message: Message, bot: Bot, state: FSMContext, session
         await message.answer(
             f"✅ <b>{escape(client.name)}</b> qo'shildi.\n\n"
             "Ushbu havolani mijozga yuboring — u bosganda botga ulanadi va siz bilan oldi-berdini ko'rib turadi. "
-            f"U «10 komplekt oldim», «2 million berdim» desa ham — hisobga yoziladi:\n{link}\n\nHavola bir martalik."
+            f"U «10 komplekt oldim», «2 million berdim» desa ham — hisobga yoziladi:\n{link}\n\n{LINK_NOTE}"
         )
     text, kb = await _client_card(bot, session, client)
     await message.answer(text, reply_markup=kb)
 
 
-@router.callback_query(kbs.ClientCb.filter(F.action == "link"))
+@router.callback_query(kbs.ClientCb.filter(F.action.in_({"link", "relink"})))
 async def client_link(
     call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
 ) -> None:
     client = await _get_client(call, session, user, callback_data.client_id)
     if client is None:
         return
-    link = await invite_link(bot, await repo.new_client_token(session, client), "cli")
-    await call.message.answer(
-        f"🔗 <b>{escape(client.name)}</b> uchun taklif havolasi (bir martalik):\n{link}\n\n"
-        "Mijozga yuboring — bosganda botga ulanadi va siz bilan oldi-berdini ko'radi."
-    )
-    await call.answer()
+    if not client.is_active:
+        await call.answer("Avval mijozni qayta faollashtiring.", show_alert=True)
+        return
+    renew = callback_data.action == "relink"
+    token = await (repo.new_client_token(session, client) if renew else repo.invite_token(session, client))
+    await _send_link(call, bot, client, token, "cli", renew, kbs.ClientCb(action="relink", client_id=client.id))
 
 
 @router.callback_query(kbs.ClientCb.filter(F.action == "toggle"))

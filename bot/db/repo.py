@@ -181,12 +181,23 @@ async def get_worker(session: AsyncSession, owner_id: int, worker_id: int) -> Us
 
 
 async def new_invite_token(session: AsyncSession, user: User) -> str:
+    """Yangi havola — eskisi ishlamay qoladi (havola begona qo'lga tushsa)."""
     user.invite_token = secrets.token_urlsafe(12)
     await session.flush()
     return user.invite_token
 
 
-async def link_invite(session: AsyncSession, token: str, tg_id: int) -> User | None:
+async def invite_token(session: AsyncSession, item: User | Client | Supplier) -> str:
+    """Ishchi, mijoz yoki ta'minotchining doimiy kirish havolasi. Havola ulangandan keyin ham ishlaydi — undan
+    istalgan vaqt qayta kiriladi. Avval ulanganlarda token o'chirilgan bo'ladi — o'shanda yangisi yaratiladi."""
+    if not item.invite_token:
+        item.invite_token = secrets.token_urlsafe(12)
+        await session.flush()
+    return item.invite_token
+
+
+async def link_invite(session: AsyncSession, token: str, tg_id: int) -> tuple[User, int | None] | None:
+    """(ishchi, avval ulangan Telegram ID). Havola doimiy: ishchi undan istalgan vaqt qayta kira oladi."""
     user = await session.scalar(select(User).where(User.invite_token == token))
     if user is None or not user.is_active:
         return None
@@ -194,10 +205,9 @@ async def link_invite(session: AsyncSession, token: str, tg_id: int) -> User | N
     existing = await get_user_by_tg(session, tg_id)
     if existing and existing.id != user.id:
         return None
-    user.tg_id = tg_id
-    user.invite_token = None
+    previous, user.tg_id = user.tg_id, tg_id
     await session.flush()
-    return user
+    return user, previous
 
 
 async def list_workers(session: AsyncSession, owner_id: int, active_only: bool = True) -> list[User]:
@@ -778,6 +788,26 @@ async def list_payments(
         q = q.where(WorkerPayment.worker_id == worker_id)
     if status:
         q = q.where(WorkerPayment.status == status)
+    return list(await session.scalars(q))
+
+
+async def payments_between(
+    session: AsyncSession, owner_id: int, start: date, end: date, worker_id: int | None = None
+) -> list[WorkerPayment]:
+    """Ishchilar bilan tasdiqlangan pul oldi-berdisi (start..end) — sana bo'yicha, PDF hisobot uchun."""
+    q = (
+        select(WorkerPayment)
+        .where(
+            WorkerPayment.owner_id == owner_id,
+            WorkerPayment.deleted_at.is_(None),
+            WorkerPayment.status == EntryStatus.APPROVED,
+            WorkerPayment.entry_date >= start,
+            WorkerPayment.entry_date <= end,
+        )
+        .order_by(WorkerPayment.entry_date, WorkerPayment.created_at, WorkerPayment.id)
+    )
+    if worker_id is not None:
+        q = q.where(WorkerPayment.worker_id == worker_id)
     return list(await session.scalars(q))
 
 
@@ -1469,7 +1499,8 @@ async def new_client_token(session: AsyncSession, client: Client) -> str:
     return client.invite_token
 
 
-async def link_client(session: AsyncSession, token: str, tg_id: int) -> Client | None:
+async def link_client(session: AsyncSession, token: str, tg_id: int) -> tuple[Client, int | None] | None:
+    """(mijoz, avval ulangan Telegram ID). Havola doimiy: mijoz undan istalgan vaqt qayta kira oladi."""
     client = await session.scalar(select(Client).where(Client.invite_token == token))
     if client is None or not client.is_active:
         return None
@@ -1480,10 +1511,9 @@ async def link_client(session: AsyncSession, token: str, tg_id: int) -> Client |
         .values(tg_id=None)
         .execution_options(synchronize_session=False)
     )
-    client.tg_id = tg_id
-    client.invite_token = None
+    previous, client.tg_id = client.tg_id, tg_id
     await session.flush()
-    return client
+    return client, previous
 
 
 async def clients_by_tg(session: AsyncSession, tg_id: int) -> list[Client]:
@@ -1719,6 +1749,23 @@ async def list_material_entries(
     return list(await session.scalars(q))
 
 
+async def material_entries_between(
+    session: AsyncSession, owner_id: int, start: date, end: date
+) -> list[MaterialEntry]:
+    """Xom ashyo xaridlari (start..end) — sana bo'yicha, PDF hisobot uchun."""
+    q = (
+        select(MaterialEntry)
+        .where(
+            MaterialEntry.owner_id == owner_id,
+            MaterialEntry.deleted_at.is_(None),
+            MaterialEntry.entry_date >= start,
+            MaterialEntry.entry_date <= end,
+        )
+        .order_by(MaterialEntry.entry_date, MaterialEntry.id)
+    )
+    return list(await session.scalars(q))
+
+
 @dataclass
 class MaterialStatRow:
     entry_date: date
@@ -1821,14 +1868,14 @@ async def new_supplier_token(session: AsyncSession, supplier: Supplier) -> str:
     return supplier.invite_token
 
 
-async def link_supplier(session: AsyncSession, token: str, tg_id: int) -> Supplier | None:
+async def link_supplier(session: AsyncSession, token: str, tg_id: int) -> tuple[Supplier, int | None] | None:
+    """(ta'minotchi, avval ulangan Telegram ID). Havola doimiy: undan istalgan vaqt qayta kiriladi."""
     supplier = await session.scalar(select(Supplier).where(Supplier.invite_token == token))
     if supplier is None or not supplier.is_active:
         return None
-    supplier.tg_id = tg_id
-    supplier.invite_token = None
+    previous, supplier.tg_id = supplier.tg_id, tg_id
     await session.flush()
-    return supplier
+    return supplier, previous
 
 
 async def suppliers_by_tg(session: AsyncSession, tg_id: int) -> list[Supplier]:

@@ -90,7 +90,7 @@ ta'minotchini — qarz va undan olingan xom ashyo tarixi ochiladi.
 
 **🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
 🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga
-bir martalik taklif havolasi beriladi — ta'minotchi bosganda botga ulanadi (ishchi bo'lmaydi, faqat xabar oladi).
+doimiy kirish havolasi beriladi — ta'minotchi bosganda botga ulanadi (ishchi bo'lmaydi, faqat xabar oladi).
 Keyin «Xayrulloh Uz charmdan 1 millionlik material oldim» desangiz, xarid xom ashyoga yoziladi va Xayrulloh Uz
 charmga xabar boradi: «Jasur sizdan xom ashyo oldi — Material 1 000 000 so'm», egasiga esa «📨 Xabar yuborildi».
 Ism qo'shimcha bilan yoki qisman aytilsa ham topiladi («Xayrullohdan», «Uz charmdan»); ikki o'xshash ta'minotchi
@@ -100,7 +100,7 @@ olinganlar ko'rinadi. Ro'yxatda yo'q odam aytilsa — avvalgidek, faqat ismi yoz
 avval shu ism bilan yozilgan xaridlar ham unga bog'lanadi.
 
 **🛍 Mijozlar bilan o'zaro hisob:** mijozni qo'shing — botda «🛍 Mijozlar → ➕ Mijoz qo'shish» (ismini yozasiz),
-ilovada «Mijozlar → + Qo'shish» — bot bir martalik taklif havolasini beradi (start=cli_…). Ovoz bilan yangi mijoz
+ilovada «Mijozlar → + Qo'shish» — bot doimiy kirish havolasini beradi (start=cli_…). Ovoz bilan yangi mijoz
 aytilsa («Tohirga 10 komplekt berdim») ham — saqlangach havolasi chiqadi. Mijoz bosganda botga ulanadi (ishchi
 bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 - Egasi yozsa («Tohirga 10 komplekt maksima berdim, 140 mingdan», «Tohir 2 million to'ladi») — mijozga xabar boradi:
@@ -112,7 +112,18 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 - Mijoz botda «🧾 Hisob-kitob» — kunma-kun oldi-berdi, har kun oxiridagi qoldiq va qarzi; egasida — «🛍 Mijozlar» →
   mijoz kartasi (xuddi shu ro'yxat, holati: ✅ ulangan / 🔗 ulanmagan, havola), ilovada mijoz oynasi.
 - Bitta odam bir nechta korxonaning mijozi bo'lsa — yozganda qaysi biri bilan ekani so'raladi. Mijoz o'chirilsa —
-  xabar bormaydi va u yoza olmaydi. Avvaldan bor mijozga havola: kartadagi «🔗 Taklif havolasi».
+  xabar bormaydi va u yoza olmaydi. Avvaldan bor mijozga havola: kartadagi «🔗 Kirish havolasi».
+
+**🔗 Kirish havolasi — doimiy (ishchi, ta'minotchi, mijoz):** ismini bosing (ilovada — oyna, botda — karta →
+«🔗 Kirish havolasi») — havola har doim chiqadi, ulangandan keyin ham. U chatni o'chirib yuborsa, telefonini yoki
+Telegram akkauntini almashtirsa ham shu havola bilan qayta kiradi. Boshqa akkauntdan kirsa — egasiga xabar keladi
+(eski akkauntga endi xabar bormaydi). Havola begona qo'lga tushsa — «🔄 Yangi havola»: eskisi ishlamay qoladi.
+
+**📄 PDF hisobot:** har kim o'z hisobotini fayl qilib telefoniga saqlab oladi — ilova yopilsa ham, internet
+bo'lmasa ham ochiladi. Ilovada yuqoridagi 📄 tugma → davr (bugun / shu hafta / shu oy / o'tgan oy / shu yil) →
+«📥 Telefonga yuklab olish» yoki «💬 Telegram chatga yuborish». Botda — `/pdf` yoki «📊 Hisobot» → «📄 PDF fayl».
+Egada: ishxona (ishchilar, ish turlari, kunlar bo'yicha, har bir ishchining qoldig'i), ishchilarga berilgan pul,
+daromad-xarajat, mijozlar, xom ashyo va umumiy qarzlar; ishchida — o'zi topshirgan ishlar, olgan pullari va qoldig'i.
 
 **🧹 Hisobni 0 qilish:** ilovada har bir bo'lim pastida alohida tugma — «Mijozlar hisobini 0 qilish» (hamma
 oldi-berdi, qarzlar 0), «Ishchilar hisobini 0 qilish» (hamma ish va pul yozuvlari, qoldiqlar 0), «Xom ashyo
@@ -234,6 +245,7 @@ bot/
   jobs.py            kasblar: standart ro'yxat, «brsovka» → Brsovkachi, «kroy 1500, tikuv 5000» narx matni
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
+  pdf_report.py      hisobot PDF fayl (shrift: assets/fonts — DejaVu, kirill va lotin)
   reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)
   monitor/           kuzatuv boti: harakatlarni yozish (hooks, tracker), statistika, admin boti
   handlers/          Telegram handlerlar (clients.py — havola orqali ulangan mijozning o'zi)

@@ -1481,11 +1481,7 @@ async function clientSheet(id) {
   const status = !c.is_active ? "⛔ O'chirilgan — mijozga xabar bormaydi, u botda yoza olmaydi."
     : c.linked ? "✅ Botga ulangan — oldi-berdini ko'radi, «10 komplekt oldim», «2 million berdim» desa hisobga yoziladi (✍️)."
     : "🔗 Havolani yuboring — mijoz bosganda botga ulanadi va siz bilan oldi-berdini ko'rib turadi, o'zi ham yozadi.";
-  const invite = c.invite_link
-    ? `<div class="field"><label>Taklif havolasi (bir martalik)</label><div class="link-box">${esc(c.invite_link)}</div></div>
-       <button class="primary" id="clShare">📤 Mijozga yuborish</button>
-       <button class="secondary" id="clCopy">Nusxalash</button>`
-    : c.is_active && !c.linked ? `<button class="primary" id="clInvite">🔗 Taklif havolasi</button>` : "";
+  const invite = inviteHtml(c, "Mijoz");
   openSheet(`
     <h3>${esc(c.name)}</h3>
     <p class="muted small">${status}</p>
@@ -1499,15 +1495,11 @@ async function clientSheet(id) {
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
   `);
   $("clEdit").onclick = () => clientEditSheet(c);
-  if ($("clShare")) $("clShare").onclick = () => shareInvite(c.invite_link, `${c.name}, biz bilan oldi-berdingizni ko'rib turish uchun Moliyachi botiga ulaning:`);
-  if ($("clCopy")) $("clCopy").onclick = () => copyText(c.invite_link);
-  if ($("clInvite")) $("clInvite").onclick = async () => {
-    try {
-      const upd = await api(`/api/clients/${c.id}/invite`, { method: "POST" });
-      state.clients.byId[c.id] = { ...c, invite_link: upd.invite_link };
-      clientSheet(c.id);
-    } catch (e) { fail(e); }
-  };
+  bindInvite(c, `${c.name}, biz bilan oldi-berdingizni ko'rib turish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`, async () => {
+    const upd = await api(`/api/clients/${c.id}/invite`, { method: "POST" });
+    state.clients.byId[c.id] = { ...c, invite_link: upd.invite_link };
+    clientSheet(c.id);
+  });
   try {
     const data = await api(`/api/clients/entries?client_id=${id}&limit=100`);
     if (!$("clientHistory")) return;
@@ -1679,11 +1671,7 @@ function replaceSupplier(upd) {
 }
 
 async function supplierSheet(s) {
-  const invite = s.invite_link
-    ? `<div class="field"><label>Taklif havolasi (bir martalik)</label><div class="link-box">${esc(s.invite_link)}</div></div>
-       <button class="primary" id="sShare">📤 Ta'minotchiga yuborish</button>
-       <button class="secondary" id="sCopy">Nusxalash</button>`
-    : s.is_active ? `<button class="secondary" id="sInvite">🔗 Yangi taklif havolasi</button>` : "";
+  const invite = inviteHtml(s, "Ta'minotchi");
   const status = !s.is_active ? "⛔ O'chirilgan — undan olinganda xabar bormaydi."
     : s.linked ? "✅ Botga ulangan — undan xom ashyo olganingizda xabar oladi."
     : "🔗 Havolani yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.";
@@ -1698,15 +1686,11 @@ async function supplierSheet(s) {
     ${invite}
     <button class="${s.is_active ? "danger" : "secondary"}" id="sToggle">${s.is_active ? "⛔ O'chirish (xabar bormaydi)" : "✅ Qayta faollashtirish"}</button>
   `);
-  if ($("sShare")) $("sShare").onclick = () => shareInvite(s.invite_link, `${s.name}, sizdan olingan xom ashyo haqida xabar olish uchun Moliyachi botiga ulaning:`);
-  if ($("sCopy")) $("sCopy").onclick = () => copyText(s.invite_link);
-  if ($("sInvite")) $("sInvite").onclick = async () => {
-    try {
-      const upd = await api(`/api/suppliers/${s.id}/invite`, { method: "POST" });
-      replaceSupplier(upd);
-      supplierSheet(upd);
-    } catch (e) { fail(e); }
-  };
+  bindInvite(s, `${s.name}, sizdan olingan xom ashyo haqida xabar olish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`, async () => {
+    const upd = await api(`/api/suppliers/${s.id}/invite`, { method: "POST" });
+    replaceSupplier(upd);
+    supplierSheet(upd);
+  });
   $("sToggle").onclick = async () => {
     if (s.is_active && !(await confirmBox(`${s.name} o'chirilsinmi? Undan olinganda endi xabar bormaydi.`))) return;
     try {
@@ -1844,12 +1828,31 @@ async function copyText(text) {
   }
 }
 
+// Ishchi, mijoz, ta'minotchi: kirish havolasi doimiy — ulangandan keyin ham ko'rinadi. Chatni o'chirsa yoki
+// telefonini almashtirsa ham shu havola bilan qayta kiradi. who — «Ishchi», «Mijoz», «Ta'minotchi»
+function inviteHtml(item, who) {
+  if (!item.invite_link) return item.is_active ? `<button class="primary" id="invRenew">🔗 Kirish havolasi</button>` : "";
+  const note = item.linked
+    ? "Botga ulangan. Chatdan chiqib ketsa yoki telefonini almashtirsa — shu havolani qayta yuboring."
+    : `${who} bosganda botga ulanadi.`;
+  return `<div class="field"><label>Kirish havolasi (doimiy)</label><div class="link-box">${esc(item.invite_link)}</div>
+      <span class="field-hint">${note}</span></div>
+    <button class="primary" id="invShare">📤 ${who}ga yuborish</button>
+    <button class="secondary" id="invCopy">Nusxalash</button>
+    <button class="secondary" id="invRenew">🔄 Yangi havola (eskisi ishlamay qoladi)</button>`;
+}
+
+function bindInvite(item, shareText, renew) {
+  if ($("invShare")) $("invShare").onclick = () => shareInvite(item.invite_link, shareText);
+  if ($("invCopy")) $("invCopy").onclick = () => copyText(item.invite_link);
+  if ($("invRenew")) $("invRenew").onclick = async () => {
+    if (item.invite_link && !(await confirmBox("Yangi havola yaratilsinmi? Eski havola ishlamay qoladi, ulangan odam esa botdan chiqmaydi."))) return;
+    try { await renew(); } catch (e) { fail(e); }
+  };
+}
+
 function workerSheet(w) {
-  const invite = w.invite_link
-    ? `<div class="field"><label>Taklif havolasi (bir martalik)</label><div class="link-box">${esc(w.invite_link)}</div></div>
-       <button class="primary" id="wShare">📤 Ishchiga yuborish</button>
-       <button class="secondary" id="wCopy">Nusxalash</button>`
-    : w.is_active ? `<button class="secondary" id="wInvite">🔗 Yangi taklif havolasi</button>` : "";
+  const invite = inviteHtml(w, "Ishchi");
   openSheet(`
     <h3>${esc(w.name)}</h3>
     <div class="stat-pair">
@@ -1883,15 +1886,11 @@ function workerSheet(w) {
     else setJob(b.dataset.job ? Number(b.dataset.job) : null);
   };
   $("wReset").onclick = () => resetWorker(w, $("wReset"));
-  if ($("wShare")) $("wShare").onclick = () => shareInvite(w.invite_link, `${w.name}, Moliyachi botiga ulanish uchun havolani bosing:`);
-  if ($("wCopy")) $("wCopy").onclick = () => copyText(w.invite_link);
-  if ($("wInvite")) $("wInvite").onclick = async () => {
-    try {
-      const upd = await api(`/api/workers/${w.id}/invite`, { method: "POST" });
-      replaceWorker(upd);
-      workerSheet(upd);
-    } catch (e) { fail(e); }
-  };
+  bindInvite(w, `${w.name}, Moliyachi botiga kirish uchun havolani bosing (keyin ham shu havola bilan qayta kirasiz):`, async () => {
+    const upd = await api(`/api/workers/${w.id}/invite`, { method: "POST" });
+    replaceWorker(upd);
+    workerSheet(upd);
+  });
   $("wToggle").onclick = async () => {
     if (w.is_active && !(await confirmBox(`${w.name} o'chirilsinmi? U botdan foydalana olmaydi.`))) return;
     try {
@@ -2286,6 +2285,74 @@ function pickImageSheet() {
   `);
   $("pCam").onclick = () => { haptic(); $("camInput").click(); };
   $("pGal").onclick = () => { haptic(); $("galInput").click(); };
+}
+
+// --- PDF hisobot -------------------------------------------------------------
+// Har kim o'z hisobotini fayl qilib telefoniga saqlab oladi: ilova yopilsa ham fayl qoladi
+
+const PDF_PERIODS = [["day", "Bugun"], ["week", "Shu hafta"], ["month", "Shu oy"], ["prev_month", "O'tgan oy"], ["year", "Shu yil"]];
+
+function pdfSheet() {
+  const owner = state.me.is_owner;
+  let period = state.pdfPeriod || (PDF_PERIODS.some(([p]) => p === state.period) ? state.period : "month");
+  openSheet(`
+    <h3>📄 Hisobotni PDF qilib olish</h3>
+    <p class="muted small">Fayl telefoningizga saqlanadi — ilova yopilsa ham, internet bo'lmasa ham ochiladi.</p>
+    <div class="chips wrap" id="pdfPeriods">
+      ${PDF_PERIODS.map(([p, label]) => `<button data-p="${p}">${label}</button>`).join("")}
+    </div>
+    <p class="muted small">Ichida: ${owner ? "ishxona (ishchilar, modellar), daromad va xarajatlar, mijozlar va qarzlar" : "topshirgan ishlaringiz va ish haqingiz"}.</p>
+    <button class="primary" id="pdfDownload">📥 Telefonga yuklab olish</button>
+    <button class="secondary" id="pdfSend">💬 Telegram chatga yuborish</button>
+    <p class="muted small compose-hint">Chatga yuborilgan fayl Telegramda doim turadi: uni bosib «Yuklab olish» (iPhone'da «Saqlash») qilsangiz bo'ldi.</p>
+  `);
+  const sync = () => document.querySelectorAll("#pdfPeriods button").forEach((b) => b.classList.toggle("on", b.dataset.p === period));
+  sync();
+  $("pdfPeriods").onclick = (ev) => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    haptic();
+    period = state.pdfPeriod = b.dataset.p;
+    sync();
+  };
+  const busy = (on) => { $("pdfDownload").disabled = on; $("pdfSend").disabled = on; };
+  $("pdfDownload").onclick = async () => {
+    busy(true);
+    try {
+      const { url, file_name } = await api("/api/report/pdf", { method: "POST", body: { period } });
+      saveFile(url, file_name);
+    } catch (e) { fail(e); }
+    busy(false);
+  };
+  $("pdfSend").onclick = async () => {
+    busy(true);
+    $("pdfSend").textContent = "⏳ Tayyorlanmoqda…";
+    try {
+      await api("/api/report/pdf", { method: "POST", body: { period, action: "send" } });
+      toast("PDF Telegram chatga yuborildi");
+    } catch (e) { fail(e); }
+    $("pdfSend").textContent = "💬 Telegram chatga yuborish";
+    busy(false);
+  };
+}
+
+function saveFile(url, fileName) {
+  // Telegram 8.0+: o'zining «Yuklab olish» oynasi — fayl telefonning «Yuklanmalar» papkasiga tushadi
+  if (tg && tg.downloadFile && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0")) {
+    try {
+      tg.downloadFile({ url, file_name: fileName }, (ok) => { if (ok) toast("Yuklab olinmoqda — telefonning «Yuklanmalar» papkasida"); });
+      return;
+    } catch (_) { /* pastdagi usul */ }
+  }
+  // Eski Telegram: tashqi brauzer faylni o'zi yuklab oladi
+  if (inTelegram && tg.openLink) return tg.openLink(url);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast("Yuklab olinmoqda");
 }
 
 // Kameradan, galereyadan yoki sudrab tashlangan rasm: yozish oynasi ochiq bo'lsa — shu yerda o'qiladi
@@ -3125,6 +3192,7 @@ function bind() {
 
   window.addEventListener("pagehide", releaseMic);
   $("settingsBtn").onclick = settingsSheet;
+  $("pdfBtn").onclick = () => { haptic(); pdfSheet(); };
   // Summa kartasini bosganda — maslahat va reja
   for (const id of ["wHero", "mHero"]) {
     $(id).onclick = adviceSheet;
@@ -3196,6 +3264,7 @@ async function init() {
   loadAvatar();
   $("settingsBtn").hidden = !me.is_owner;
   $("cameraBtn").hidden = false;
+  $("pdfBtn").hidden = false;
   $("addModelBtn").hidden = !me.is_owner;
   // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
   $("navWallet").hidden = !me.is_owner;

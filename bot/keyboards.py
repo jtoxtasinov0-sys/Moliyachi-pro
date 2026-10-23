@@ -109,6 +109,10 @@ class ReportCb(CallbackData, prefix="rep"):
     period: str  # day | week | month
 
 
+class PdfCb(CallbackData, prefix="pdf"):
+    period: str  # menu | day | week | month | prev_month | year
+
+
 class AdviceCb(CallbackData, prefix="adv"):
     action: str  # show | pct | ai | lesson
     value: int = 0
@@ -120,20 +124,20 @@ class SettingsCb(CallbackData, prefix="s"):
 
 
 class WorkerCb(CallbackData, prefix="wk"):
-    action: str  # list | open | add | link | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger
+    action: str  # list | open | add | link | relink | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger
     user_id: int = 0
     value: int = 0
 
 
 class SupplierCb(CallbackData, prefix="sp"):
-    action: str  # list | open | add | link | toggle
+    action: str  # list | open | add | link | relink | toggle
     supplier_id: int = 0
 
 
 class ClientCb(CallbackData, prefix="cl"):
     """Egasi: mijozlar ro'yxati va mijoz kartasi."""
 
-    action: str  # list | open | add | link | toggle
+    action: str  # list | open | add | link | relink | toggle
     client_id: int = 0
 
 
@@ -234,7 +238,20 @@ def report_kb() -> InlineKeyboardMarkup:
     kb.button(text="Bugun", callback_data=ReportCb(period="day"))
     kb.button(text="Shu hafta", callback_data=ReportCb(period="week"))
     kb.button(text="Shu oy", callback_data=ReportCb(period="month"))
+    kb.button(text="📄 PDF fayl — telefonga saqlash", callback_data=PdfCb(period="menu"))
+    kb.adjust(3, 1)
     add_app_button(kb)
+    return kb.as_markup()
+
+
+def pdf_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Bugun", callback_data=PdfCb(period="day"))
+    kb.button(text="Shu hafta", callback_data=PdfCb(period="week"))
+    kb.button(text="Shu oy", callback_data=PdfCb(period="month"))
+    kb.button(text="O'tgan oy", callback_data=PdfCb(period="prev_month"))
+    kb.button(text="Shu yil", callback_data=PdfCb(period="year"))
+    kb.adjust(3, 2)
     return kb.as_markup()
 
 

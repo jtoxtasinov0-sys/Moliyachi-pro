@@ -8,10 +8,10 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts
+from bot import drafts, pdf_report
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import EntryStatus, PayKind, User, WorkEntry, WorkerPayment
@@ -108,6 +108,21 @@ async def notify_owner(
     if entry is not None:
         markup = kbs.entry_kb(entry, owner)
     await notify_user(bot, owner.tg_id, text, markup)
+
+
+async def notify_owner_linked(
+    bot: Bot, session: AsyncSession, owner_id: int, name: str, previous: int | None, tg_id: int, first_text: str
+) -> None:
+    """Doimiy havola bosilganda egaga xabar: birinchi marta ulansa — first_text, boshqa Telegram akkauntdan
+    kirsa — ogohlantirish, o'sha odamning o'zi qayta kirsa — xabar yo'q."""
+    if previous == tg_id:
+        return
+    if previous is not None:
+        first_text = (
+            f"🔁 {escape(name)} boshqa Telegram akkauntdan qayta kirdi — eski akkauntiga endi xabar bormaydi.\n"
+            "Agar bu u bo'lmasa: uning kartasida «🔄 Yangi havola» ni bosing — eski havola ishlamay qoladi."
+        )
+    await notify_owner(bot, session, owner_id, first_text)
 
 
 async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry) -> None:
@@ -272,6 +287,38 @@ async def on_report(call: CallbackQuery, callback_data: kbs.ReportCb, session: A
 
     await call.message.edit_text(f"{title}\n\n{body}", reply_markup=kbs.report_kb())
     await call.answer()
+
+
+def _pdf_prompt(user: User) -> str:
+    inside = (
+        "ishxona (ishchilar, modellar), daromad va xarajatlar, mijozlar va qarzlar"
+        if user.is_owner
+        else "topshirgan ishlaringiz va ish haqingiz"
+    )
+    return (
+        "📄 <b>PDF hisobot</b> — qaysi davr uchun?\n\n"
+        f"Ichida: {inside}. Fayl telefoningizga saqlanadi — ilova yopilsa ham, "
+        "internet bo'lmasa ham ochiladi."
+    )
+
+
+@router.message(Command("pdf"))
+async def pdf_menu(message: Message, state: FSMContext, user: User) -> None:
+    await state.clear()
+    await message.answer(_pdf_prompt(user), reply_markup=kbs.pdf_kb())
+
+
+@router.callback_query(kbs.PdfCb.filter())
+async def on_pdf(call: CallbackQuery, callback_data: kbs.PdfCb, session: AsyncSession, user: User) -> None:
+    period = callback_data.period
+    if period not in pdf_report.PERIODS:
+        await call.message.answer(_pdf_prompt(user), reply_markup=kbs.pdf_kb())
+        await call.answer()
+        return
+    await call.answer("📄 Tayyorlanmoqda…")
+    await call.bot.send_chat_action(call.message.chat.id, "upload_document")
+    pdf, name = await pdf_report.build(session, user, period)
+    await call.message.answer_document(BufferedInputFile(pdf, filename=name), caption=pdf_report.caption(period))
 
 
 def _add(totals: dict[str, Decimal], row: repo.WorkReportRow) -> None:
