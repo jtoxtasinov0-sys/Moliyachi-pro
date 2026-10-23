@@ -34,11 +34,13 @@ job_q yo'q — umumiy narx. Model aytilmay faqat kasb («kroy 2000dan») — kas
 old — hozirgi narx {price, currency}, bo'lmasa None.
 Xom ashyo xaridi — "section": "material":
 {
-  ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier, supplier_id, supplier_free}],
+  ..., "materials": [{kind, name, quantity, unit, price, total, currency, supplier, supplier_id, supplier_free,
+                      credit}],
 }
 price — bir birlik (list, kg...) narxi, total — jami; aytilmasa None, narxsiz ham saqlanadi.
 supplier — kimdan olingani; ro'yxatdagi ta'minotchi bo'lsa supplier_id (saqlangach unga xabar boradi),
 supplier_free — ro'yxatda yo'q, aytilgancha yoziladi. Ikkalasi ham bo'lmasa — qaysi ta'minotchi ekani so'raladi.
+credit — qarzga (nasiyaga) olindi: ta'minotchiga qarz bo'ladi, shuning uchun kimdan olingani va jami summa so'raladi.
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],
@@ -274,6 +276,7 @@ def from_extraction(
                 "supplier": _name(item.supplier, 100),
                 "supplier_id": None,
                 "supplier_free": False,
+                "credit": bool(item.on_credit),
             }
             material_total(m)
             draft["materials"].append(m)
@@ -399,6 +402,7 @@ def for_llm(draft: dict) -> dict:
                     "total": _num(m["total"]) or 0,
                     "currency": m["currency"],
                     "supplier": m["supplier"] or "",
+                    "on_credit": bool(m.get("credit")),
                 }
                 for m in draft["materials"]
             ],
@@ -722,6 +726,14 @@ async def _resolve_suppliers(session: AsyncSession, draft: dict, acc: int) -> No
             m["supplier_id"], m["supplier"] = res.exact_id, names[res.exact_id]
         elif not res.options:
             m["supplier_free"] = True
+    # Ro'yxatda yo'q odamdan qarzga olingan bo'lsa — qarzlardagi yozilishi: qarzi shu odamning qatoriga qo'shiladi
+    credit = [m for m in draft["materials"] if m.get("credit") and m["supplier_free"] and m["supplier"]]
+    if credit:
+        people = [name for _, name in await repo.debt_people(session, acc)]
+        for m in credit:
+            res = matcher.match(m["supplier"], list(enumerate(people)))
+            if res.exact_id is not None:
+                m["supplier"] = people[res.exact_id]
 
 
 async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None:
@@ -773,6 +785,11 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
                 return "m_kind", i
             if m["supplier"] and m["supplier_id"] is None and not m["supplier_free"]:
                 return "m_supplier", i
+            # Qarzga olingani — ta'minotchiga qarz: kimga va qancha ekani kerak
+            if m.get("credit") and not m["supplier"]:
+                return "m_credit_who", i
+            if m.get("credit") and not m["total"]:
+                return "m_credit_total", i
         return None
     if draft["section"] == "price":
         for i, p in enumerate(draft["prices"]):
@@ -1145,6 +1162,8 @@ def _render_material(draft: dict) -> str:
         )
         if m["supplier"]:
             row += f"\n   🏪 {escape(m['supplier'])}" + ("" if m["supplier_id"] or m["supplier_free"] else "?")
+        if m.get("credit"):
+            row += "\n   💳 Qarzga — umumiy qarzlarga qo'shiladi"
         rows.append(row)
         if m["total"]:
             totals[m["currency"]] = totals.get(m["currency"], Decimal(0)) + Decimal(m["total"])
@@ -1169,6 +1188,13 @@ async def _present_material(session: AsyncSession, draft: dict, user: User) -> t
         return (
             text + f"\n\n❓ «{escape(query)}» — qaysi ta'minotchi? Ro'yxatdagisiga undan olinganda xabar boradi.",
             kbs.resolve_kb("supplier", i, options, query, new_label="✍️ Ro'yxatda yo'q"),
+        )
+    if kind == "m_credit_who":
+        return text + "\n\n❓ Kimdan qarzga olindi? Ismini yozing yoki ayting.", kbs.cancel_only_kb()
+    if kind == "m_credit_total":
+        return (
+            text + "\n\n❓ Qarzga olingan xom ashyo qancha turadi? Jami summani yozing yoki ayting.",
+            kbs.cancel_only_kb(),
         )
     return text + "\n\n❓ Qanday xom ashyo? Masalan: <i>teri</i>, <i>kley</i>, <i>padosh</i>.", kbs.cancel_only_kb()
 

@@ -189,6 +189,8 @@ def material_text(e: MaterialEntry, supplier: bool = True) -> str:
     text = "🧱 " + material_line(e.kind, e.name, e.quantity, e.unit, e.unit_price, e.amount, e.currency)
     if supplier and e.supplier:
         text += f"\n🏪 {escape(e.supplier)}"
+    if e.on_credit:
+        text += "\n💳 Qarzga olindi"
     return text + f"\n📅 {fmt_date(e.entry_date)}"
 
 
@@ -407,13 +409,24 @@ async def on_materials_report(
 
 # --- Qarzlar ----------------------------------------------------------------
 
+DEBT_SOURCE_LABELS = {"worker": "👷 ishchi", "client": "🛍 mijoz"}
+
+
+def _debt_who(b: repo.DebtBalance) -> str:
+    """«Robiya <i>(👷 ishchi)</i>», qarzga xom ashyo olingan bo'lsa — «Aslcharm <i>(🧱 xom ashyo)</i>»."""
+    label = DEBT_SOURCE_LABELS.get(b.source) or ("🧱 xom ashyo" if b.materials else "")
+    return escape(b.person) + (f" <i>({label})</i>" if label else "")
+
+
 async def _debts_view(session: AsyncSession, owner_id: int) -> str:
-    balances = await repo.debt_balances(session, owner_id)
+    """Umumiy qarzlar: qarz yozuvlari, qarzga olingan xom ashyo, ishchilar va mijozlar hisobi."""
+    balances = await repo.debt_overview(session, owner_id)
     if not balances:
         return (
             "🤝 <b>Qarzlar</b>\n\nHali qarz yozilmagan.\n\n"
             "Yozish uchun: <i>«Abbosdan 100 ming won oldim»</i>, <i>«Valiga 50 dollar qarz berdim»</i>, "
-            "<i>«Abbosga 30 mingini qaytardim»</i>."
+            "<i>«Abbosga 30 mingini qaytardim»</i>.\n"
+            "Ishchilar va mijozlar hisobi, qarzga olingan xom ashyo ham shu yerda ko'rinadi."
         )
     owed_rows, owe_rows, settled = [], [], []
     for b in balances:
@@ -422,9 +435,9 @@ async def _debts_view(session: AsyncSession, owner_id: int) -> str:
             continue
         for currency, value in b.balance.items():
             if value > 0:
-                owed_rows.append(f"• {escape(b.person)} — {fmt_money(value, currency)}")
+                owed_rows.append(f"• {_debt_who(b)} — {fmt_money(value, currency)}")
             elif value < 0:
-                owe_rows.append(f"• {escape(b.person)} — {fmt_money(-value, currency)}")
+                owe_rows.append(f"• {_debt_who(b)} — {fmt_money(-value, currency)}")
 
     owed_to_me, i_owe = repo.debt_totals(balances)
     blocks = ["🤝 <b>Qarzlar</b>"]

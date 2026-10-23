@@ -970,17 +970,21 @@ def _debt_json(e: DebtEntry) -> dict:
 @routes.get("/api/debts")
 @endpoint(owner_only=True)
 async def debts(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    balances = await repo.debt_balances(session, user.id)
+    """Umumiy qarzlar: qarz yozuvlari (qarzga olingan xom ashyo bilan), ishchilar va mijozlar qoldig'i."""
+    balances = await repo.debt_overview(session, user.id)
     owed_to_me, i_owe = repo.debt_totals(balances)
     return web.json_response(
         {
             "people": [
                 {
+                    "type": b.source,
                     "key": b.key,
+                    "id": b.ref_id,
                     "name": b.person,
                     "balance": _money({c: v for c, v in b.balance.items() if v}),
                     "last_date": b.last_date.isoformat() if b.last_date else None,
                     "count": b.count,
+                    "materials": b.materials,
                     "settled": b.settled,
                 }
                 for b in balances
@@ -994,10 +998,18 @@ async def debts(request: web.Request, session: AsyncSession, user: User) -> web.
 @routes.get("/api/debts/entries")
 @endpoint(owner_only=True)
 async def debt_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Qarz yozuvlari va qarzga olingan xom ashyo — sana bo'yicha birga (yangisi birinchi)."""
     limit, offset = _paging(request)
     key = request.query.get("key") or None
-    rows = await repo.list_debt_entries(session, user.id, key=key, limit=limit + 1, offset=offset)
-    return web.json_response({"items": [_debt_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
+    need = offset + limit + 1
+    items: list[tuple[date, float, dict]] = []
+    for e in await repo.list_debt_entries(session, user.id, key=key, limit=need):
+        items.append((e.entry_date, e.created_at.timestamp(), {"type": "debt", **_debt_json(e)}))
+    for e in await repo.list_credit_materials(session, user.id, key=key, limit=need):
+        items.append((e.entry_date, e.created_at.timestamp(), {"type": "material", **_material_json(e)}))
+    items.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    page = [x[2] for x in items[offset : offset + limit]]
+    return web.json_response({"items": page, "has_more": len(items) > offset + limit})
 
 
 @routes.delete(r"/api/debts/{id:\d+}")
@@ -1190,6 +1202,7 @@ def _material_json(e: MaterialEntry) -> dict:
         "currency": e.currency,
         "supplier": e.supplier,
         "supplier_id": e.supplier_id,
+        "on_credit": e.on_credit,
         "raw_text": e.raw_text,
     }
 

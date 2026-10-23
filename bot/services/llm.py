@@ -77,6 +77,10 @@ class MaterialItem(BaseModel):
     supplier: str = Field(
         description="Kimdan yoki qayerdan olingani (\"Ta'minotchilar\" ro'yxatidagi yozilishi), aytilmasa bo'sh satr"
     )
+    on_credit: bool = Field(
+        description="true — qarzga (nasiyaga) olindi, pulini keyin berish kerak (\"qarzga oldim\", \"nasiyaga\", "
+        "\"pulini keyin beraman\", \"pulini bermadim\"); false — pulini to'lab olindi yoki aytilmadi"
+    )
 
 
 class PayItem(BaseModel):
@@ -232,7 +236,11 @@ bosh harf bilan (Teri, Material, Podklad, Kley, Padosh, Ip, Furnitura, Upakovka)
 "10 millionga", "jami", "hammasi" — total. Narxni o'zing hisoblama, faqat aytilganini yoz. \
 supplier — kimdan olingani, qo'shimchasiz ("Xayrullohdan" — Xayrulloh); "Ta'minotchilar" ro'yxatidagi \
 odamdan olinsa — ro'yxatdagi to'liq yozilishi ("Xayrullohdan", "Uz charmdan" — Xayrulloh Uz charm). \
-"Ta'minotchilar" ro'yxatidagi odamdan xom ashyo yoki mol olinsa — material, debt emas.
+"Ta'minotchilar" ro'yxatidagi odamdan xom ashyo yoki mol olinsa — material, debt emas. \
+Xom ashyo qarzga (nasiyaga) olinsa ham — material, on_credit=true ("Aslcharmdan 100 list teri qarzga oldim", \
+"Xayrullohdan nasiyaga 20 kg kley oldim, pulini keyin beraman"); oddiy xarid — on_credit=false. Ta'minotchiga \
+yoki xom ashyo qarzga olingan odamga pul berilsa ("Aslcharmga 10 million berdim", "teri qarzini to'ladim") — \
+debt, direction=out.
 - Mijoz bilan savdo (client):
   * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
 ro'yxatida bo'lmasa ham (yangi mijoz).

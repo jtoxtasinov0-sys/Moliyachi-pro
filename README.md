@@ -66,7 +66,18 @@ uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga
 Shirin gul», «Lider terisidan 5 list, listi 300 ming», «Alisherdan 20 kg kley oldim» — bot turini, nomini (markasi),
 miqdori va birligini, narxini (bir birlik yoki jami) va kimdan olinganini ajratib «To'g'rimi?» deb so'raydi; narx
 aytilmasa ham yoziladi. Botda «🧱 Xom ashyo» — kun/hafta/oy bo'yicha turlari va summasi, ilovada «Jamoa → Xom
-ashyo» va bosh sahifadagi karta.
+ashyo» va bosh sahifadagi karta. Qarzga olingan xom ashyo («Aslcharmdan 100 list teri qarzga oldim, listi 300 ming»,
+«nasiyaga oldim», «pulini keyin beraman») — xom ashyoda ham turadi, ta'minotchiga qarz bo'lib umumiy «Qarzlar»ga
+ham qo'shiladi (kimdan olingani yoki summasi aytilmasa — bot so'raydi); kartochkada «💳 Qarzga olindi». Qarzni
+to'lash: «Aslcharmga 10 million berdim» — qarzdan ayriladi. Oddiy (to'lab olingan) xarid qarzlarga qo'shilmaydi.
+
+**🤝 Umumiy qarzlar:** botda «🤝 Qarzlar», ilovada «Hamyon → Qarzlar» va bosh sahifadagi karta — hamma qarz bir
+joyda: odamlar bilan qarzlar, qarzga olingan xom ashyo (shu ta'minotchining qarz yozuvlari bilan bitta qatorda),
+👷 ishchilar hisobi (ishchining haqqi — sizning qarzingiz, ortiqcha olgani — sizga qarz) va 🛍 mijozlar hisobi
+(mijoz qarzi — sizga qarz, oldindan to'lagani — sizning qarzingiz). «Sizga qarzlar» va «sizning qarzingiz» jami
+shularning hammasidan. Ishchi faqat pul yoki hisob holati yozilgan bo'lsa qo'shiladi (yozilmagan bo'lsa qoldig'i —
+hamma ishlari summasi), hisobi yopilgan ishchi va mijoz ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning
+hisob-kitob oynasi, mijozni — mijoz oynasi, ta'minotchini — qarz va qarzga olingan xom ashyo tarixi ochiladi.
 
 **🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
 🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga
@@ -96,7 +107,7 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 
 **🧹 Hisobni 0 qilish:** ilovada har bir bo'lim pastida alohida tugma — «Mijozlar hisobini 0 qilish» (hamma
 oldi-berdi, qarzlar 0), «Ishchilar hisobini 0 qilish» (hamma ish va pul yozuvlari, qoldiqlar 0), «Xom ashyo
-hisobini 0 qilish» (hamma xaridlar), «Hamyon → Xarajatlar»da «Xarajatlar hisobini 0 qilish» (hamma xarajat va
+hisobini 0 qilish» (hamma xaridlar, qarzga olinganlarining qarzi ham), «Hamyon → Xarajatlar»da «Xarajatlar hisobini 0 qilish» (hamma xarajat va
 daromad yozuvlari; «Qarzlar» qoladi). Ilova ikki marta so'raydi, ikkalasida ham «OK» bosilsa — 0 qilinadi.
 Mijozlar, ishchilar, kasblar, modellar va ta'minotchilar (havolalari bilan) qoladi; yozuvlar bazada o'chirilgan
 belgisi bilan saqlanadi, ilovada qaytarib bo'lmaydi.

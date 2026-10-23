@@ -344,9 +344,9 @@ function renderHomeDebts() {
     ? open.slice(0, 5).map((p) => {
         const b = balanceInfo(p);
         return `
-          <button class="mini-entry tap" data-person="${esc(p.key)}">
+          <button class="mini-entry tap" ${debtAttr(p)}>
             <div class="avatar">${esc(initials(p.name))}</div>
-            <div class="info"><b>${esc(p.name)}</b><small>${b.label}</small></div>
+            <div class="info"><b>${esc(p.name)}</b><small>${esc([debtSource(p), b.label].filter(Boolean).join(" · "))}</small></div>
             <div class="amt ${b.cls}">${esc(b.text)}</div>
           </button>`;
       }).join("") + (open.length > 5 ? `<p class="muted small" style="margin:10px 0 0">yana ${open.length - 5} kishi…</p>` : "")
@@ -392,6 +392,7 @@ function feedRow(e, opts = {}) {
     if (e.unit_price != null && e.quantity) sub.push(`${money(e.unit_price, e.currency)} / ${e.unit || "dona"}`);
     if (e.amount == null) sub.push("narxi aytilmagan");
     if (e.supplier && !opts.noWho) sub.push(e.supplier);
+    if (e.on_credit) sub.push("💳 qarzga");
   } else if (e.type === "client") {
     icon = CLIENT_ICON[e.kind] || "❔";
     iconCls = e.kind === "payment" ? "in" : e.kind === "return" ? "out" : "";
@@ -1011,8 +1012,11 @@ function ledgerDraftHtml() {
 
 async function afterLedgerChange() {
   await loadLedger(false);
-  // Egada: ishchilar ro'yxatidagi qoldiq ham yangilansin
-  if (state.me.is_owner && state.view === "workers") loadWorkers();
+  // Egada: ishchilar ro'yxatidagi va umumiy qarzlardagi qoldiq ham yangilansin
+  if (!state.me.is_owner) return;
+  if (state.view === "workers") loadWorkers();
+  else if (state.view === "wallet" && state.wallet.tab === "debts") loadDebts();
+  else if (state.view === "home") loadHomeMoney();
 }
 
 // --- Hamyon: xarajatlar ------------------------------------------------------
@@ -1160,6 +1164,42 @@ function balanceInfo(p) {
   return { cls: "", text: entries.map(([c, v]) => (v > 0 ? "+" : "−") + money(Math.abs(v), c)).join(" "), label: "aralash" };
 }
 
+// Umumiy qarzlardagi qator qayerdan: qarz yozuvi (qarzga olingan xom ashyo bilan), ishchi yoki mijoz
+const DEBT_SOURCE = { worker: "👷 Ishchi", client: "🛍 Mijoz" };
+
+function debtSource(p) {
+  return DEBT_SOURCE[p.type] || (p.materials ? "🧱 Xom ashyo" : "");
+}
+
+// Bosilganda: ishchi — hisob-kitob oynasi, mijoz — mijoz oynasi, qolgani — qarz tarixi
+function debtAttr(p) {
+  if (p.type === "worker") return `data-worker="${p.id}"`;
+  if (p.type === "client") return `data-client="${p.id}"`;
+  return `data-person="${esc(p.key)}"`;
+}
+
+async function openDebtRow(ev) {
+  const b = ev.target.closest("[data-person], [data-worker], [data-client]");
+  if (!b) return;
+  if ("person" in b.dataset) return personSheet(b.dataset.person);
+  try {
+    if (b.dataset.worker) {
+      const id = Number(b.dataset.worker);
+      if (!state.workers.some((w) => w.id === id)) {
+        const data = await api("/api/workers");
+        state.workers = data.items;
+        state.jobs = data.jobs;
+      }
+      const w = state.workers.find((x) => x.id === id);
+      if (w) workerSheet(w);
+    } else {
+      const id = Number(b.dataset.client);
+      if (!state.clients.byId[id]) rememberClients(await api(`/api/clients?period=${state.clients.period}`));
+      clientSheet(id);
+    }
+  } catch (e) { fail(e); }
+}
+
 function renderDebts() {
   const d = state.wallet.debts;
   renderHomeDebts();
@@ -1171,9 +1211,10 @@ function renderDebts() {
   }
   $("debtList").innerHTML = d.people.map((p) => {
     const b = balanceInfo(p);
-    const sub = [p.last_date ? dateLabel(p.last_date) : "", `${p.count} ta yozuv`].filter(Boolean).join(" · ");
+    const sub = [debtSource(p), p.last_date ? dateLabel(p.last_date) : "", p.count ? `${p.count} ta yozuv` : ""]
+      .filter(Boolean).join(" · ");
     return `
-      <button class="row-card${p.settled ? " off" : ""}" data-person="${esc(p.key)}">
+      <button class="row-card${p.settled ? " off" : ""}" ${debtAttr(p)}>
         <div class="avatar">${esc(initials(p.name))}</div>
         <div class="info"><b>${esc(p.name)}</b><small>${esc(sub)}</small></div>
         <div class="side ${b.cls}">${esc(b.text)}<small>${b.label}</small></div>
@@ -1182,6 +1223,18 @@ function renderDebts() {
 }
 
 function debtRow(e) {
+  if (e.type === "material") {
+    // Qarzga olingan xom ashyo: o'chirilsa — «Xom ashyo»dan ham o'chadi
+    const what = e.name ? `${e.kind} «${e.name}»` : e.kind;
+    const sub = [dateLabel(e.date), materialQty(e)].filter(Boolean).join(" · ");
+    return `
+    <div class="mini-entry">
+      <div class="mini-icon in">${materialIcon(e.kind)}</div>
+      <div class="info"><b>${esc(what)} qarzga olindi</b><small>${esc(sub)}</small></div>
+      <div class="amt">${esc(money(e.amount, e.currency))}</div>
+      <button class="mini-del" data-del-feed="material:${e.id}" aria-label="O'chirish">🗑</button>
+    </div>`;
+  }
   const took = e.direction === "in";
   const sub = [dateLabel(e.date), e.note].filter(Boolean).join(" · ");
   return `
@@ -1209,10 +1262,13 @@ async function personSheet(key) {
     const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
     $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
     $("personHistory").onclick = async (ev) => {
-      const btn = ev.target.closest("[data-del-debt]");
-      if (!btn || !(await confirmBox("Qarz yozuvi o'chirilsinmi?"))) return;
+      // Qarzga olingan xom ashyo ham shu tarixda: o'chirilsa — xom ashyodan ham o'chadi
+      const mat = ev.target.closest("[data-del-feed]");
+      const btn = mat || ev.target.closest("[data-del-debt]");
+      if (!btn || !(await confirmBox(mat ? "Xom ashyo yozuvi o'chirilsinmi?" : "Qarz yozuvi o'chirilsinmi?"))) return;
       try {
-        await api(`/api/debts/${btn.dataset.delDebt}`, { method: "DELETE" });
+        const url = mat ? `/api/materials/${mat.dataset.delFeed.split(":")[1]}` : `/api/debts/${btn.dataset.delDebt}`;
+        await api(url, { method: "DELETE" });
         toast("O'chirildi");
         await loadDebts();
         personSheet(key);
@@ -2407,7 +2463,7 @@ const RESET = {
   },
   materials: {
     name: "Xom ashyo",
-    ask: "Xom ashyo hisobi 0 qilinsinmi? Hamma xom ashyo xaridlari o'chadi. Ta'minotchilar ro'yxati qoladi.",
+    ask: "Xom ashyo hisobi 0 qilinsinmi? Hamma xom ashyo xaridlari o'chadi, qarzga olinganlarining qarzi ham. Ta'minotchilar ro'yxati qoladi.",
   },
   personal: {
     name: "Xarajatlar",
@@ -2794,10 +2850,7 @@ function bind() {
   };
 
   // Asosiy: qarzlar va harakatlar
-  $("mDebtList").onclick = (ev) => {
-    const b = ev.target.closest("[data-person]");
-    if (b) personSheet(b.dataset.person);
-  };
+  $("mDebtList").onclick = openDebtRow;
   $("mDebtsAll").onclick = () => {
     state.wallet.tab = "debts";
     show("wallet");
@@ -2904,10 +2957,7 @@ function bind() {
     const b = ev.target.closest("[data-del-personal]");
     if (b) deletePersonal(Number(b.dataset.delPersonal));
   };
-  $("debtList").onclick = (ev) => {
-    const b = ev.target.closest("[data-person]");
-    if (b) personSheet(b.dataset.person);
-  };
+  $("debtList").onclick = openDebtRow;
 
   window.addEventListener("pagehide", releaseMic);
   $("settingsBtn").onclick = settingsSheet;

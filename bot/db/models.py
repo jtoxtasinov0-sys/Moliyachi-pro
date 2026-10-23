@@ -337,7 +337,8 @@ class Supplier(Base):
 
 class MaterialEntry(TimestampMixin, Base):
     """Sotib olingan xom ashyo: «1 list teri», «10 millionlik teri, nomi Shirin gul», «20 kg kley».
-    Narx aytilmasa ham yoziladi (amount bo'sh)."""
+    Narx aytilmasa ham yoziladi (amount bo'sh). Qarzga olingani (on_credit) — ta'minotchiga qarz: umumiy
+    qarzlarda shu odamning qarzlariga qo'shiladi; oddiy xarid faqat xom ashyoda qoladi."""
 
     __tablename__ = "material_entries"
 
@@ -353,6 +354,8 @@ class MaterialEntry(TimestampMixin, Base):
     supplier: Mapped[str | None] = mapped_column(String(100))  # kimdan olingan
     # Ro'yxatdagi ta'minotchi bo'lsa — u (ismi supplier da ham), aks holda faqat aytilgan ism
     supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    # «qarzga oldim», «nasiyaga» — pulini keyin berish kerak
+    on_credit: Mapped[bool] = mapped_column(default=False)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
     raw_text: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

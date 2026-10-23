@@ -717,8 +717,9 @@ async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
 
 
 async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
-    """Xom ashyo xaridi. Ro'yxatdagi ta'minotchidan olingan bo'lsa — unga xabar boradi."""
-    from bot.handlers.money import material_month_line, material_text
+    """Xom ashyo xaridi. Ro'yxatdagi ta'minotchidan olingan bo'lsa — unga xabar boradi. Qarzga olingani —
+    ta'minotchiga qarz (umumiy qarzlarda), saqlangach u bilan qarz qoldig'i ko'rsatiladi."""
+    from bot.handlers.money import material_month_line, material_text, person_balance
 
     def dec(value: str | None) -> Decimal | None:
         return Decimal(value) if value else None
@@ -744,6 +745,7 @@ async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: di
             currency=m["currency"],
             supplier=m["supplier"],
             supplier_id=m["supplier_id"],
+            on_credit=bool(m.get("credit")),
             entry_date=date.fromisoformat(draft["date"]),
             raw_text=draft["raw_text"],
             created_by=user.id,
@@ -751,6 +753,10 @@ async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: di
         for m in draft["materials"]
     ]
     header = "✅ <b>Xom ashyoga qo'shildi</b>\n\n" + await material_month_line(session, user.id)
+    creditors = list(dict.fromkeys(e.supplier for e in entries if e.on_credit and e.supplier))
+    balance = [line for name in creditors for line in await person_balance(session, user.id, name)]
+    if balance:
+        header += "\n\n💳 Qarzga olindi — umumiy qarzlarga qo'shildi:\n" + "\n".join(balance)
     notified, unlinked = await _notify_suppliers(bot, session, user, entries, list(suppliers.values()))
     if notified:
         header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)

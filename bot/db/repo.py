@@ -1214,13 +1214,35 @@ class DebtBalance:
     balance: dict[str, Decimal] = field(default_factory=dict)
     last_date: date | None = None
     count: int = 0
+    materials: int = 0  # shundan qarzga olingan xom ashyo yozuvlari
+    # Umumiy qarzlarda: debt — qarz yozuvlari (qarzga olingan xom ashyo bilan), worker — ishchi, client — mijoz
+    source: str = "debt"
+    ref_id: int | None = None  # ishchi yoki mijoz id si
 
     @property
     def settled(self) -> bool:
         return not any(self.balance.values())
 
 
+def _debt_order(b: DebtBalance) -> tuple:
+    return b.settled, -(b.last_date or date.min).toordinal(), b.person.lower()
+
+
+def _credit_materials(owner_id: int) -> tuple:
+    """Qarzga olingan, narxi va ta'minotchisi aytilgan xom ashyo — ta'minotchiga qarz."""
+    return (
+        MaterialEntry.owner_id == owner_id,
+        MaterialEntry.deleted_at.is_(None),
+        MaterialEntry.on_credit.is_(True),
+        MaterialEntry.amount.is_not(None),
+        MaterialEntry.supplier.is_not(None),
+        MaterialEntry.supplier != "",
+    )
+
+
 async def debt_balances(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
+    """Odamlar bo'yicha qarz qoldig'i. Qarzga olingan xom ashyo — shu ismli ta'minotchiga qarz: uning qarz
+    yozuvlari bilan bitta qatorda («Aslcharmdan qarzga teri oldim» va «Aslcharmga 10 million berdim»)."""
     signed = case((DebtEntry.direction == DebtDirection.OUT, DebtEntry.amount), else_=-DebtEntry.amount)
     alive = (DebtEntry.owner_id == owner_id, DebtEntry.deleted_at.is_(None))
     rows = await session.execute(
@@ -1241,6 +1263,25 @@ async def debt_balances(session: AsyncSession, owner_id: int) -> list[DebtBalanc
         b.last_date = max(filter(None, [b.last_date, last]), default=None)
         b.count += int(count)
 
+    credit = await session.execute(
+        select(
+            MaterialEntry.supplier,
+            MaterialEntry.currency,
+            func.sum(MaterialEntry.amount),
+            func.max(MaterialEntry.entry_date),
+            func.count(MaterialEntry.id),
+        )
+        .where(*_credit_materials(owner_id))
+        .group_by(MaterialEntry.supplier, MaterialEntry.currency)
+    )
+    for supplier, currency, total, last, count in credit:
+        key = person_key(supplier)
+        b = balances.setdefault(key, DebtBalance(key=key, person=supplier))
+        b.balance[currency] = b.balance.get(currency, Decimal(0)) - Decimal(str(total or 0))
+        b.last_date = max(filter(None, [b.last_date, last]), default=None)
+        b.count += int(count)
+        b.materials += int(count)
+
     # Ism birinchi yozilganidek ko'rsatiladi (keyingi yozuvlar ham shu ismga moslanadi)
     names = await session.execute(
         select(DebtEntry.person_key, DebtEntry.person).where(*alive).order_by(DebtEntry.id.desc())
@@ -1250,8 +1291,84 @@ async def debt_balances(session: AsyncSession, owner_id: int) -> list[DebtBalanc
             balances[key].person = person
 
     result = list(balances.values())
-    result.sort(key=lambda b: (b.settled, -(b.last_date or date.min).toordinal(), b.person.lower()))
+    result.sort(key=_debt_order)
     return result
+
+
+async def list_credit_materials(
+    session: AsyncSession, owner_id: int, key: str | None = None, limit: int = 30
+) -> list[MaterialEntry]:
+    """Qarzga olingan xom ashyo (yangisi birinchi); key — shu odamdan olinganlari (debt_balances dagi kalit)."""
+    q = (
+        select(MaterialEntry)
+        .where(*_credit_materials(owner_id))
+        .order_by(MaterialEntry.entry_date.desc(), MaterialEntry.id.desc())
+    )
+    if key is None:
+        return list(await session.scalars(q.limit(limit)))
+    return [e for e in await session.scalars(q) if person_key(e.supplier) == key][:limit]
+
+
+async def _worker_last_dates(session: AsyncSession, owner_id: int) -> dict[int, date]:
+    """Ishchi bilan oxirgi tasdiqlangan ish yoki pul harakati sanasi."""
+    out: dict[int, date] = {}
+    for worker_col, date_col, table in (
+        (WorkEntry.worker_id, WorkEntry.work_date, WorkEntry),
+        (WorkerPayment.worker_id, WorkerPayment.entry_date, WorkerPayment),
+    ):
+        q = (
+            select(worker_col, func.max(date_col))
+            .where(table.owner_id == owner_id, table.deleted_at.is_(None), table.status == EntryStatus.APPROVED)
+            .group_by(worker_col)
+        )
+        for worker_id, day in await session.execute(q):
+            if day is not None:
+                out[worker_id] = max(out.get(worker_id, day), day)
+    return out
+
+
+async def debt_overview(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
+    """Umumiy qarzlar: qarz yozuvlari (qarzga olingan xom ashyo bilan), ishchilar va mijozlar qoldig'i.
+
+    Ishchi — pul yoki hisob holati yozilgan bo'lsa (yozilmagan bo'lsa qoldiq — hamma ishlari summasi, ishchilar
+    ro'yxatidagidek hisobga olinmaydi): ishchining haqqi — mening qarzim, ortiqcha olgani (avans) — uning qarzi.
+    Mijoz: qarzi — menga qarz, oldindan to'lagani — mening qarzim. Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi.
+    Oddiy xom ashyo xaridi (qarzga olinmagan) bu yerga kirmaydi."""
+    rows = await debt_balances(session, owner_id)
+
+    workers = {w.id: w for w in await list_workers(session, owner_id, active_only=False)}
+    last = await _worker_last_dates(session, owner_id)
+    for worker_id, wb in (await worker_balances(session, owner_id)).items():
+        worker = workers.get(worker_id)
+        if worker is None or not wb.balance or not (wb.since or wb.paid or wb.returned):
+            continue
+        rows.append(
+            DebtBalance(
+                key=f"worker:{worker_id}",
+                person=worker.name,
+                balance={c: -v for c, v in wb.balance.items()},
+                last_date=last.get(worker_id),
+                source="worker",
+                ref_id=worker_id,
+            )
+        )
+
+    for st in await client_stats(session, owner_id):
+        balance = {c: v for c, v in st.balance.items() if v}
+        if balance:
+            rows.append(
+                DebtBalance(
+                    key=f"client:{st.client.id}",
+                    person=st.client.name,
+                    balance=balance,
+                    last_date=st.last_date,
+                    count=st.count,
+                    source="client",
+                    ref_id=st.client.id,
+                )
+            )
+    rows.sort(key=_debt_order)
+    return rows
 
 
 def debt_totals(balances: list[DebtBalance]) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
@@ -1516,6 +1633,7 @@ async def create_material_entry(
     raw_text: str | None,
     created_by: int,
     supplier_id: int | None = None,
+    on_credit: bool = False,
 ) -> MaterialEntry:
     entry = MaterialEntry(
         owner_id=owner_id,
@@ -1528,6 +1646,7 @@ async def create_material_entry(
         currency=currency,
         supplier=supplier,
         supplier_id=supplier_id,
+        on_credit=on_credit,
         entry_date=entry_date,
         raw_text=raw_text,
         created_by=created_by,

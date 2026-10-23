@@ -51,6 +51,7 @@ _NEW_COLUMNS = {
     },
     "material_entries": {
         "supplier_id": "INTEGER",
+        "on_credit": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "users": {
         "job_id": "INTEGER",
