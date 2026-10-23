@@ -350,12 +350,14 @@ async def _materials_report(session: AsyncSession, owner_id: int, period: str) -
         f"🧱 <b>Xom ashyo · {PERIOD_LABELS[period]}</b> "
         f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
     )
+    debts = await supplier_debts_block(session, owner_id)
     if not rows:
-        return (
+        text = (
             f"{title}\n\nBu davrda xom ashyo yozilmagan.\n\nYozish uchun ovoz yoki matn yuboring: "
             "<i>«1 list teri oldim»</i>, <i>«10 millionlik teri oldim, nomi Shirin gul»</i>, "
             "<i>«20 kg kley oldim, kilosi 45 ming»</i>."
         )
+        return text + (f"\n\n{debts}" if debts else "")
     by_kind: dict[str, dict] = {}
     total: dict[str, Decimal] = defaultdict(Decimal)
     for r in rows:
@@ -374,7 +376,8 @@ async def _materials_report(session: AsyncSession, owner_id: int, period: str) -
             parts.append(fmt_totals(dict(k["amount"])))
         lines.append(f"• <b>{escape(kind)}</b> — " + (" · ".join(parts) or f"{k['count']} ta xarid"))
     count = sum(r.count for r in rows)
-    return f"{title}\n\nJami: {_sum_text(total)} ({count} ta xarid)\n\n" + "\n".join(lines)
+    text = f"{title}\n\nJami: {_sum_text(total)} ({count} ta xarid)\n\n" + "\n".join(lines)
+    return text + (f"\n\n{debts}" if debts else "")
 
 
 @router.message(F.text == kbs.BTN_MATERIALS)
@@ -409,17 +412,39 @@ async def on_materials_report(
 
 # --- Qarzlar ----------------------------------------------------------------
 
-DEBT_SOURCE_LABELS = {"worker": "👷 ishchi", "client": "🛍 mijoz"}
+DEBT_SECTIONS = {
+    "debt": "🤝 <b>Odamlar bilan qarzlar</b>",
+    "material": "🧱 <b>Xom ashyo — ta'minotchilar</b>",
+    "worker": "👷 <b>Ishchilar</b>",
+    "client": "🛍 <b>Mijozlar</b>",
+}
+DEBTS_BUDGET = 3300  # Telegram xabari 4096 belgigacha
 
 
-def _debt_who(b: repo.DebtBalance) -> str:
-    """«Robiya <i>(👷 ishchi)</i>», qarzga xom ashyo olingan bo'lsa — «Aslcharm <i>(🧱 xom ashyo)</i>»."""
-    label = DEBT_SOURCE_LABELS.get(b.source) or ("🧱 xom ashyo" if b.materials else "")
-    return escape(b.person) + (f" <i>({label})</i>" if label else "")
+def debt_rows(b: repo.DebtBalance) -> list[str]:
+    """«• Aslcharm: 📥 siz qarzdorsiz <b>48 792 850 so'm</b>» — har bir valyuta alohida."""
+    return [
+        f"• {escape(b.person)}: "
+        + ("📤 sizga qarzdor" if value > 0 else "📥 siz qarzdorsiz")
+        + f" <b>{fmt_money(abs(value), currency)}</b>"
+        for currency, value in b.balance.items()
+        if value
+    ]
+
+
+def debt_sum_text(owed: dict[str, Decimal], owe: dict[str, Decimal]) -> str:
+    """«sizga qarz 50 000 so'm · qarzingiz 200 000 so'm»."""
+    parts = []
+    if owed:
+        parts.append(f"sizga qarz <b>{fmt_totals(owed)}</b>")
+    if owe:
+        parts.append(f"qarzingiz <b>{fmt_totals(owe)}</b>")
+    return " · ".join(parts) or "0"
 
 
 async def _debts_view(session: AsyncSession, owner_id: int) -> str:
-    """Umumiy qarzlar: qarz yozuvlari, qarzga olingan xom ashyo, ishchilar va mijozlar hisobi."""
+    """Umumiy qarzlar bo'limlarga ajratilgan (odamlar, ta'minotchilar, ishchilar, mijozlar — har birining jami bilan),
+    oxirida hammasining jami."""
     balances = await repo.debt_overview(session, owner_id)
     if not balances:
         return (
@@ -428,33 +453,53 @@ async def _debts_view(session: AsyncSession, owner_id: int) -> str:
             "<i>«Abbosga 30 mingini qaytardim»</i>.\n"
             "Ishchilar va mijozlar hisobi, qarzga olingan xom ashyo ham shu yerda ko'rinadi."
         )
-    owed_rows, owe_rows, settled = [], [], []
-    for b in balances:
-        if b.settled:
-            settled.append(escape(b.person))
+    blocks = ["🤝 <b>Qarzlar</b>"]
+    budget = DEBTS_BUDGET
+    for source, (owed, owe) in repo.debt_groups(balances).items():
+        open_ = [b for b in balances if b.source == source and not b.settled]
+        if not open_:
             continue
-        for currency, value in b.balance.items():
-            if value > 0:
-                owed_rows.append(f"• {_debt_who(b)} — {fmt_money(value, currency)}")
-            elif value < 0:
-                owe_rows.append(f"• {_debt_who(b)} — {fmt_money(-value, currency)}")
+        lines = [f"{DEBT_SECTIONS[source]} — {debt_sum_text(owed, owe)}"]
+        shown = 0
+        for b in open_:
+            rows = debt_rows(b)
+            size = sum(len(row) + 1 for row in rows)
+            if shown and size > budget:
+                break
+            budget -= size
+            lines.extend(rows)
+            shown += 1
+        if shown < len(open_):
+            lines.append(f"… yana {len(open_) - shown} ta — ilovada")
+        blocks.append("\n".join(lines))
 
     owed_to_me, i_owe = repo.debt_totals(balances)
-    blocks = ["🤝 <b>Qarzlar</b>"]
-    if owed_rows:
-        blocks.append("📤 <b>Sizga qarzdorlar</b>\n" + "\n".join(owed_rows))
-    if owe_rows:
-        blocks.append("📥 <b>Siz qarzdorsiz</b>\n" + "\n".join(owe_rows))
-    totals = []
+    totals = ["📊 <b>Jami (hamma bo'limlar)</b>"]
     if owed_to_me:
-        totals.append(f"Jami sizga qarz: <b>{fmt_totals(owed_to_me)}</b>")
+        totals.append(f"📤 Sizga qarz: <b>{fmt_totals(owed_to_me)}</b>")
     if i_owe:
-        totals.append(f"Jami qarzingiz: <b>{fmt_totals(i_owe)}</b>")
-    if totals:
+        totals.append(f"📥 Qarzingiz: <b>{fmt_totals(i_owe)}</b>")
+    if len(totals) > 1:
         blocks.append("\n".join(totals))
+    settled = [escape(b.person) for b in balances if b.settled]
     if settled:
         blocks.append("✅ Yopilgan: " + ", ".join(settled[:15]))
     return "\n\n".join(blocks)
+
+
+async def supplier_debts_block(session: AsyncSession, owner_id: int) -> str | None:
+    """Xom ashyo hisobotida: ta'minotchilar bilan qarz (umumiy qarzlardagi «Xom ashyo» bo'limi)."""
+    debts = await repo.supplier_debts(session, owner_id)
+    if not debts:
+        return None
+    owed, owe = repo.debt_totals(debts)
+    lines = [f"💳 <b>Ta'minotchilar bilan qarz</b> — {debt_sum_text(owed, owe)}"]
+    for b in debts[:15]:
+        lines.extend(debt_rows(b))
+    if len(debts) > 15:
+        lines.append(f"… yana {len(debts) - 15} ta — «🤝 Qarzlar»da")
+    lines.append("<i>Umumiy «🤝 Qarzlar»ga ham qo'shilgan.</i>")
+    return "\n".join(lines)
 
 
 @router.message(F.text == kbs.BTN_DEBTS)

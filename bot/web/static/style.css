@@ -448,6 +448,17 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .mini-stats b { display: block; font-size: 14.5px; font-weight: 800; overflow-wrap: anywhere; }
 .mini-stats b.long { font-size: 12.5px; }
 .mini-stats small { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.mini-stats.two { grid-template-columns: repeat(2, 1fr); }
+.mini-stats b.pos { color: var(--green); }
+.mini-stats b.neg { color: var(--red); }
+/* Umumiy qarzlar: bo'lim sarlavhasi va jami */
+.debt-group-head { margin: 18px 4px 8px; }
+.debt-group-head h3 { margin: 0; font-size: 16px; font-weight: 800; }
+.debt-group-head small { display: block; margin-top: 3px; color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.debt-group-head b.pos, .debt-sum b.pos { color: var(--green); }
+.debt-group-head b.neg, .debt-sum b.neg { color: var(--red); }
+.debt-sum:empty { display: none; }
+.debt-sum { margin: 0 0 10px; }
 a.link-box.phone { display: block; text-decoration: none; font-size: 15px; }
 
 /* --- Pastdan chiquvchi oyna ----------------------------------------------- */

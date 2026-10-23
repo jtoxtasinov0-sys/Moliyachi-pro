@@ -1215,13 +1215,18 @@ class DebtBalance:
     last_date: date | None = None
     count: int = 0
     materials: int = 0  # shundan qarzga olingan xom ashyo yozuvlari
-    # Umumiy qarzlarda: debt — qarz yozuvlari (qarzga olingan xom ashyo bilan), worker — ishchi, client — mijoz
+    # Umumiy qarzlardagi bo'limi (DEBT_SOURCES): debt — odamlar bilan qarz, material — ta'minotchi (qarzga xom ashyo
+    # olingan yoki ro'yxatdagi ta'minotchi), worker — ishchi, client — mijoz
     source: str = "debt"
     ref_id: int | None = None  # ishchi yoki mijoz id si
 
     @property
     def settled(self) -> bool:
         return not any(self.balance.values())
+
+
+# Umumiy qarzlar bo'limlari — shu tartibda ko'rsatiladi
+DEBT_SOURCES = ("debt", "material", "worker", "client")
 
 
 def _debt_order(b: DebtBalance) -> tuple:
@@ -1327,14 +1332,40 @@ async def _worker_last_dates(session: AsyncSession, owner_id: int) -> dict[int, 
     return out
 
 
+async def _debts_with_suppliers(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
+    """debt_balances, ta'minotchilar bilan qarzlar «material» bo'limida: qarzga xom ashyo olingan yoki ismi
+    ro'yxatdagi ta'minotchiniki."""
+    rows = await debt_balances(session, owner_id)
+    suppliers = {person_key(s.name) for s in await list_suppliers(session, owner_id, active_only=False)}
+    for b in rows:
+        if b.materials or b.key in suppliers:
+            b.source = "material"
+    return rows
+
+
+async def supplier_debts(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
+    """Xom ashyo bo'limi uchun: ta'minotchilar bilan ochiq qarzlar (umumiy qarzlardagi «material» bo'limi)."""
+    return [b for b in await _debts_with_suppliers(session, owner_id) if b.source == "material" and not b.settled]
+
+
+def debt_groups(rows: list[DebtBalance]) -> dict[str, tuple[dict[str, Decimal], dict[str, Decimal]]]:
+    """Bo'lim -> (menga qarzlar, mening qarzlarim), faqat qatori bor bo'limlar, DEBT_SOURCES tartibida."""
+    return {
+        source: debt_totals([b for b in rows if b.source == source])
+        for source in DEBT_SOURCES
+        if any(b.source == source for b in rows)
+    }
+
+
 async def debt_overview(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
-    """Umumiy qarzlar: qarz yozuvlari (qarzga olingan xom ashyo bilan), ishchilar va mijozlar qoldig'i.
+    """Umumiy qarzlar: qarz yozuvlari, ta'minotchilar (qarzga olingan xom ashyo bilan), ishchilar va mijozlar
+    qoldig'i — har biri o'z bo'limida (source), jami hammasidan.
 
     Ishchi — pul yoki hisob holati yozilgan bo'lsa (yozilmagan bo'lsa qoldiq — hamma ishlari summasi, ishchilar
     ro'yxatidagidek hisobga olinmaydi): ishchining haqqi — mening qarzim, ortiqcha olgani (avans) — uning qarzi.
     Mijoz: qarzi — menga qarz, oldindan to'lagani — mening qarzim. Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi.
     Oddiy xom ashyo xaridi (qarzga olinmagan) bu yerga kirmaydi."""
-    rows = await debt_balances(session, owner_id)
+    rows = await _debts_with_suppliers(session, owner_id)
 
     workers = {w.id: w for w in await list_workers(session, owner_id, active_only=False)}
     last = await _worker_last_dates(session, owner_id)

@@ -75,6 +75,20 @@ async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
     kb.button(text="🏷 Kasblar", callback_data=kbs.JobCb(action="list"))
     kb.adjust(*([1] * len(workers)), 2)
     text = "👷 <b>Ishchilar</b>\n\n" + ("\n".join(lines) if lines else "Hali ishchi yo'q.")
+    # Hisobi boshlangan ishchilar bilan jami — umumiy «🤝 Qarzlar»dagi «Ishchilar» bo'limi
+    due: dict[str, Decimal] = defaultdict(Decimal)
+    over: dict[str, Decimal] = defaultdict(Decimal)
+    for w in workers:
+        if tracked(b := balances.get(w.id)):
+            for currency, value in b.balance.items():
+                (due if value > 0 else over)[currency] += abs(value)
+    if due or over:
+        parts = []
+        if due:
+            parts.append(f"berishingiz kerak <b>{fmt_totals(dict(due))}</b>")
+        if over:
+            parts.append(f"ortiqcha olgan (avans) <b>{fmt_totals(dict(over))}</b>")
+        text += "\n\n🧾 Jami: " + " · ".join(parts) + "\n<i>Umumiy «🤝 Qarzlar»ga ham qo'shilgan.</i>"
     if workers:
         text += "\n\nIshchini bosing — kasbini tanlash, taklif havolasi yoki o'chirish."
     return text, kb.as_markup()
@@ -413,11 +427,11 @@ async def _clients_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
     lines = []
     budget = CLIENTS_BUDGET
     owes: dict[str, Decimal] = defaultdict(Decimal)
+    prepaid: dict[str, Decimal] = defaultdict(Decimal)
     for st in stats:
         balance = {c: v for c, v in st.balance.items() if v}
         for currency, value in balance.items():
-            if value > 0:
-                owes[currency] += value
+            (owes if value > 0 else prepaid)[currency] += abs(value)
         line = f"• {client_balance_text(st.client.name, balance)} · {_client_status(st.client)}"
         if len(line) <= budget:
             budget -= len(line) + 1
@@ -440,6 +454,10 @@ async def _clients_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
     text = "🛍 <b>Mijozlar</b>\n\n" + "\n".join(lines)
     if owes:
         text += f"\n\nJami mijozlar qarzi: <b>{fmt_totals(dict(owes))}</b>"
+    if prepaid:
+        text += f"\nOldindan to'laganlar: <b>{fmt_totals(dict(prepaid))}</b>"
+    if owes or prepaid:
+        text += "\n<i>Umumiy «🤝 Qarzlar»ga ham qo'shilgan.</i>"
     text += "\n\n💡 Mijozni bosing — oldi-berdi va taklif havolasi. " + CLIENT_HOWTO
     return text, kb.as_markup()
 

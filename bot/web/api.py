@@ -967,27 +967,33 @@ def _debt_json(e: DebtEntry) -> dict:
     }
 
 
+def _debt_balance_json(b: repo.DebtBalance) -> dict:
+    return {
+        "type": b.source,
+        "key": b.key,
+        "id": b.ref_id,
+        "name": b.person,
+        "balance": _money({c: v for c, v in b.balance.items() if v}),
+        "last_date": b.last_date.isoformat() if b.last_date else None,
+        "count": b.count,
+        "materials": b.materials,
+        "settled": b.settled,
+    }
+
+
 @routes.get("/api/debts")
 @endpoint(owner_only=True)
 async def debts(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Umumiy qarzlar: qarz yozuvlari (qarzga olingan xom ashyo bilan), ishchilar va mijozlar qoldig'i."""
+    """Umumiy qarzlar: odamlar, ta'minotchilar (qarzga olingan xom ashyo bilan), ishchilar va mijozlar — har biri
+    o'z bo'limida (groups — bo'lim jami), owed_to_me / i_owe — hammasining jami."""
     balances = await repo.debt_overview(session, user.id)
     owed_to_me, i_owe = repo.debt_totals(balances)
     return web.json_response(
         {
-            "people": [
-                {
-                    "type": b.source,
-                    "key": b.key,
-                    "id": b.ref_id,
-                    "name": b.person,
-                    "balance": _money({c: v for c, v in b.balance.items() if v}),
-                    "last_date": b.last_date.isoformat() if b.last_date else None,
-                    "count": b.count,
-                    "materials": b.materials,
-                    "settled": b.settled,
-                }
-                for b in balances
+            "people": [_debt_balance_json(b) for b in balances],
+            "groups": [
+                {"type": source, "owed_to_me": _money(owed), "i_owe": _money(owe)}
+                for source, (owed, owe) in repo.debt_groups(balances).items()
             ],
             "owed_to_me": _money(owed_to_me),
             "i_owe": _money(i_owe),
@@ -1241,6 +1247,9 @@ async def materials(request: web.Request, session: AsyncSession, user: User) -> 
     total: dict[str, Decimal] = defaultdict(Decimal)
     for r in rows:
         total[r.currency] += r.amount
+    # Ta'minotchilar bilan qarz (davrdan qat'i nazar) — umumiy qarzlardagi «Xom ashyo» bo'limi
+    debts_ = await repo.supplier_debts(session, user.id)
+    owed_to_me, i_owe = repo.debt_totals(debts_)
     return web.json_response(
         {
             "period": period,
@@ -1250,6 +1259,11 @@ async def materials(request: web.Request, session: AsyncSession, user: User) -> 
             "total": _money({c: v for c, v in total.items() if v}),
             "count": sum(r.count for r in rows),
             "by_kind": _material_kinds(rows),
+            "debts": {
+                "people": [_debt_balance_json(d) for d in debts_],
+                "owed_to_me": _money(owed_to_me),
+                "i_owe": _money(i_owe),
+            },
         }
     )
 

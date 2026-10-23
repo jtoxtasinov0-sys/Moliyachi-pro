@@ -72,12 +72,17 @@ ham qo'shiladi (kimdan olingani yoki summasi aytilmasa — bot so'raydi); kartoc
 to'lash: «Aslcharmga 10 million berdim» — qarzdan ayriladi. Oddiy (to'lab olingan) xarid qarzlarga qo'shilmaydi.
 
 **🤝 Umumiy qarzlar:** botda «🤝 Qarzlar», ilovada «Hamyon → Qarzlar» va bosh sahifadagi karta — hamma qarz bir
-joyda: odamlar bilan qarzlar, qarzga olingan xom ashyo (shu ta'minotchining qarz yozuvlari bilan bitta qatorda),
-👷 ishchilar hisobi (ishchining haqqi — sizning qarzingiz, ortiqcha olgani — sizga qarz) va 🛍 mijozlar hisobi
-(mijoz qarzi — sizga qarz, oldindan to'lagani — sizning qarzingiz). «Sizga qarzlar» va «sizning qarzingiz» jami
-shularning hammasidan. Ishchi faqat pul yoki hisob holati yozilgan bo'lsa qo'shiladi (yozilmagan bo'lsa qoldig'i —
-hamma ishlari summasi), hisobi yopilgan ishchi va mijoz ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning
-hisob-kitob oynasi, mijozni — mijoz oynasi, ta'minotchini — qarz va qarzga olingan xom ashyo tarixi ochiladi.
+joyda, bo'limlarga ajratilgan, har bir bo'limning o'z jami bilan: 🤝 odamlar bilan qarzlar; 🧱 xom ashyo —
+ta'minotchilar (qarzga olingan xom ashyo va shu odamning qarz yozuvlari bitta qatorda; ro'yxatdagi ta'minotchi
+bilan qarz ham shu yerda); 👷 ishchilar (ishchining haqqi — sizning qarzingiz, ortiqcha olgani — sizga qarz);
+🛍 mijozlar (mijoz qarzi — sizga qarz, oldindan to'lagani — sizning qarzingiz). Tepadagi «sizga qarzlar» va
+«sizning qarzingiz» — hamma bo'limlarning jami. Shu qarzlar o'z bo'limida ham alohida turadi: «Jamoa → Ishchilar»da
+«🧾 Ishchilar bilan hisob» (berishingiz kerak / ortiqcha olgan), «Mijozlar»da mijozlar qarzi va oldindan
+to'laganlar, «Jamoa → Xom ashyo»da va bosh sahifadagi xom ashyo kartasida «💳 Ta'minotchilar bilan qarz»; botda
+ham «👷 Ishchilar», «🛍 Mijozlar» va «🧱 Xom ashyo» oxirida jami. Ishchi faqat pul yoki hisob holati yozilgan
+bo'lsa qo'shiladi (yozilmagan bo'lsa qoldig'i — hamma ishlari summasi), hisobi yopilgan ishchi va mijoz
+ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning hisob-kitob oynasi, mijozni — mijoz oynasi,
+ta'minotchini — qarz va qarzga olingan xom ashyo tarixi ochiladi.
 
 **🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
 🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga

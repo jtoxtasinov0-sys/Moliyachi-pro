@@ -341,15 +341,7 @@ function renderHomeDebts() {
   setMoneyStat("mOwe", d.i_owe);
   const open = d.people.filter((p) => !p.settled);
   $("mDebtList").innerHTML = open.length
-    ? open.slice(0, 5).map((p) => {
-        const b = balanceInfo(p);
-        return `
-          <button class="mini-entry tap" ${debtAttr(p)}>
-            <div class="avatar">${esc(initials(p.name))}</div>
-            <div class="info"><b>${esc(p.name)}</b><small>${esc([debtSource(p), b.label].filter(Boolean).join(" · "))}</small></div>
-            <div class="amt ${b.cls}">${esc(b.text)}</div>
-          </button>`;
-      }).join("") + (open.length > 5 ? `<p class="muted small" style="margin:10px 0 0">yana ${open.length - 5} kishi…</p>` : "")
+    ? open.slice(0, 5).map((p) => debtMiniRow(p, true)).join("") + (open.length > 5 ? `<p class="muted small" style="margin:10px 0 0">yana ${open.length - 5} kishi…</p>` : "")
     : `<p class="muted">✅ Ochiq qarz yo'q. Yozish uchun botga ayting: «Abbosdan 100 ming won oldim».</p>`;
 }
 
@@ -1164,11 +1156,37 @@ function balanceInfo(p) {
   return { cls: "", text: entries.map(([c, v]) => (v > 0 ? "+" : "−") + money(Math.abs(v), c)).join(" "), label: "aralash" };
 }
 
-// Umumiy qarzlardagi qator qayerdan: qarz yozuvi (qarzga olingan xom ashyo bilan), ishchi yoki mijoz
-const DEBT_SOURCE = { worker: "👷 Ishchi", client: "🛍 Mijoz" };
+// Umumiy qarzlar bo'limlari: odamlar bilan qarz, ta'minotchilar (qarzga olingan xom ashyo), ishchilar, mijozlar
+const DEBT_GROUPS = {
+  debt: "🤝 Odamlar bilan qarzlar",
+  material: "🧱 Xom ashyo — ta'minotchilar",
+  worker: "👷 Ishchilar",
+  client: "🛍 Mijozlar",
+};
+const DEBT_SOURCE = { material: "🧱 Xom ashyo", worker: "👷 Ishchi", client: "🛍 Mijoz" };
 
 function debtSource(p) {
-  return DEBT_SOURCE[p.type] || (p.materials ? "🧱 Xom ashyo" : "");
+  return DEBT_SOURCE[p.type] || "";
+}
+
+// Bo'lim jami: «📥 qarzingiz 200 000 so'm · 📤 sizga qarz 50 000 so'm»
+function debtSumHtml(owed, owe) {
+  const parts = [];
+  if (moneyList(owe)) parts.push(`📥 qarzingiz <b class="neg">${esc(moneyList(owe))}</b>`);
+  if (moneyList(owed)) parts.push(`📤 sizga qarz <b class="pos">${esc(moneyList(owed))}</b>`);
+  return parts.join(" · ") || "0";
+}
+
+// Qisqa qator (bosh sahifa, xom ashyo bo'limi): ism, bo'limi va qoldig'i
+function debtMiniRow(p, withSource) {
+  const b = balanceInfo(p);
+  const sub = [withSource ? debtSource(p) : "", b.label].filter(Boolean).join(" · ");
+  return `
+    <button class="mini-entry tap" ${debtAttr(p)}>
+      <div class="avatar">${esc(initials(p.name))}</div>
+      <div class="info"><b>${esc(p.name)}</b><small>${esc(sub)}</small></div>
+      <div class="amt ${b.cls}">${esc(b.text)}</div>
+    </button>`;
 }
 
 // Bosilganda: ishchi — hisob-kitob oynasi, mijoz — mijoz oynasi, qolgani — qarz tarixi
@@ -1209,16 +1227,21 @@ function renderDebts() {
     $("debtList").innerHTML = `<div class="empty"><span class="big">🤝</span>Hali qarz yozilmagan</div>`;
     return;
   }
-  $("debtList").innerHTML = d.people.map((p) => {
-    const b = balanceInfo(p);
-    const sub = [debtSource(p), p.last_date ? dateLabel(p.last_date) : "", p.count ? `${p.count} ta yozuv` : ""]
-      .filter(Boolean).join(" · ");
+  // Har bir bo'lim alohida, o'z jami bilan; tepadagi «Qarzlar balansi» — hammasining jami
+  $("debtList").innerHTML = d.groups.map((g) => {
+    const rows = d.people.filter((p) => p.type === g.type).map((p) => {
+      const b = balanceInfo(p);
+      const sub = [p.last_date ? dateLabel(p.last_date) : "", p.count ? `${p.count} ta yozuv` : ""].filter(Boolean).join(" · ");
+      return `
+        <button class="row-card${p.settled ? " off" : ""}" ${debtAttr(p)}>
+          <div class="avatar">${esc(initials(p.name))}</div>
+          <div class="info"><b>${esc(p.name)}</b><small>${esc(sub)}</small></div>
+          <div class="side ${b.cls}">${esc(b.text)}<small>${b.label}</small></div>
+        </button>`;
+    }).join("");
     return `
-      <button class="row-card${p.settled ? " off" : ""}" ${debtAttr(p)}>
-        <div class="avatar">${esc(initials(p.name))}</div>
-        <div class="info"><b>${esc(p.name)}</b><small>${esc(sub)}</small></div>
-        <div class="side ${b.cls}">${esc(b.text)}<small>${b.label}</small></div>
-      </button>`;
+      <div class="debt-group-head"><h3>${DEBT_GROUPS[g.type] || g.type}</h3><small>${debtSumHtml(g.owed_to_me, g.i_owe)}</small></div>
+      ${rows}`;
   }).join("");
 }
 
@@ -1247,7 +1270,13 @@ function debtRow(e) {
 }
 
 async function personSheet(key) {
-  const p = state.wallet.debts.people.find((x) => x.key === key);
+  const find = () => ((state.wallet.debts && state.wallet.debts.people) || []).find((x) => x.key === key);
+  let p = find();
+  if (!p) {
+    // Xom ashyo bo'limidan ochilganda qarzlar hali yuklanmagan bo'lishi mumkin
+    try { state.wallet.debts = await api("/api/debts"); } catch (e) { return fail(e); }
+    p = find();
+  }
   if (!p) return closeSheet();
   const b = balanceInfo(p);
   openSheet(`
@@ -1271,6 +1300,7 @@ async function personSheet(key) {
         await api(url, { method: "DELETE" });
         toast("O'chirildi");
         await loadDebts();
+        if (state.view !== "wallet") refreshView();
         personSheet(key);
       } catch (e) { fail(e); }
     };
@@ -1342,6 +1372,10 @@ async function loadClients() {
 function renderClients() {
   const d = state.clients.data;
   setHeroAmount("cOwed", "cOwedExtra", d.totals.owed);
+  if (moneyList(d.totals.prepaid)) {
+    $("cOwedExtra").textContent = [$("cOwedExtra").textContent, `💵 oldindan to'lagan: ${moneyList(d.totals.prepaid)}`]
+      .filter(Boolean).join("  ");
+  }
   setMoneyStat("cSold", d.totals.sold);
   setMoneyStat("cPaid", d.totals.paid);
   const qty = d.totals.sets ? ` · ${fmtNum(d.totals.sets)} komplekt (${fmtNum(d.totals.pieces)} dona)` : "";
@@ -1491,10 +1525,13 @@ function materialKindRow(k) {
 function renderHomeMaterials() {
   const d = state.materials.home;
   if (!d) return;
+  const debt = d.debts.people.length
+    ? `<p class="muted small debt-sum">💳 Ta'minotchilar bilan qarz: ${debtSumHtml(d.debts.owed_to_me, d.debts.i_owe)}</p>`
+    : "";
   $("mMaterialList").innerHTML = d.count
     ? `<p class="muted small" style="margin:0 0 10px">Jami: <b>${esc(moneyList(d.total) || "narxi aytilmagan")}</b> · ${d.count} ta xarid</p>`
-      + d.by_kind.slice(0, 4).map(materialKindRow).join("")
-    : `<p class="muted">Bu davrda xom ashyo yozilmagan. Botga ayting: «1 list teri oldim», «10 millionlik teri oldim, nomi Shirin gul».</p>`;
+      + debt + d.by_kind.slice(0, 4).map(materialKindRow).join("")
+    : debt + `<p class="muted">Bu davrda xom ashyo yozilmagan. Botga ayting: «1 list teri oldim», «10 millionlik teri oldim, nomi Shirin gul».</p>`;
 }
 
 async function loadMaterials() {
@@ -1522,6 +1559,11 @@ function renderMaterials() {
   $("xKindList").innerHTML = d.by_kind.length
     ? d.by_kind.map(materialKindRow).join("")
     : `<p class="muted">Bu davrda xom ashyo yozilmagan</p>`;
+  const debts = d.debts;
+  $("xDebtSum").innerHTML = debts.people.length ? debtSumHtml(debts.owed_to_me, debts.i_owe) : "";
+  $("xDebtList").innerHTML = debts.people.length
+    ? debts.people.map((p) => debtMiniRow(p, false)).join("")
+    : `<p class="muted">Qarzga olingan xom ashyo yo'q. «Aslcharmdan 100 list teri qarzga oldim» desangiz — shu yerda va umumiy «Qarzlar»da ko'rinadi.</p>`;
 }
 
 async function loadMaterialFeed(reset) {
@@ -1672,6 +1714,7 @@ async function loadWorkers() {
 function renderWorkers() {
   const items = state.workers;
   renderJobChips();
+  renderWorkerTotals(items);
   if (!items.length) {
     $("workerList").innerHTML = `<div class="empty"><span class="big">👷</span>Hali ishchi yo'q.<br>«+ Qo'shish» tugmasini bosing.</div>`;
     return;
@@ -1688,6 +1731,28 @@ function renderWorkers() {
         <div class="side">${fmtNum(w.month_qty)} ta<small>${esc(moneyList(w.month_pay) || "shu oy")}</small></div>
       </button>`;
   }).join("");
+}
+
+// Hisobi boshlangan ishchilar bilan jami — umumiy «Qarzlar»dagi «Ishchilar» bo'limi
+function renderWorkerTotals(items) {
+  const due = {}, over = {};
+  for (const w of items) {
+    if (!w.balance || !w.balance.tracked) continue;
+    for (const [c, v] of Object.entries(w.balance.amounts)) {
+      if (v > 0) due[c] = (due[c] || 0) + v;
+      else if (v < 0) over[c] = (over[c] || 0) - v;
+    }
+  }
+  const box = $("workerTotals");
+  box.hidden = !moneyList(due) && !moneyList(over);
+  if (box.hidden) return;
+  box.innerHTML = `
+    <div class="card-head"><h3>🧾 Ishchilar bilan hisob</h3></div>
+    <div class="mini-stats two">
+      <div><b class="neg">${esc(moneyList(due) || "0")}</b><small>berishingiz kerak</small></div>
+      <div><b class="pos">${esc(moneyList(over) || "0")}</b><small>ortiqcha olgan (avans)</small></div>
+    </div>
+    <p class="muted small" style="margin:0">Umumiy «Qarzlar»ga ham qo'shilgan.</p>`;
 }
 
 // Ishchilar ro'yxatida qoldiq: «🧾 400 000 so'm» (berishingiz kerak) yoki qizil — avans
@@ -2958,6 +3023,7 @@ function bind() {
     if (b) deletePersonal(Number(b.dataset.delPersonal));
   };
   $("debtList").onclick = openDebtRow;
+  $("xDebtList").onclick = openDebtRow;
 
   window.addEventListener("pagehide", releaseMic);
   $("settingsBtn").onclick = settingsSheet;

@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=18">
+  <link rel="stylesheet" href="static/style.css?v=19">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -309,6 +309,7 @@
           <h2 class="page-title">Ishchilar</h2>
           <button class="pill-btn" id="addWorkerBtn">+ Qo'shish</button>
         </div>
+        <div class="card" id="workerTotals" hidden></div>
         <div id="workerList"></div>
         <div class="card">
           <div class="card-head"><h3>🏷 Kasblar</h3></div>
@@ -359,6 +360,12 @@
           <div class="hero-range" id="xRange"></div>
         </div>
         <p class="muted small hint">🎤 tugmani bosib turib ayting: «1 list teri oldim», «10 millionlik teri oldim, nomi Shirin gul», «20 kg kley oldim, kilosi 45 ming».</p>
+        <div class="card">
+          <div class="card-head"><h3>💳 Ta'minotchilar bilan qarz</h3></div>
+          <p class="muted small debt-sum" id="xDebtSum"></p>
+          <div id="xDebtList"></div>
+          <p class="muted small" style="margin:10px 0 0">Qarzga olingan xom ashyo va ta'minotchiga berilgan pul. Umumiy «Qarzlar»ga ham qo'shilgan, oddiy xarid esa qo'shilmaydi.</p>
+        </div>
         <div class="page-head">
           <h2 class="page-title">Ta'minotchilar</h2>
           <button class="pill-btn" id="addSupplierBtn">+ Qo'shish</button>
@@ -462,6 +469,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=25"></script>
+  <script src="static/app.js?v=26"></script>
 </body>
 </html>
