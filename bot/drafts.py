@@ -40,7 +40,8 @@ Xom ashyo xaridi — "section": "material":
 price — bir birlik (list, kg...) narxi, total — jami; aytilmasa None, narxsiz ham saqlanadi.
 supplier — kimdan olingani; ro'yxatdagi ta'minotchi bo'lsa supplier_id (saqlangach unga xabar boradi),
 supplier_free — ro'yxatda yo'q, aytilgancha yoziladi. Ikkalasi ham bo'lmasa — qaysi ta'minotchi ekani so'raladi.
-credit — qarzga (nasiyaga) olindi: ta'minotchiga qarz bo'ladi, shuning uchun kimdan olingani va jami summa so'raladi.
+credit — ta'minotchiga qarz (undan olindi, to'lagani aytilmadi yoki «qarzga»): umumiy qarzlarga qo'shiladi, shuning
+uchun kimdan olingani va jami summa so'raladi. To'lab olingani yoki kimdan olingani aytilmagani — oddiy xarajat.
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],

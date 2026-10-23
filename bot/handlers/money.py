@@ -194,6 +194,11 @@ def material_text(e: MaterialEntry, supplier: bool = True) -> str:
     return text + f"\n📅 {fmt_date(e.entry_date)}"
 
 
+def material_kb(e: MaterialEntry, app: bool = False):
+    """Xarid kartochkasi tugmalari: «💳 Qarzga qo'shish» / «💵 To'langan» (kimdan olingani va narxi bo'lsa), o'chirish."""
+    return kbs.money_entry_kb("x", e.id, app=app, credit=e.on_credit if repo.material_credit_ok(e) else None)
+
+
 def supplier_month_line(st: repo.SupplierStats) -> str:
     """«🧾 Shu oy jami: 5 000 000 so'm (3 ta xarid)»."""
     return f"🧾 Shu oy jami: {_sum_text(st.month)} ({st.month_count} ta xarid)"
@@ -399,8 +404,7 @@ async def on_materials_report(
             return
         await call.message.answer(f"🕘 Oxirgi {len(items)} ta xarid:")
         for i, e in enumerate(reversed(items)):
-            kb = kbs.money_entry_kb("x", e.id, app=i == len(items) - 1)
-            await call.message.answer(material_text(e), reply_markup=kb)
+            await call.message.answer(material_text(e), reply_markup=material_kb(e, app=i == len(items) - 1))
         return
     if callback_data.period not in PERIOD_LABELS:
         await call.answer()
@@ -451,7 +455,7 @@ async def _debts_view(session: AsyncSession, owner_id: int) -> str:
             "🤝 <b>Qarzlar</b>\n\nHali qarz yozilmagan.\n\n"
             "Yozish uchun: <i>«Abbosdan 100 ming won oldim»</i>, <i>«Valiga 50 dollar qarz berdim»</i>, "
             "<i>«Abbosga 30 mingini qaytardim»</i>.\n"
-            "Ishchilar va mijozlar hisobi, qarzga olingan xom ashyo ham shu yerda ko'rinadi."
+            "Ishchilar va mijozlar hisobi, ta'minotchidan olingan xom ashyo ham shu yerda ko'rinadi."
         )
     blocks = ["🤝 <b>Qarzlar</b>"]
     budget = DEBTS_BUDGET
@@ -560,8 +564,18 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
         await call.message.edit_reply_markup(reply_markup=kbs.money_confirm_delete_kb(kind, entry.id))
         await call.answer("Rostdan o'chirilsinmi?")
     elif action == "del_no":
-        await call.message.edit_reply_markup(reply_markup=kbs.money_entry_kb(kind, entry.id))
+        kb = material_kb(entry) if isinstance(entry, MaterialEntry) else kbs.money_entry_kb(kind, entry.id)
+        await call.message.edit_reply_markup(reply_markup=kb)
         await call.answer()
+    elif action == "credit" and isinstance(entry, MaterialEntry) and repo.material_credit_ok(entry):
+        # Ta'minotchiga qarz (umumiy qarzlarda) yoki to'langan xarid (faqat xom ashyoda)
+        entry.on_credit = not entry.on_credit
+        await session.flush()
+        lines = await person_balance(session, user.id, entry.supplier)
+        status = "💳 Qarzga qo'shildi" if entry.on_credit else "💵 To'langan — qarzdan chiqarildi"
+        text = material_text(entry) + f"\n\n{status}" + ("\n" + "\n".join(lines) if lines else "")
+        await call.message.edit_text(text, reply_markup=material_kb(entry))
+        await call.answer(status)
     elif action == "del_yes":
         text = _text(entry)
         await repo.soft_delete(session, entry)

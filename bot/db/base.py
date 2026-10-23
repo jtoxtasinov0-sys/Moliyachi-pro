@@ -85,6 +85,28 @@ def _add_new_columns(conn: Connection) -> None:
                 log.info("Ustun qo'shildi: %s.%s", table, name)
 
 
+# Bir marta bajariladigan ma'lumot o'zgarishlari: nomi -> SQL. Bajarilgani data_migrations ga yoziladi va qayta
+# bajarilmaydi (keyin qo'lda o'zgartirilgan yozuvlar buzilmaydi)
+_DATA_MIGRATIONS = {
+    # Qarzga olish belgisidan oldin yozilgan xom ashyo: ta'minotchisi va narxi bor xarid — unga qarz (umumiy
+    # qarzlarga qo'shiladi), kimdan olingani yozilmagani — oddiy xarajat. Xatosi ilovada yoki botda «💳» bilan tuzatiladi
+    "material_credit_backfill": (
+        "UPDATE material_entries SET on_credit = TRUE WHERE on_credit = FALSE AND deleted_at IS NULL "
+        "AND amount IS NOT NULL AND supplier IS NOT NULL AND supplier <> ''"
+    ),
+}
+
+
+def _run_data_migrations(conn: Connection) -> None:
+    done = set(conn.execute(text("SELECT name FROM data_migrations")).scalars())
+    for name, sql in _DATA_MIGRATIONS.items():
+        if name in done:
+            continue
+        count = conn.execute(text(sql)).rowcount
+        conn.execute(text("INSERT INTO data_migrations (name) VALUES (:name)"), {"name": name})
+        log.info("Ma'lumot yangilandi: %s (%s ta yozuv)", name, count)
+
+
 # Keyin ixtiyoriy bo'lgan ustunlar (NOT NULL olib tashlanadi)
 _NULLABLE = {
     "work_entries": ("model_id",),
@@ -127,3 +149,4 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_new_columns)
         await conn.run_sync(_drop_not_null)
+        await conn.run_sync(_run_data_migrations)

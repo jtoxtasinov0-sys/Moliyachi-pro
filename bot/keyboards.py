@@ -88,7 +88,7 @@ class ClientKindCb(CallbackData, prefix="ck"):
 
 
 class MoneyCb(CallbackData, prefix="m"):
-    action: str  # del | del_yes | del_no
+    action: str  # del | del_yes | del_no | credit (xom ashyo: qarzga qo'shish / qarzdan chiqarish)
     kind: str  # p — xarajat/daromad, d — qarz, c — mijoz yozuvi, x — xom ashyo
     entry_id: int
 
@@ -297,9 +297,17 @@ def client_kind_kb(line: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def money_entry_kb(kind: str, entry_id: int, app: bool = False) -> InlineKeyboardMarkup:
+def money_entry_kb(kind: str, entry_id: int, app: bool = False, credit: bool | None = None) -> InlineKeyboardMarkup:
+    """credit — xom ashyo qarzga olinganmi (None — kimdan olingani yoki narxi yo'q, tugma chiqmaydi)."""
     kb = InlineKeyboardBuilder()
+    if credit is not None:
+        kb.button(
+            text="💵 To'langan — qarzdan chiqarish" if credit else "💳 Qarzga qo'shish",
+            callback_data=MoneyCb(action="credit", kind=kind, entry_id=entry_id),
+        )
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
+    if credit is not None:
+        kb.adjust(1)
     if app:
         add_app_button(kb, {"d": "debts", "c": "clients", "x": "materials"}.get(kind, "wallet"))
     return kb.as_markup()

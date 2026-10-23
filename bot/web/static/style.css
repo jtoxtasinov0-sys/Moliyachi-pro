@@ -327,6 +327,9 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .amt.pos, .side.pos { color: var(--green); }
 .amt.neg, .side.neg { color: var(--red); }
 .mini-del { width: 34px; height: 34px; border-radius: 10px; background: var(--red-soft); color: var(--red); flex: none; font-size: 14px; }
+/* Xom ashyo: 💳 — qarzga qo'shilgan (yorqin) yoki to'langan (xira) */
+.mini-credit { width: 34px; height: 34px; border-radius: 10px; background: var(--bg); flex: none; font-size: 14px; margin-right: 6px; filter: grayscale(1); opacity: .55; }
+.mini-credit.on { background: var(--blue-soft); filter: none; opacity: 1; }
 
 /* Asosiy sahifa: pullar holati */
 .section-title { font-size: 19px; font-weight: 800; margin: 26px 4px 12px; }

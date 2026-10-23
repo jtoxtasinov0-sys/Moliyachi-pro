@@ -1294,6 +1294,21 @@ async def delete_material(request: web.Request, session: AsyncSession, user: Use
     return web.json_response({"ok": True})
 
 
+@routes.post(r"/api/materials/{id:\d+}/credit")
+@endpoint(owner_only=True)
+async def material_credit(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{"on_credit": true} — xarid ta'minotchiga qarz (umumiy qarzlarga qo'shiladi), false — to'langan xarid."""
+    entry = await repo.get_material_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    on_credit = bool((await _json(request)).get("on_credit"))
+    if on_credit and not repo.material_credit_ok(entry):
+        raise ApiError(400, "Qarzga qo'shish uchun kimdan olingani va narxi yozilgan bo'lishi kerak")
+    entry.on_credit = on_credit
+    await session.flush()
+    return web.json_response(_material_json(entry))
+
+
 # --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
 
 async def _supplier_json(request: web.Request, sp: Supplier, stats: dict[int, repo.SupplierStats]) -> dict:

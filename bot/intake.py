@@ -719,7 +719,7 @@ async def _save_prices(session: AsyncSession, user: User, draft: dict) -> Saved:
 async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
     """Xom ashyo xaridi. Ro'yxatdagi ta'minotchidan olingan bo'lsa — unga xabar boradi. Qarzga olingani —
     ta'minotchiga qarz (umumiy qarzlarda), saqlangach u bilan qarz qoldig'i ko'rsatiladi."""
-    from bot.handlers.money import material_month_line, material_text, person_balance
+    from bot.handlers.money import material_kb, material_month_line, material_text, person_balance
 
     def dec(value: str | None) -> Decimal | None:
         return Decimal(value) if value else None
@@ -767,7 +767,7 @@ async def _save_materials(session: AsyncSession, bot: Bot, user: User, draft: di
         )
     last = len(entries) - 1
     return Saved(
-        header, [(material_text(e), kbs.money_entry_kb("x", e.id, app=i == last)) for i, e in enumerate(entries)]
+        header, [(material_text(e), material_kb(e, app=i == last)) for i, e in enumerate(entries)]
     )
 
 

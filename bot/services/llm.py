@@ -78,8 +78,9 @@ class MaterialItem(BaseModel):
         description="Kimdan yoki qayerdan olingani (\"Ta'minotchilar\" ro'yxatidagi yozilishi), aytilmasa bo'sh satr"
     )
     on_credit: bool = Field(
-        description="true — qarzga (nasiyaga) olindi, pulini keyin berish kerak (\"qarzga oldim\", \"nasiyaga\", "
-        "\"pulini keyin beraman\", \"pulini bermadim\"); false — pulini to'lab olindi yoki aytilmadi"
+        description="true — ta'minotchi (odam yoki firma) bilan oldi-berdi: undan olindi va pulini to'lagani "
+        "aytilmadi, yoki qarzga (nasiyaga) olindi; false — pulini to'lab olindi (\"naqd\", \"pulini berdim\", "
+        "\"to'lab oldim\", chek), kimdan olingani aytilmadi yoki bozor/do'kondan olindi"
     )
 
 
@@ -237,10 +238,11 @@ bosh harf bilan (Teri, Material, Podklad, Kley, Padosh, Ip, Furnitura, Upakovka)
 supplier — kimdan olingani, qo'shimchasiz ("Xayrullohdan" — Xayrulloh); "Ta'minotchilar" ro'yxatidagi \
 odamdan olinsa — ro'yxatdagi to'liq yozilishi ("Xayrullohdan", "Uz charmdan" — Xayrulloh Uz charm). \
 "Ta'minotchilar" ro'yxatidagi odamdan xom ashyo yoki mol olinsa — material, debt emas. \
-Xom ashyo qarzga (nasiyaga) olinsa ham — material, on_credit=true ("Aslcharmdan 100 list teri qarzga oldim", \
-"Xayrullohdan nasiyaga 20 kg kley oldim, pulini keyin beraman"); oddiy xarid — on_credit=false. Ta'minotchiga \
-yoki xom ashyo qarzga olingan odamga pul berilsa ("Aslcharmga 10 million berdim", "teri qarzini to'ladim") — \
-debt, direction=out.
+on_credit — ta'minotchi bilan oldi-berdi qarzga yoziladi: odam yoki firmadan olinib, pulini to'lagani \
+aytilmasa — true ("Aslcharmdan 100 list teri oldim", "Xayrullohdan nasiyaga 20 kg kley oldim", "qarzga oldim"); \
+pulini to'lab olingan ("naqd oldim", "pulini berdim", "to'lab oldim"), kimdan olingani aytilmagan ("1 list teri \
+oldim") yoki bozor/do'kondan olingan — false (oddiy xarajat). Ta'minotchiga yoki xom ashyo olingan odamga pul \
+berilsa ("Aslcharmga 10 million berdim", "teri qarzini to'ladim") — debt, direction=out.
 - Mijoz bilan savdo (client):
   * Mol (komplekt, dona, model nomi) berilsa/sotilsa — har doim client, kind=sale, odam "Mijozlar" \
 ro'yxatida bo'lmasa ham (yangi mijoz).
@@ -544,7 +546,8 @@ va bonus ballar, bekor qilingan, rad etilgan yoki o'tmagan to'lovlar ("Bekor qil
 - Odamga o'tkazma — qarz emas, Pul o'tkazma xarajati. Foydalanuvchi izohida qarz deyilgan bo'lsa — debt.
 
 Qo'lda yozilgan daftar yoki boshqa matnli rasm — undagi yozuvlarni oddiy xabar kabi yuqoridagi qoidalar \
-bilan ajrat. Korxona uchun xom ashyo (teri, kley, padosh...) xaridi cheki yoki daftari — section=material.
+bilan ajrat. Korxona uchun xom ashyo (teri, kley, padosh...) xaridi cheki yoki daftari — section=material; \
+chekdagi xarid — to'langan (on_credit=false), daftarda "qarz", "nasiya" deyilsa — on_credit=true.
 {HANDWRITING_RULES}
 - Daftardagi "20 та сапок", "15 ta lofer" kabi qatorlar (son + ta/та/dona/шт + nom) — model nomi va dona soni, \
 har bir qator alohida work elementi. Model nomini lotinga o'gir (сапок — sapog, лофер — lofer, лоропиано — \

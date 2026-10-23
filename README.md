@@ -66,14 +66,18 @@ uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga
 Shirin gul», «Lider terisidan 5 list, listi 300 ming», «Alisherdan 20 kg kley oldim» — bot turini, nomini (markasi),
 miqdori va birligini, narxini (bir birlik yoki jami) va kimdan olinganini ajratib «To'g'rimi?» deb so'raydi; narx
 aytilmasa ham yoziladi. Botda «🧱 Xom ashyo» — kun/hafta/oy bo'yicha turlari va summasi, ilovada «Jamoa → Xom
-ashyo» va bosh sahifadagi karta. Qarzga olingan xom ashyo («Aslcharmdan 100 list teri qarzga oldim, listi 300 ming»,
-«nasiyaga oldim», «pulini keyin beraman») — xom ashyoda ham turadi, ta'minotchiga qarz bo'lib umumiy «Qarzlar»ga
-ham qo'shiladi (kimdan olingani yoki summasi aytilmasa — bot so'raydi); kartochkada «💳 Qarzga olindi». Qarzni
-to'lash: «Aslcharmga 10 million berdim» — qarzdan ayriladi. Oddiy (to'lab olingan) xarid qarzlarga qo'shilmaydi.
+ashyo» va bosh sahifadagi karta. Ta'minotchi (odam yoki firma) bilan oldi-berdi qarzga yoziladi: undan olingan xom
+ashyo («Aslcharmdan 100 list teri oldim, listi 300 ming», «nasiyaga oldim») — xom ashyoda ham turadi, unga qarz
+bo'lib umumiy «Qarzlar»ga ham qo'shiladi (qarzga deyilib kimdan olingani yoki summasi aytilmasa — bot so'raydi);
+kartochkada «💳 Qarzga olindi». Qarzni to'lash: «Aslcharmga 10 million berdim» — qarzdan ayriladi. To'lab olingan
+xarid («naqd oldim», «pulini berdim», chek), kimdan olingani yozilmagani yoki bozor/do'kondan olingani — oddiy
+xarajat, faqat xom ashyoda. Avval yozilgan xaridlardan kimdan olingani va narxi borlari ham bir marta avtomatik
+qarzga o'tkazilgan. Xato bo'lsa: botda xarid kartochkasidagi «💵 To'langan — qarzdan chiqarish» / «💳 Qarzga
+qo'shish», ilovada xaridlar ro'yxatidagi va qarz tarixidagi «💳» tugmasi.
 
 **🤝 Umumiy qarzlar:** botda «🤝 Qarzlar», ilovada «Hamyon → Qarzlar» va bosh sahifadagi karta — hamma qarz bir
 joyda, bo'limlarga ajratilgan, har bir bo'limning o'z jami bilan: 🤝 odamlar bilan qarzlar; 🧱 xom ashyo —
-ta'minotchilar (qarzga olingan xom ashyo va shu odamning qarz yozuvlari bitta qatorda; ro'yxatdagi ta'minotchi
+ta'minotchilar (undan olingan xom ashyo va shu odamning qarz yozuvlari bitta qatorda; ro'yxatdagi ta'minotchi
 bilan qarz ham shu yerda); 👷 ishchilar (ishchining haqqi — sizning qarzingiz, ortiqcha olgani — sizga qarz);
 🛍 mijozlar (mijoz qarzi — sizga qarz, oldindan to'lagani — sizning qarzingiz). Tepadagi «sizga qarzlar» va
 «sizning qarzingiz» — hamma bo'limlarning jami. Shu qarzlar o'z bo'limida ham alohida turadi: «Jamoa → Ishchilar»da
@@ -82,7 +86,7 @@ to'laganlar, «Jamoa → Xom ashyo»da va bosh sahifadagi xom ashyo kartasida «
 ham «👷 Ishchilar», «🛍 Mijozlar» va «🧱 Xom ashyo» oxirida jami. Hamma ishchi avtomatik qo'shiladi: pul yoki hisob
 holati yozilmagan ishchining qoldig'i — tasdiqlangan ishlari summasi (to'g'rilash uchun bir marta «Robiya bilan
 hisob yopildi» yoki «Robiyaga 900 ming qarzman»). Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning hisob-kitob oynasi, mijozni — mijoz oynasi,
-ta'minotchini — qarz va qarzga olingan xom ashyo tarixi ochiladi.
+ta'minotchini — qarz va undan olingan xom ashyo tarixi ochiladi.
 
 **🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
 🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga

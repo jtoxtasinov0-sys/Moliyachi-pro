@@ -417,13 +417,40 @@ function feedRow(e, opts = {}) {
     sub.push(e.worker.name, e.job, STATUS[e.status] || e.status);
   }
   const del = opts.del ? `<button class="mini-del" data-del-feed="${e.type}:${e.id}" aria-label="O'chirish">🗑</button>` : "";
+  const credit = opts.credit && e.type === "material" ? creditButton(e) : "";
   return `
     <div class="mini-entry">
       <div class="mini-icon ${iconCls}">${icon}</div>
       <div class="info"><b>${esc(title)}</b><small>${esc(sub.filter(Boolean).join(" · "))}</small></div>
       <div class="amt ${amtCls}">${esc(amt)}</div>
-      ${del}
+      ${credit}${del}
     </div>`;
+}
+
+// Xom ashyo: «💳» — ta'minotchiga qarz (umumiy qarzlarda) yoki to'langan xarid. Kimdan olingani va narxi kerak
+function creditButton(e) {
+  if (!e.supplier || e.amount == null) return "";
+  const label = e.on_credit ? "Qarzdan chiqarish (to'langan)" : "Qarzga qo'shish";
+  return `<button class="mini-credit${e.on_credit ? " on" : ""}" data-credit="${e.id}" data-on="${e.on_credit ? 1 : 0}"
+    data-supplier="${esc(e.supplier)}" aria-label="${label}" title="${label}">💳</button>`;
+}
+
+async function toggleMaterialCredit(btn) {
+  const on = btn.dataset.on !== "1";
+  const who = btn.dataset.supplier;
+  const ask = on
+    ? `Bu xarid ${who}ga qarz bo'lib umumiy «Qarzlar»ga qo'shilsinmi?`
+    : `To'langan xarid deb belgilansinmi? ${who} bilan qarzdan chiqariladi, «Xom ashyo»da qoladi.`;
+  if (!(await confirmBox(ask))) return false;
+  try {
+    await api(`/api/materials/${btn.dataset.credit}/credit`, { method: "POST", body: { on_credit: on } });
+    state.wallet.debts = null; // qarzlar keyingi ochilishda qaytadan yuklansin
+    toast(on ? "Qarzga qo'shildi" : "Qarzdan chiqarildi");
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
 }
 
 function renderDashboard() {
@@ -1255,6 +1282,7 @@ function debtRow(e) {
       <div class="mini-icon in">${materialIcon(e.kind)}</div>
       <div class="info"><b>${esc(what)} qarzga olindi</b><small>${esc(sub)}</small></div>
       <div class="amt">${esc(money(e.amount, e.currency))}</div>
+      ${creditButton(e)}
       <button class="mini-del" data-del-feed="material:${e.id}" aria-label="O'chirish">🗑</button>
     </div>`;
   }
@@ -1291,6 +1319,13 @@ async function personSheet(key) {
     const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
     $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
     $("personHistory").onclick = async (ev) => {
+      const credit = ev.target.closest("[data-credit]");
+      if (credit) {
+        if (!(await toggleMaterialCredit(credit))) return;
+        await loadDebts();
+        if (state.view !== "wallet") refreshView();
+        return personSheet(key);
+      }
       // Qarzga olingan xom ashyo ham shu tarixda: o'chirilsa — xom ashyodan ham o'chadi
       const mat = ev.target.closest("[data-del-feed]");
       const btn = mat || ev.target.closest("[data-del-debt]");
@@ -1563,7 +1598,7 @@ function renderMaterials() {
   $("xDebtSum").innerHTML = debts.people.length ? debtSumHtml(debts.owed_to_me, debts.i_owe) : "";
   $("xDebtList").innerHTML = debts.people.length
     ? debts.people.map((p) => debtMiniRow(p, false)).join("")
-    : `<p class="muted">Qarzga olingan xom ashyo yo'q. «Aslcharmdan 100 list teri qarzga oldim» desangiz — shu yerda va umumiy «Qarzlar»da ko'rinadi.</p>`;
+    : `<p class="muted">Ta'minotchilar bilan qarz yo'q. «Aslcharmdan 100 list teri oldim» desangiz — shu yerda va umumiy «Qarzlar»da ko'rinadi.</p>`;
 }
 
 async function loadMaterialFeed(reset) {
@@ -1577,7 +1612,7 @@ async function loadMaterialFeed(reset) {
     f.items = f.items.concat(data.items.map((e) => ({ type: "material", ...e })));
     f.offset += data.items.length;
     $("xMoreBtn").hidden = !data.has_more;
-    $("xFeed").innerHTML = f.items.map((e) => feedRow(e, { date: true, del: true })).join("")
+    $("xFeed").innerHTML = f.items.map((e) => feedRow(e, { date: true, del: true, credit: true })).join("")
       || `<p class="muted">Hali xom ashyo yozilmagan.</p>`;
   } catch (e) { fail(e); }
 }
@@ -1586,6 +1621,7 @@ async function deleteMaterial(id, after) {
   if (!(await confirmBox("Xom ashyo yozuvi o'chirilsinmi?"))) return;
   try {
     await api(`/api/materials/${id}`, { method: "DELETE" });
+    state.wallet.debts = null; // qarzga olingan bo'lsa — qarzlar ham o'zgaradi
     toast("O'chirildi");
     refreshView();
     if (after) after();
@@ -2944,7 +2980,12 @@ function bind() {
     const s = (state.materials.suppliers || []).find((x) => x.id === Number(b.dataset.supplier));
     if (s) supplierSheet(s);
   };
-  $("xFeed").onclick = (ev) => {
+  $("xFeed").onclick = async (ev) => {
+    const credit = ev.target.closest("[data-credit]");
+    if (credit) {
+      if (await toggleMaterialCredit(credit)) refreshView();
+      return;
+    }
     const btn = ev.target.closest("[data-del-feed]");
     if (btn) deleteMaterial(Number(btn.dataset.delFeed.split(":")[1]));
   };

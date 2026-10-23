@@ -127,6 +127,15 @@ class Alias(Base):
     alias: Mapped[str] = mapped_column(String(100))
 
 
+class DataMigration(Base):
+    """Bir marta bajariladigan ma'lumot o'zgarishlari (db/base.py: _DATA_MIGRATIONS) — bajarilgani shu yerda."""
+
+    __tablename__ = "data_migrations"
+
+    name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

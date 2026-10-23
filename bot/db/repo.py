@@ -1687,6 +1687,11 @@ async def create_material_entry(
     return entry
 
 
+def material_credit_ok(entry: MaterialEntry) -> bool:
+    """Xaridni ta'minotchiga qarz qilish mumkinmi: kimdan olingani va narxi yozilgan bo'lishi kerak."""
+    return bool(entry.supplier and entry.amount is not None)
+
+
 async def get_material_entry(session: AsyncSession, owner_id: int, entry_id: int) -> MaterialEntry | None:
     entry = await session.get(MaterialEntry, entry_id)
     if entry is None or entry.deleted_at is not None or entry.owner_id != owner_id:

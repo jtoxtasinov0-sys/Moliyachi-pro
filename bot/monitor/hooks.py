@@ -235,6 +235,7 @@ _ACTIONS = [
     ("PATCH", r"/api/jobs/\d+", "Kasb nomini o'zgartirdi"),
     ("DELETE", r"/api/jobs/\d+", "Kasbni o'chirdi"),
     ("DELETE", r"/api/materials/\d+", "Xom ashyo yozuvini o'chirdi"),
+    ("POST", r"/api/materials/\d+/credit", "💳 Xom ashyo xaridini qarzga qo'shdi yoki qarzdan chiqardi"),
     ("POST", r"/api/suppliers", "Ta'minotchi qo'shdi"),
     ("POST", r"/api/suppliers/\d+/toggle", "Ta'minotchini yoqdi/o'chirdi"),
     ("POST", r"/api/suppliers/\d+/invite", "Ta'minotchi uchun yangi havola oldi"),
