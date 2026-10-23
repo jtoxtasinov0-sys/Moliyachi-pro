@@ -484,15 +484,20 @@ async def reset_entries(
     session: AsyncSession,
     owner_id: int,
     tables: tuple[type[WorkEntry | WorkerPayment | ClientEntry | MaterialEntry | PersonalEntry], ...],
+    worker_id: int | None = None,
 ) -> int:
     """Bo'lim hisobini 0 qilish: kabinetdagi shu jadvallarning hamma yozuvlari o'chiriladi (deleted_at bilan —
-    bazada qoladi). Mijoz, ishchi, ta'minotchilarning o'zi saqlanadi. Qaytadi: nechta yozuv o'chdi."""
+    bazada qoladi). Mijoz, ishchi, ta'minotchilarning o'zi saqlanadi. worker_id — faqat shu ishchining ish va pul
+    yozuvlari (ishchi oynasidagi tugma). Qaytadi: nechta yozuv o'chdi."""
     now = _now()
     count = 0
     for table in tables:
+        conds = [table.owner_id == owner_id, table.deleted_at.is_(None)]
+        if worker_id is not None:
+            conds.append(table.worker_id == worker_id)
         result = await session.execute(
             update(table)
-            .where(table.owner_id == owner_id, table.deleted_at.is_(None))
+            .where(*conds)
             .values(deleted_at=now)
             .execution_options(synchronize_session=False)
         )

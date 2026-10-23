@@ -1856,7 +1856,9 @@ function workerSheet(w) {
       <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
       <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>
     </div>
-    <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div></div>
+    <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div>
+      <button class="danger" id="wReset">🧹 Hisobini 0 qilish</button>
+    </div>
     <div class="field"><label>🏷 Kasbi</label>
       ${jobPicker("wJobs", w.job && w.job.id)}
       <span class="field-hint">Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi.</span>
@@ -1880,6 +1882,7 @@ function workerSheet(w) {
     if (b.dataset.job === "new") jobSheet(null, (job) => setJob(job.id));
     else setJob(b.dataset.job ? Number(b.dataset.job) : null);
   };
+  $("wReset").onclick = () => resetWorker(w, $("wReset"));
   if ($("wShare")) $("wShare").onclick = () => shareInvite(w.invite_link, `${w.name}, Moliyachi botiga ulanish uchun havolani bosing:`);
   if ($("wCopy")) $("wCopy").onclick = () => copyText(w.invite_link);
   if ($("wInvite")) $("wInvite").onclick = async () => {
@@ -1911,6 +1914,44 @@ function workerSheet(w) {
 function replaceWorker(upd) {
   state.workers = state.workers.map((x) => (x.id === upd.id ? upd : x));
   renderWorkers();
+}
+
+// Ishchi qoldig'i umumiy «Qarzlar»da: musbat — sizning qarzingiz, manfiy (avans) — sizga qarz.
+// 0 qilinganda shu summalar jamidan ayriladi: «sizning qarzingiz −200 000 so'm»
+function workerDebtMinus(amounts) {
+  const mine = {}, theirs = {};
+  for (const [c, v] of Object.entries(amounts || {})) {
+    if (v > 0) mine[c] = v;
+    else if (v < 0) theirs[c] = -v;
+  }
+  const parts = [];
+  if (moneyList(mine)) parts.push(`sizning qarzingiz −${moneyList(mine)}`);
+  if (moneyList(theirs)) parts.push(`sizga qarzlar −${moneyList(theirs)}`);
+  return parts.join(", ");
+}
+
+// Ishchi oynasida «Hisobini 0 qilish»: shu ishchining hamma ish va pul yozuvlari o'chadi, qoldig'i umumiy
+// «Qarzlar»dan ham ayriladi. Ikki marta so'raladi — «Ishchilar hisobini 0 qilish»dagidek
+async function resetWorker(w, btn) {
+  const d = ledger.workerId === w.id && ledger.data;
+  const minus = workerDebtMinus(d ? d.balance.amounts : w.balance && w.balance.amounts);
+  haptic("warning");
+  if (!(await confirmBox(`${w.name} hisobi 0 qilinsinmi? Uning hamma ish va pul yozuvlari (avans, ish haqi) o'chadi, qoldig'i 0 bo'ladi.${minus ? ` Umumiy «Qarzlar»dan ham ayriladi: ${minus}.` : ""} Ishchining o'zi qoladi.`))) return;
+  if (!(await confirmBox(`Rostdan ham? ${w.name} hisobi butunlay 0 bo'ladi — o'chgan yozuvlarni qaytarib bo'lmaydi.`))) return;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/workers/${w.id}/reset`, { method: "POST" });
+    const gone = workerDebtMinus(res.removed);
+    toast(res.count ? `${w.name} hisobi 0 qilindi${gone ? ` · ${gone}` : ""}` : `${w.name} hisobi allaqachon 0`);
+    replaceWorker(res.worker);
+    workerSheet(res.worker);
+    // Umumiy qarzlar va bosh sahifadagi «Qarzlar balansi» ham yangilansin
+    if (state.view === "wallet" && state.wallet.tab === "debts") loadDebts();
+    else if (state.view === "home") loadHomeMoney();
+  } catch (e) {
+    fail(e);
+    btn.disabled = false;
+  }
 }
 
 function addWorkerSheet(name = "", jobId = null) {

@@ -247,6 +247,7 @@ _ACTIONS = [
     ("POST", r"/api/reset/workers", "🧹 Ishchilar hisobini 0 qildi"),
     ("POST", r"/api/reset/materials", "🧹 Xom ashyo hisobini 0 qildi"),
     ("POST", r"/api/reset/personal", "🧹 Xarajatlar hisobini 0 qildi"),
+    ("POST", r"/api/workers/\d+/reset", "🧹 Bitta ishchi hisobini 0 qildi"),
 ]
 OPEN_EVERY = 20 * 60  # ilovani ochish — 20 daqiqada bir marta yoziladi
 VIEW_EVERY = 10 * 60  # bir bo'limni ko'rish — 10 daqiqada bir marta

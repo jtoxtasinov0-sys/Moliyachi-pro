@@ -117,7 +117,10 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 **🧹 Hisobni 0 qilish:** ilovada har bir bo'lim pastida alohida tugma — «Mijozlar hisobini 0 qilish» (hamma
 oldi-berdi, qarzlar 0), «Ishchilar hisobini 0 qilish» (hamma ish va pul yozuvlari, qoldiqlar 0), «Xom ashyo
 hisobini 0 qilish» (hamma xaridlar, qarzga olinganlarining qarzi ham), «Hamyon → Xarajatlar»da «Xarajatlar hisobini 0 qilish» (hamma xarajat va
-daromad yozuvlari; «Qarzlar» qoladi). Ilova ikki marta so'raydi, ikkalasida ham «OK» bosilsa — 0 qilinadi.
+daromad yozuvlari; «Qarzlar» qoladi). Bitta ishchi uchun — ishchi oynasida, «🧾 Hisob-kitob» kartasi pastida
+«🧹 Hisobini 0 qilish»: faqat shu ishchining ish va pul yozuvlari o'chadi, qoldig'i 0 bo'ladi va umumiy «Qarzlar»
+jamidan ham ayriladi (haqqi bo'lsa — «sizning qarzingiz»dan, avans olgan bo'lsa — «sizga qarzlar»dan; so'rovda va
+xabarda qancha ayrilishi ko'rinadi). Ilova ikki marta so'raydi, ikkalasida ham «OK» bosilsa — 0 qilinadi.
 Mijozlar, ishchilar, kasblar, modellar va ta'minotchilar (havolalari bilan) qoladi; yozuvlar bazada o'chirilgan
 belgisi bilan saqlanadi, ilovada qaytarib bo'lmaydi.
 

@@ -1576,6 +1576,24 @@ async def reset_section(request: web.Request, session: AsyncSession, user: User)
     return web.json_response({"ok": True, "count": count})
 
 
+@routes.post(r"/api/workers/{id:\d+}/reset")
+@endpoint(owner_only=True)
+async def reset_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Ishchi oynasidagi tugma: shu ishchining hamma ish va pul yozuvlari o'chadi, qoldig'i 0 — umumiy «Qarzlar»dan
+    ham ayriladi. Ishchining o'zi qoladi. removed — o'chgan qoldiq (musbat — egasining qarzi edi, manfiy — avans)."""
+    worker = await _get_worker(request, session, user)
+    removed = await repo.worker_balance(session, user.id, worker.id)
+    count = await repo.reset_entries(session, user.id, RESET_TABLES["workers"], worker_id=worker.id)
+    return web.json_response(
+        {
+            "ok": True,
+            "count": count,
+            "removed": _money(removed.balance),
+            "worker": await _one_worker_json(request, session, worker),
+        }
+    )
+
+
 # --- Barcha harakatlar: xarajat, daromad, qarz, mijoz, xom ashyo va ish yozuvlari bitta lentada ---
 
 ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work", "pay")
