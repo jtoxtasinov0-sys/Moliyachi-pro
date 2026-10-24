@@ -4,7 +4,6 @@ from decimal import Decimal
 from html import escape
 
 from aiogram import Bot, F, Router
-from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
@@ -53,26 +52,36 @@ LINK_NOTE = (
 
 
 async def _send_link(
-    call: CallbackQuery,
-    bot: Bot,
-    item: User | Supplier | Client,
-    token: str,
-    prefix: str,
-    renewed: bool,
-    relink: CallbackData,
+    call: CallbackQuery, bot: Bot, item: User | Supplier | Client, token: str, prefix: str, revoked: bool = False
 ) -> None:
-    """Kirish havolasi va «🔄 Yangi havola» tugmasi (havola begona qo'lga tushsa — eskisini bekor qilish)."""
+    """Doimiy kirish havolasi: har safar o'sha havola chiqadi. revoked — «🔒 Bu u emas» dan keyingi yangi havola."""
     head = (
-        f"🔄 <b>{escape(item.name)}</b> uchun yangi havola (eskisi endi ishlamaydi):"
-        if renewed
+        f"🔒 <b>{escape(item.name)}</b>: begona akkaunt uzildi, eski havola endi ishlamaydi. Yangi havolani faqat "
+        "o'ziga yuboring:"
+        if revoked
         else f"🔗 <b>{escape(item.name)}</b> uchun kirish havolasi:"
     )
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Yangi havola (eskisi ishlamay qoladi)", callback_data=relink)
-    await call.message.answer(
-        f"{head}\n{await invite_link(bot, token, prefix)}\n\n{LINK_NOTE}", reply_markup=kb.as_markup()
-    )
+    await call.message.answer(f"{head}\n{await invite_link(bot, token, prefix)}\n\n{LINK_NOTE}")
     await call.answer()
+
+
+@router.callback_query(kbs.NotThemCb.filter())
+async def not_them(
+    call: CallbackQuery, callback_data: kbs.NotThemCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    """Doimiy havola bilan boshqa akkauntdan kirildi, egasi «🔒 Bu u emas» ni bosdi: o'sha akkaunt uziladi, havola
+    almashadi. Keyin u yana boshqa akkauntga o'tgan bo'lsa (eski xabardagi tugma) — hech narsa o'zgarmaydi."""
+    getters = {"inv": repo.get_worker, "sup": repo.get_supplier, "cli": repo.get_client}
+    getter = getters.get(callback_data.kind)
+    item = await getter(session, user.id, callback_data.item_id) if getter else None
+    if item is None:
+        await call.answer("Topilmadi.", show_alert=True)
+        return
+    if item.tg_id != callback_data.tg_id:
+        await call.answer("Bu akkaunt allaqachon uzilgan — havola o'zgarmadi.", show_alert=True)
+        return
+    token = await repo.revoke_link(session, item)
+    await _send_link(call, bot, item, token, callback_data.kind, revoked=True)
 
 
 def _status(w: User | Supplier) -> str:
@@ -239,11 +248,7 @@ async def worker_link(
     if not worker.is_active:
         await call.answer("Avval ishchini qayta faollashtiring.", show_alert=True)
         return
-    renew = callback_data.action == "relink"
-    token = await (repo.new_invite_token(session, worker) if renew else repo.invite_token(session, worker))
-    await _send_link(
-        call, bot, worker, token, "inv", renew, kbs.WorkerCb(action="relink", user_id=worker.id)
-    )
+    await _send_link(call, bot, worker, await repo.invite_token(session, worker), "inv")
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "toggle"))
@@ -422,11 +427,7 @@ async def supplier_link(
     if not supplier.is_active:
         await call.answer("Avval ta'minotchini qayta faollashtiring.", show_alert=True)
         return
-    renew = callback_data.action == "relink"
-    token = await (repo.new_supplier_token(session, supplier) if renew else repo.invite_token(session, supplier))
-    await _send_link(
-        call, bot, supplier, token, "sup", renew, kbs.SupplierCb(action="relink", supplier_id=supplier.id)
-    )
+    await _send_link(call, bot, supplier, await repo.invite_token(session, supplier), "sup")
 
 
 @router.callback_query(kbs.SupplierCb.filter(F.action == "toggle"))
@@ -606,9 +607,7 @@ async def client_link(
     if not client.is_active:
         await call.answer("Avval mijozni qayta faollashtiring.", show_alert=True)
         return
-    renew = callback_data.action == "relink"
-    token = await (repo.new_client_token(session, client) if renew else repo.invite_token(session, client))
-    await _send_link(call, bot, client, token, "cli", renew, kbs.ClientCb(action="relink", client_id=client.id))
+    await _send_link(call, bot, client, await repo.invite_token(session, client), "cli")
 
 
 @router.callback_query(kbs.ClientCb.filter(F.action == "toggle"))

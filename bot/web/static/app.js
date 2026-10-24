@@ -1330,7 +1330,9 @@ async function personSheet(key) {
       <div><b>${p.count} ta</b><small>yozuv</small></div>
     </div>
     <div id="personHistory">${SKELETONS}</div>
+    ${p.type === "material" && p.id ? `<div id="personInvite"></div>` : ""}
   `);
+  if ($("personInvite")) supplierInvite(p.id, $("personInvite"));
   try {
     const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
     $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
@@ -1670,6 +1672,26 @@ function replaceSupplier(upd) {
   renderSuppliers();
 }
 
+function supplierShareText(s) {
+  return `${s.name}, sizdan olingan xom ashyo haqida xabar olish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`;
+}
+
+// Qarzlardagi ta'minotchi: ismini bosganda ham kirish havolasi chiqadi — o'sha yerdan yuboriladi
+async function supplierInvite(id, box) {
+  try {
+    if (!(state.materials.suppliers || []).some((x) => x.id === id)) {
+      state.materials.suppliers = (await api("/api/suppliers")).items;
+    }
+    const s = state.materials.suppliers.find((x) => x.id === id);
+    if (!s || !box.isConnected) return;
+    box.innerHTML = inviteHtml(s, "Ta'minotchi");
+    bindInvite(s, supplierShareText(s), async () => {
+      replaceSupplier(await api(`/api/suppliers/${s.id}/invite`, { method: "POST" }));
+      supplierInvite(id, box);
+    });
+  } catch (e) { fail(e); }
+}
+
 async function supplierSheet(s) {
   const invite = inviteHtml(s, "Ta'minotchi");
   const status = !s.is_active ? "⛔ O'chirilgan — undan olinganda xabar bormaydi."
@@ -1686,7 +1708,7 @@ async function supplierSheet(s) {
     ${invite}
     <button class="${s.is_active ? "danger" : "secondary"}" id="sToggle">${s.is_active ? "⛔ O'chirish (xabar bormaydi)" : "✅ Qayta faollashtirish"}</button>
   `);
-  bindInvite(s, `${s.name}, sizdan olingan xom ashyo haqida xabar olish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`, async () => {
+  bindInvite(s, supplierShareText(s), async () => {
     const upd = await api(`/api/suppliers/${s.id}/invite`, { method: "POST" });
     replaceSupplier(upd);
     supplierSheet(upd);
@@ -1828,26 +1850,26 @@ async function copyText(text) {
   }
 }
 
-// Ishchi, mijoz, ta'minotchi: kirish havolasi doimiy — ulangandan keyin ham ko'rinadi. Chatni o'chirsa yoki
-// telefonini almashtirsa ham shu havola bilan qayta kiradi. who — «Ishchi», «Mijoz», «Ta'minotchi»
+// Ishchi, mijoz, ta'minotchi: kirish havolasi doimiy — ulangandan keyin ham ko'rinadi va almashtirilmaydi (yuborilgan
+// havola eskirmaydi). Chatni o'chirsa yoki telefonini almashtirsa ham shu havola bilan qayta kiradi.
+// who — «Ishchi», «Mijoz», «Ta'minotchi»
 function inviteHtml(item, who) {
-  if (!item.invite_link) return item.is_active ? `<button class="primary" id="invRenew">🔗 Kirish havolasi</button>` : "";
+  if (!item.invite_link) return item.is_active ? `<button class="primary" id="invGet">🔗 Kirish havolasi</button>` : "";
   const note = item.linked
     ? "Botga ulangan. Chatdan chiqib ketsa yoki telefonini almashtirsa — shu havolani qayta yuboring."
     : `${who} bosganda botga ulanadi.`;
-  return `<div class="field"><label>Kirish havolasi (doimiy)</label><div class="link-box">${esc(item.invite_link)}</div>
+  return `<div class="field"><label>Kirish havolasi (doimiy, eskirmaydi)</label><div class="link-box">${esc(item.invite_link)}</div>
       <span class="field-hint">${note}</span></div>
     <button class="primary" id="invShare">📤 ${who}ga yuborish</button>
-    <button class="secondary" id="invCopy">Nusxalash</button>
-    <button class="secondary" id="invRenew">🔄 Yangi havola (eskisi ishlamay qoladi)</button>`;
+    <button class="secondary" id="invCopy">Nusxalash</button>`;
 }
 
-function bindInvite(item, shareText, renew) {
+// load — havola hali ko'rinmagan bo'lsa, «🔗 Kirish havolasi» bosilganda uni olib keladi
+function bindInvite(item, shareText, load) {
   if ($("invShare")) $("invShare").onclick = () => shareInvite(item.invite_link, shareText);
   if ($("invCopy")) $("invCopy").onclick = () => copyText(item.invite_link);
-  if ($("invRenew")) $("invRenew").onclick = async () => {
-    if (item.invite_link && !(await confirmBox("Yangi havola yaratilsinmi? Eski havola ishlamay qoladi, ulangan odam esa botdan chiqmaydi."))) return;
-    try { await renew(); } catch (e) { fail(e); }
+  if ($("invGet")) $("invGet").onclick = async () => {
+    try { await load(); } catch (e) { fail(e); }
   };
 }
 

@@ -123,6 +123,7 @@ class SettingsCb(CallbackData, prefix="s"):
     value: str = ""
 
 
+# link — doimiy kirish havolasi; relink — eski xabarlardagi «🔄 Yangi havola» tugmasi, endi link bilan bir xil
 class WorkerCb(CallbackData, prefix="wk"):
     action: str  # list | open | add | link | relink | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger
     user_id: int = 0
@@ -139,6 +140,21 @@ class ClientCb(CallbackData, prefix="cl"):
 
     action: str  # list | open | add | link | relink | toggle
     client_id: int = 0
+
+
+class NotThemCb(CallbackData, prefix="nt"):
+    """Egasi: doimiy havola bilan boshqa akkauntdan kirilganda «🔒 Bu u emas» — o'sha akkaunt (tg_id) uziladi,
+    havola almashadi. kind — havola prefiksi: inv (ishchi), sup (ta'minotchi), cli (mijoz)."""
+
+    kind: str
+    item_id: int
+    tg_id: int
+
+
+def not_them_kb(kind: str, item_id: int, tg_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔒 Bu u emas — uzish", callback_data=NotThemCb(kind=kind, item_id=item_id, tg_id=tg_id))
+    return kb.as_markup()
 
 
 class MyClientCb(CallbackData, prefix="mc"):

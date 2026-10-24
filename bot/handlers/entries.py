@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import drafts, pdf_report
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import EntryStatus, PayKind, User, WorkEntry, WorkerPayment
+from bot.db.models import Client, EntryStatus, PayKind, Supplier, User, WorkEntry, WorkerPayment
 from bot.middlewares import IsOwner, Registered
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
 
@@ -111,18 +111,53 @@ async def notify_owner(
 
 
 async def notify_owner_linked(
-    bot: Bot, session: AsyncSession, owner_id: int, name: str, previous: int | None, tg_id: int, first_text: str
+    bot: Bot,
+    session: AsyncSession,
+    item: User | Client | Supplier,
+    kind: str,
+    previous: int | None,
+    tg_id: int,
+    first_text: str,
 ) -> None:
     """Doimiy havola bosilganda egaga xabar: birinchi marta ulansa — first_text, boshqa Telegram akkauntdan
-    kirsa — ogohlantirish, o'sha odamning o'zi qayta kirsa — xabar yo'q."""
+    kirsa — ogohlantirish va «🔒 Bu u emas» tugmasi, o'sha odamning o'zi qayta kirsa — xabar yo'q.
+    kind — havola prefiksi: inv, sup, cli."""
     if previous == tg_id:
         return
+    markup = None
     if previous is not None:
         first_text = (
-            f"🔁 {escape(name)} boshqa Telegram akkauntdan qayta kirdi — eski akkauntiga endi xabar bormaydi.\n"
-            "Agar bu u bo'lmasa: uning kartasida «🔄 Yangi havola» ni bosing — eski havola ishlamay qoladi."
+            f"🔁 {escape(item.name)} boshqa Telegram akkauntdan qayta kirdi — eski akkauntiga endi xabar bormaydi.\n"
+            "Agar bu u bo'lmasa — «🔒 Bu u emas» ni bosing: bu akkaunt uziladi va havola almashadi."
         )
-    await notify_owner(bot, session, owner_id, first_text)
+        markup = kbs.not_them_kb(kind, item.id, tg_id)
+    await notify_owner(bot, session, item.owner_id, first_text, markup=markup)
+
+
+STALE_LINK = (
+    "Bu havola eski — endi ishlamaydi. Havolani yuborgan odamdan ilovada ismingizni bosib, kirish havolasini qayta "
+    "yuborishini so'rang (yangi havola doimiy, eskirmaydi)."
+)
+
+
+async def refuse_link(
+    message: Message, session: AsyncSession, model: type[User] | type[Client] | type[Supplier], token: str
+) -> None:
+    """Havola bilan kirib bo'lmadi. Havola egasi o'chirilgan (⛔) bo'lsa — unga ham, egaga ham nima qilish kerakligi
+    aytiladi; topilmasa — bu doimiy havoladan oldingi, bekor qilingan havola."""
+    item = await repo.by_invite_token(session, model, token)
+    if item is None or item.is_active:
+        await message.answer(STALE_LINK)
+        return
+    await message.answer(
+        "⛔ Siz ro'yxatda o'chirilgansiz. Havolani yuborgan odamga ayting — sizni qayta faollashtirsa, shu havola "
+        "bilan kirasiz."
+    )
+    await notify_owner(
+        message.bot, session, item.owner_id,
+        f"⛔ <b>{escape(item.name)}</b> havola bilan botga kirmoqchi bo'ldi, lekin u o'chirilgan. Kirishi uchun ismini "
+        "bosib «✅ Qayta faollashtirish» ni bosing — keyin o'sha havola ishlaydi.",
+    )
 
 
 async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry) -> None:
