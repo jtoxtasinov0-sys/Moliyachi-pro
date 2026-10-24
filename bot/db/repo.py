@@ -180,31 +180,51 @@ async def get_worker(session: AsyncSession, owner_id: int, worker_id: int) -> Us
     return user
 
 
-async def new_invite_token(session: AsyncSession, user: User) -> str:
-    """Yangi havola — eskisi ishlamay qoladi (havola begona qo'lga tushsa)."""
-    user.invite_token = secrets.token_urlsafe(12)
-    await session.flush()
-    return user.invite_token
-
-
 async def invite_token(session: AsyncSession, item: User | Client | Supplier) -> str:
-    """Ishchi, mijoz yoki ta'minotchining doimiy kirish havolasi. Havola ulangandan keyin ham ishlaydi — undan
-    istalgan vaqt qayta kiriladi. Avval ulanganlarda token o'chirilgan bo'ladi — o'shanda yangisi yaratiladi."""
+    """Ishchi, mijoz yoki ta'minotchining doimiy kirish havolasi: bir marta yaratiladi va o'zgarmaydi (eskirmaydi) —
+    ulangandan keyin ham ishlaydi, undan istalgan vaqt qayta kiriladi. Avval ulanganlarda token o'chirilgan bo'ladi —
+    o'shanda yaratiladi; bir vaqtda kelgan so'rovlar ham bitta tokenni oladi (biri boshqasinikini almashtirmaydi)."""
     if not item.invite_token:
-        item.invite_token = secrets.token_urlsafe(12)
-        await session.flush()
+        model = type(item)
+        await session.execute(
+            update(model)
+            .where(model.id == item.id, model.invite_token.is_(None))
+            .values(invite_token=secrets.token_urlsafe(12))
+            .execution_options(synchronize_session=False)
+        )
+        await session.refresh(item, ["invite_token"])
     return item.invite_token
+
+
+async def revoke_link(session: AsyncSession, item: User | Client | Supplier) -> str:
+    """Havola begona qo'lga tushganda (egasi «🔒 Bu u emas» ni bosganda): yangi token — eskisi ishlamay qoladi va
+    hozir ulangan Telegram akkaunt uziladi. Boshqa hech qayerda havola o'zgarmaydi."""
+    item.invite_token = secrets.token_urlsafe(12)
+    item.tg_id = None
+    await session.flush()
+    return item.invite_token
+
+
+async def by_invite_token(
+    session: AsyncSession, model: type[User] | type[Client] | type[Supplier], token: str
+) -> User | Client | Supplier | None:
+    """Havoladagi token egasi — o'chirilgan bo'lsa ham."""
+    return await session.scalar(select(model).where(model.invite_token == token))
 
 
 async def link_invite(session: AsyncSession, token: str, tg_id: int) -> tuple[User, int | None] | None:
     """(ishchi, avval ulangan Telegram ID). Havola doimiy: ishchi undan istalgan vaqt qayta kira oladi."""
-    user = await session.scalar(select(User).where(User.invite_token == token))
+    user = await by_invite_token(session, User, token)
     if user is None or not user.is_active:
         return None
-    # Bitta Telegram akkaunt faqat bitta ishchiga bog'lanadi
+    # Bitta Telegram akkaunt faqat bitta ishchiga bog'lanadi. Avval o'chirilgan ishchiga ulangan bo'lsa (masalan,
+    # qayta ishga olinib, yangi ishchi qilib qo'shilgan) — o'shandan ajratiladi
     existing = await get_user_by_tg(session, tg_id)
     if existing and existing.id != user.id:
-        return None
+        if existing.is_active or existing.role != Role.WORKER:
+            return None
+        existing.tg_id = None
+        await session.flush()
     previous, user.tg_id = user.tg_id, tg_id
     await session.flush()
     return user, previous
@@ -1253,7 +1273,7 @@ class DebtBalance:
     # Umumiy qarzlardagi bo'limi (DEBT_SOURCES): debt — odamlar bilan qarz, material — ta'minotchi (qarzga xom ashyo
     # olingan yoki ro'yxatdagi ta'minotchi), worker — ishchi, client — mijoz
     source: str = "debt"
-    ref_id: int | None = None  # ishchi yoki mijoz id si
+    ref_id: int | None = None  # ishchi, mijoz yoki ro'yxatdagi ta'minotchi id si
 
     @property
     def settled(self) -> bool:
@@ -1369,12 +1389,13 @@ async def _worker_last_dates(session: AsyncSession, owner_id: int) -> dict[int, 
 
 async def _debts_with_suppliers(session: AsyncSession, owner_id: int) -> list[DebtBalance]:
     """debt_balances, ta'minotchilar bilan qarzlar «material» bo'limida: qarzga xom ashyo olingan yoki ismi
-    ro'yxatdagi ta'minotchiniki."""
+    ro'yxatdagi ta'minotchiniki. Ro'yxatdagi ta'minotchining id si ham beriladi (ismini bosganda — kirish havolasi)."""
     rows = await debt_balances(session, owner_id)
-    suppliers = {person_key(s.name) for s in await list_suppliers(session, owner_id, active_only=False)}
+    suppliers = {person_key(s.name): s.id for s in await list_suppliers(session, owner_id, active_only=False)}
     for b in rows:
         if b.materials or b.key in suppliers:
             b.source = "material"
+            b.ref_id = suppliers.get(b.key)
     return rows
 
 
@@ -1493,15 +1514,9 @@ async def get_or_create_client(session: AsyncSession, owner_id: int, name: str) 
     return client, False
 
 
-async def new_client_token(session: AsyncSession, client: Client) -> str:
-    client.invite_token = secrets.token_urlsafe(12)
-    await session.flush()
-    return client.invite_token
-
-
 async def link_client(session: AsyncSession, token: str, tg_id: int) -> tuple[Client, int | None] | None:
     """(mijoz, avval ulangan Telegram ID). Havola doimiy: mijoz undan istalgan vaqt qayta kira oladi."""
-    client = await session.scalar(select(Client).where(Client.invite_token == token))
+    client = await by_invite_token(session, Client, token)
     if client is None or not client.is_active:
         return None
     # Bir egada bitta Telegram akkaunt — bitta mijoz: avval boshqa mijozga ulangan bo'lsa, o'shasidan ajratiladi
@@ -1871,15 +1886,9 @@ async def create_supplier(session: AsyncSession, owner_id: int, name: str) -> Su
     return supplier
 
 
-async def new_supplier_token(session: AsyncSession, supplier: Supplier) -> str:
-    supplier.invite_token = secrets.token_urlsafe(12)
-    await session.flush()
-    return supplier.invite_token
-
-
 async def link_supplier(session: AsyncSession, token: str, tg_id: int) -> tuple[Supplier, int | None] | None:
     """(ta'minotchi, avval ulangan Telegram ID). Havola doimiy: undan istalgan vaqt qayta kiriladi."""
-    supplier = await session.scalar(select(Supplier).where(Supplier.invite_token == token))
+    supplier = await by_invite_token(session, Supplier, token)
     if supplier is None or not supplier.is_active:
         return None
     previous, supplier.tg_id = supplier.tg_id, tg_id

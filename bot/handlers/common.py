@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
-from bot.db.models import User
-from bot.handlers.entries import notify_owner_linked
+from bot.db.models import Supplier, User
+from bot.handlers.entries import notify_owner_linked, refuse_link
 from bot.middlewares import Guest, Registered
 from bot.web.auth import WEB_TOKEN_DAYS, make_web_token
 
@@ -104,9 +104,10 @@ Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("sup_")))
 async def start_supplier(message: Message, command: CommandObject, session: AsyncSession, user: User | None) -> None:
     """Ta'minotchining taklif havolasi. Ishchi yoki ega ham bosishi mumkin — u holda menyusi o'zgarmaydi."""
-    linked = await repo.link_supplier(session, command.args.removeprefix("sup_"), message.from_user.id)
+    token = command.args.removeprefix("sup_")
+    linked = await repo.link_supplier(session, token, message.from_user.id)
     if linked is None:
-        await message.answer("Bu havola eskirgan yoki o'chirilgan. Yangisini so'rang.")
+        await refuse_link(message, session, Supplier, token)
         return
     supplier, previous = linked
     owner = await session.get(User, supplier.owner_id)
@@ -118,7 +119,7 @@ async def start_supplier(message: Message, command: CommandObject, session: Asyn
         reply_markup=kbs.main_menu(user) if registered else ReplyKeyboardRemove(),
     )
     await notify_owner_linked(
-        message.bot, session, supplier.owner_id, supplier.name, previous, message.from_user.id,
+        message.bot, session, supplier, "sup", previous, message.from_user.id,
         f"🏪 {escape(supplier.name)} botga ulandi — undan xom ashyo olganingizda unga xabar boradi.",
     )
 
@@ -129,9 +130,10 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
     if not args.startswith("inv_"):
         await message.answer("Havola noto'g'ri.")
         return
-    linked = await repo.link_invite(session, args.removeprefix("inv_"), message.from_user.id)
+    token = args.removeprefix("inv_")
+    linked = await repo.link_invite(session, token, message.from_user.id)
     if linked is None:
-        await message.answer("Bu havola eskirgan yoki o'chirilgan. Boshlig'ingizdan yangisini so'rang.")
+        await refuse_link(message, session, User, token)
         return
     user, previous = linked
     await message.answer(
@@ -139,7 +141,7 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
         reply_markup=kbs.main_menu(user),
     )
     await notify_owner_linked(
-        message.bot, session, user.owner_id, user.name, previous, message.from_user.id,
+        message.bot, session, user, "inv", previous, message.from_user.id,
         f"👷 {escape(user.name)} botga ulandi.",
     )
 

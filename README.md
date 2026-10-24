@@ -116,8 +116,11 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 
 **🔗 Kirish havolasi — doimiy (ishchi, ta'minotchi, mijoz):** ismini bosing (ilovada — oyna, botda — karta →
 «🔗 Kirish havolasi») — havola har doim chiqadi, ulangandan keyin ham. U chatni o'chirib yuborsa, telefonini yoki
-Telegram akkauntini almashtirsa ham shu havola bilan qayta kiradi. Boshqa akkauntdan kirsa — egasiga xabar keladi
-(eski akkauntga endi xabar bormaydi). Havola begona qo'lga tushsa — «🔄 Yangi havola»: eskisi ishlamay qoladi.
+Telegram akkauntini almashtirsa ham shu havola bilan qayta kiradi. Havola hech qachon o'zi almashmaydi va eskirmaydi —
+qachon yuborilgan bo'lsa ham ishlaydi. Qarzlar bo'limida ta'minotchi ismini bosganda ham havola chiqadi. Boshqa
+akkauntdan kirsa — egasiga xabar keladi (eski akkauntga endi xabar bormaydi); bu u bo'lmasa — xabardagi
+«🔒 Bu u emas»: o'sha akkaunt uziladi va havola almashadi. O'chirilgan (⛔) odam havolani bossa — egasiga
+«qayta faollashtiring» degan xabar boradi.
 
 **📄 PDF hisobot:** har kim o'z hisobotini fayl qilib telefoniga saqlab oladi — ilova yopilsa ham, internet
 bo'lmasa ham ochiladi. Ilovada yuqoridagi 📄 tugma → davr (bugun / shu hafta / shu oy / o'tgan oy / shu yil / hammasi — boshidan bugungacha) →

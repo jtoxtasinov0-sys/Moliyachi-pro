@@ -698,8 +698,8 @@ async def reinvite_worker(request: web.Request, session: AsyncSession, user: Use
     worker = await _get_worker(request, session, user)
     if not worker.is_active:
         raise ApiError(400, "Avval ishchini faollashtiring")
-    # Yangi havola: eskisi ishlamay qoladi, avvalgi Telegram bog'lanishi esa saqlanadi
-    await repo.new_invite_token(session, worker)
+    # Havola doimiy: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)
+    await repo.invite_token(session, worker)
     return web.json_response(await _one_worker_json(request, session, worker))
 
 
@@ -1228,13 +1228,13 @@ async def update_client(request: web.Request, session: AsyncSession, user: User)
 @routes.post(r"/api/clients/{id:\d+}/invite")
 @endpoint(owner_only=True)
 async def reinvite_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Yangi havola: eskisi ishlamay qoladi (begona qo'lga tushsa), avvalgi Telegram bog'lanishi saqlanadi."""
+    """Doimiy kirish havolasi: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)."""
     client = await repo.get_client(session, user.id, int(request.match_info["id"]))
     if client is None:
         raise ApiError(404, "Mijoz topilmadi")
     if not client.is_active:
         raise ApiError(400, "Avval mijozni faollashtiring")
-    token = await repo.new_client_token(session, client)
+    token = await repo.invite_token(session, client)
     bot_me = await request.app["bot"].me()
     return web.json_response({"invite_link": f"https://t.me/{bot_me.username}?start=cli_{token}"})
 
@@ -1455,8 +1455,8 @@ async def reinvite_supplier(request: web.Request, session: AsyncSession, user: U
     supplier = await _get_supplier(request, session, user)
     if not supplier.is_active:
         raise ApiError(400, "Avval ta'minotchini faollashtiring")
-    # Yangi havola: eskisi ishlamay qoladi, avvalgi Telegram bog'lanishi esa saqlanadi
-    await repo.new_supplier_token(session, supplier)
+    # Havola doimiy: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)
+    await repo.invite_token(session, supplier)
     return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
 
 
