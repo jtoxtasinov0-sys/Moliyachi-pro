@@ -141,10 +141,19 @@ def _understood(user: User, ext: llm.Extraction) -> bool:
     return special or (ext.section in ("work", "pay") and bool(ext.work or ext.pays))
 
 
+async def _supplier_names(session: AsyncSession, acc: int) -> list[tuple[int, str]]:
+    """Ta'minotchilar: ro'yxatdagilari va ro'yxatda yo'q, lekin qarzga xom ashyo olingan odamlar (manfiy id)."""
+    names = [(s.id, s.name) for s in await repo.list_suppliers(session, acc, active_only=False)]
+    names += [(-i, b.person) for i, b in enumerate(await repo.debt_balances(session, acc), 1) if b.materials]
+    return names
+
+
 async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction) -> None:
     """Qarz deb ajratilgan odam aslida ishchi yoki mijoz bo'lsa (ovozda ism buzilib, Claude tanimay qolgan:
-    «Rabiyaga 500 ming berdim») — ishchi bilan hisob-kitobga yoki mijoz to'loviga o'tkaziladi. Faqat hamma
-    odamlar bitta turga aniq mos kelsa; aks holda qarz bo'lib qoladi."""
+    «Rabiyaga 500 ming berdim») — ishchi bilan hisob-kitobga yoki mijoz hisobiga o'tkaziladi. Mijozning qarzi
+    «Qarzlar»da alohida qolib ketmasin («Xayrulloda 8 million haqqim bor» — mijoz kartasida ham shu qarz):
+    undan olingan pul — to'lov, unga berilgani va «haqqim bor» — 💳 qarz. Faqat hamma odamlar bitta turga aniq
+    mos kelsa; ism ta'minotchiniki ham bo'lsa yoki boshqacha bo'lsa — qarz bo'lib qoladi."""
     if not user.is_owner or ext.section not in ("personal", "debt") or ext.personal or not ext.debt:
         return
     acc = user.account_id
@@ -154,6 +163,7 @@ async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction)
         return
     worker_aliases = await repo.get_aliases(session, acc, "worker")
     client_aliases = await repo.get_aliases(session, acc, "client")
+    suppliers = await _supplier_names(session, acc) if clients else []
     found: list[tuple[str, str]] = []
     for d in ext.debt:
         if not d.person or d.direction not in (DebtDirection.IN, DebtDirection.OUT):
@@ -162,7 +172,7 @@ async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction)
         client_id = matcher.match(d.person, clients, client_aliases).exact_id
         if worker_id is not None and client_id is None:
             found.append(("worker", dict(workers)[worker_id]))
-        elif client_id is not None and worker_id is None and d.direction == DebtDirection.IN and not d.stated:
+        elif client_id is not None and worker_id is None and matcher.match(d.person, suppliers).exact_id is None:
             found.append(("client", dict(clients)[client_id]))
         else:
             return
@@ -185,13 +195,17 @@ async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction)
         ]
         ext.section = "pay"
     else:
-        ext.client = [
-            llm.ClientItem(
-                client_name=name, kind=ClientKind.PAYMENT, product=None, sets=None, pieces=None,
-                price_per_set=None, price_per_piece=None, total=d.amount, currency=d.currency, note=d.note,
+        ext.client = []
+        for d, (_, name) in zip(ext.debt, found):
+            took = d.direction == DebtDirection.IN
+            ext.client.append(
+                llm.ClientItem(
+                    client_name=name, kind=ClientKind.PAYMENT if took else ClientKind.DEBT, product=None,
+                    sets=None, pieces=None, price_per_set=None, price_per_piece=None, total=d.amount,
+                    currency=d.currency,
+                    note=d.note or ("qarz holati: siz unga qarzdorsiz" if took and d.stated else None),
+                )
             )
-            for d, (_, name) in zip(ext.debt, found)
-        ]
         ext.section = "client"
     ext.debt = []
 
@@ -861,7 +875,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
 async def _save_client(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
     """Mijoz bilan oldi-berdi. Botga ulangan mijozga xabar boradi; yangi mijoz bo'lsa — uning taklif havolasi."""
     from bot.handlers.admin import invite_link
-    from bot.handlers.money import client_balance_line, client_text
+    from bot.handlers.money import client_balance_line, client_outside_text, client_text
 
     entry_date = date.fromisoformat(draft["date"])
     entries = []
@@ -896,6 +910,10 @@ async def _save_client(session: AsyncSession, bot: Bot, user: User, draft: dict)
     clients = list({e.client_id: e.client for e in entries}.values())
     balance = [await client_balance_line(session, user.id, client) for client in clients]
     header += "\n\n" + "\n".join(balance)
+    # Mijozning eski qarzi «Qarzlar»da alohida turgan bo'lsa — qoldig'i kam ko'rinmasin, darhol aytiladi
+    for client in clients:
+        if outside := await repo.client_outside_debts(session, user.id, client):
+            header += "\n\n" + client_outside_text(client, outside)
     notified = await _notify_clients(bot, session, user, entries)
     if notified:
         header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
@@ -967,6 +985,12 @@ async def analyze_for_client(session: AsyncSession, links: list[Client], text: s
     if not drafts.is_client(ext):
         hint = ext.question or "Tushunmadim. Masalan: «10 komplekt oldim», «2 million berdim», «3 komplekt qaytardim»."
         raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
+    if any(c.kind == ClientKind.DEBT for c in ext.client):
+        # Qarz holatini faqat korxona yozadi: mijoz «qarzim 5 million» desa — qoldig'iga qo'shilib ketmasin
+        raise IntakeError(
+            f"{said}\n\n🤔 Qarzingizni korxona yozadi — «🧾 Hisob-kitob»da ko'rasiz. Siz mol olsangiz, pul "
+            "to'lasangiz yoki mol qaytarsangiz yozing: «10 komplekt oldim», «2 million berdim»."
+        )
     raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
     currency = (await repo.enabled_currencies(session, ctx.owner_id))[0]
     new = drafts.from_extraction(ext, raw, default_currency=currency, set_size=set_size)

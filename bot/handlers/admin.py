@@ -15,8 +15,15 @@ from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import Client, ItemModel, Supplier, User
-from bot.handlers.entries import ledger_text, tracked
-from bot.handlers.money import client_balance_text, client_ledger_blocks, supplier_month_line
+from bot.handlers.entries import ledger_text, notify_user, tracked
+from bot.handlers.money import (
+    client_balance_text,
+    client_ledger_blocks,
+    client_outside_text,
+    merge_client_debts,
+    signed_totals,
+    supplier_month_line,
+)
 from bot.middlewares import IsOwner
 from bot.reminders import PAY_REMINDER_HOUR
 from bot.services.utils import CURRENCY_LABELS, fmt_money, fmt_totals, parse_price, today
@@ -504,7 +511,13 @@ async def _clients_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
 async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple[str, InlineKeyboardMarkup]:
     balance = await repo.client_balance(session, client.owner_id, client.id)
     blocks, more = await client_ledger_blocks(session, client, client_side=False)
+    outside = await repo.client_outside_debts(session, client.owner_id, client)
     kb = InlineKeyboardBuilder()
+    if outside:
+        kb.button(
+            text="➕ «Qarzlar»dagini mijoz hisobiga qo'shish",
+            callback_data=kbs.ClientCb(action="merge", client_id=client.id),
+        )
     if client.is_active:
         kb.button(text="🔗 Kirish havolasi", callback_data=kbs.ClientCb(action="link", client_id=client.id))
     kb.button(
@@ -519,6 +532,8 @@ async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple
     if client.phone:
         head += f"\n📞 {escape(client.phone)}"
     parts = [head, f"Holati: {_client_status(client)}\n{client_balance_text(client.name, balance)}"]
+    if outside:
+        parts.append(client_outside_text(client, outside, hint=False))
     if blocks:
         parts.append("🕘 <b>Oldi-berdi</b>" + ("\n<i>… oldingilari — ilovada</i>" if more else ""))
         parts.extend(blocks)
@@ -608,6 +623,33 @@ async def client_link(
         await call.answer("Avval mijozni qayta faollashtiring.", show_alert=True)
         return
     await _send_link(call, bot, client, await repo.invite_token(session, client), "cli")
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action.in_({"merge", "merge_yes"})))
+async def client_merge(
+    call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    """«Qarzlar»da qolib ketgan qarzi mijoz hisobiga: avval so'raladi, «Ha» bosilsa — qo'shiladi."""
+    client = await _get_client(call, session, user, callback_data.client_id)
+    if client is None:
+        return
+    if callback_data.action == "merge":
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Ha, qo'shilsin", callback_data=kbs.ClientCb(action="merge_yes", client_id=client.id))
+        kb.button(text="↩️ Yo'q", callback_data=kbs.ClientCb(action="open", client_id=client.id))
+        kb.adjust(1)
+        await call.message.edit_reply_markup(reply_markup=kb.as_markup())
+        await call.answer(f"«Qarzlar»dagi qarzi {client.name} hisobiga qo'shilsinmi?", show_alert=True)
+        return
+    merged = await merge_client_debts(session, user, client)
+    if merged.notice:
+        await notify_user(bot, *merged.notice)
+    text, kb = await _client_card(bot, session, client)
+    await call.message.edit_text(text, reply_markup=kb)
+    if merged.entries:
+        await call.answer(f"Qo'shildi: {signed_totals(merged.added)}", show_alert=True)
+    else:
+        await call.answer("«Qarzlar»da qo'shiladigan qarz qolmagan.")
 
 
 @router.callback_query(kbs.ClientCb.filter(F.action == "toggle"))

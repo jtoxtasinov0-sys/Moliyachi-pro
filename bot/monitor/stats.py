@@ -180,7 +180,9 @@ def _when(e) -> str:
     return f"{local(e.created_at):%d.%m %H:%M}{deleted}"
 
 
-CLIENT_KINDS = {ClientKind.SALE: "mol berildi", ClientKind.PAYMENT: "to'lov", ClientKind.RETURN: "qaytardi"}
+CLIENT_KINDS = {
+    ClientKind.SALE: "mol berildi", ClientKind.PAYMENT: "to'lov", ClientKind.RETURN: "qaytardi", ClientKind.DEBT: "qarz",
+}
 
 
 async def recent_entries(session: AsyncSession, user: User, limit: int = 12) -> list[tuple[datetime, str]]:

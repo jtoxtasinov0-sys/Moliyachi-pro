@@ -1,6 +1,7 @@
 """Egasining hamyoni, mijozlari va xom ashyosi: xarajat/daromad hisoboti, qarzlar, mijozlar bilan oldi-berdi,
 xom ashyo xaridlari."""
 from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
 from html import escape
 
@@ -12,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import (
+    CLIENT_MONEY,
     Client,
     ClientEntry,
-    ClientKind,
     DebtEntry,
     MaterialEntry,
     PersonalEntry,
@@ -53,9 +54,9 @@ def debt_text(e: DebtEntry) -> str:
 
 
 def _client_body(e: ClientEntry) -> str:
-    """«Maksima — 10 komplekt (50 dona) × 140 000 so'm = <b>1 400 000 so'm</b>», to'lovda — faqat summa."""
+    """«Maksima — 10 komplekt (50 dona) × 140 000 so'm = <b>1 400 000 so'm</b>», to'lov va qarzda — faqat summa."""
     text = ""
-    if e.kind != ClientKind.PAYMENT:
+    if e.kind not in CLIENT_MONEY:
         if e.product:
             text += f"{escape(e.product)} — "
         text += qty_text(e.sets, e.pieces)
@@ -183,6 +184,52 @@ async def client_deleted_message(
     return client.tg_id, text
 
 
+async def client_restored_message(
+    session: AsyncSession, owner: User, entry: ClientEntry
+) -> tuple[int, str] | None:
+    """Egasi o'chirilgan yozuvni qaytardi — ulangan mijozga xabar: (chat, matn)."""
+    client = entry.client
+    if not client.is_active or not client.tg_id:
+        return None
+    balance = await repo.client_balance(session, owner.id, client.id)
+    text = (
+        f"↩️ <b>{escape(owner.name)}</b> o'chirilgan yozuvni qaytardi:\n\n{client_side_text(entry)}\n\n"
+        + client_side_balance(balance)
+    )
+    return client.tg_id, text
+
+
+def signed_totals(totals: dict[str, Decimal]) -> str:
+    """{'UZS': 8010000, 'USD': -5} -> «+8 010 000 so'm, −5 $»."""
+    return ", ".join(("+" if v > 0 else "−") + fmt_money(abs(v), c) for c, v in totals.items() if v) or "0"
+
+
+@dataclass
+class MergedDebts:
+    entries: list[ClientEntry]  # mijoz hisobiga o'tgan yozuvlar
+    added: dict[str, Decimal]  # qoldiq qanchaga o'zgardi: musbat — mijoz qarzi ko'paydi
+    balance: dict[str, Decimal]  # mijozning yangi qoldig'i
+    notice: tuple[int, str] | None  # ulangan mijozga xabar: (chat, matn)
+
+
+async def merge_client_debts(session: AsyncSession, owner: User, client: Client) -> MergedDebts:
+    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi (umumiy qarzlar jami o'zgarmaydi)."""
+    before = await repo.client_balance(session, owner.id, client.id)
+    rows = await repo.client_outside_debts(session, owner.id, client)
+    moved = await repo.move_debts_to_client(session, owner.id, client, [b.key for b in rows])
+    balance = await repo.client_balance(session, owner.id, client.id)
+    added = {c: balance.get(c, Decimal(0)) - before.get(c, Decimal(0)) for c in {*before, *balance}}
+    added = {c: v for c, v in added.items() if v}
+    notice = None
+    if moved and client.is_active and client.tg_id:
+        text = (
+            f"🛍 <b>{escape(owner.name)}</b> avval alohida yozilgan eski hisobni qo'shdi: "
+            f"<b>{signed_totals(added)}</b>\n\n{client_side_balance(balance)}"
+        )
+        notice = (client.tg_id, text)
+    return MergedDebts(moved, added, balance, notice)
+
+
 def material_text(e: MaterialEntry, supplier: bool = True) -> str:
     """«🧱 <b>Teri</b> «Shirin gul» — 1 list = 10 000 000 so'm\n🏪 Alisher\n📅 18.10.2026».
     supplier=False — ta'minotchining o'ziga: kimdan olingani ko'rsatilmaydi."""
@@ -247,6 +294,16 @@ def client_balance_text(name: str, balance: dict) -> str:
 
 async def client_balance_line(session: AsyncSession, owner_id: int, client: Client) -> str:
     return client_balance_text(client.name, await repo.client_balance(session, owner_id, client.id))
+
+
+def client_outside_text(client: Client, rows: list[repo.DebtBalance], hint: bool = True) -> str:
+    """Mijozning «Qarzlar»da qolib ketgan qarzi — u mijoz hisobiga (qoldig'iga) kirmagan.
+    hint — qanday qo'shilishi ham yoziladi (mijoz kartasida tugmasi bor)."""
+    text = f"⚠️ <b>«Qarzlar»da ham bor</b> — {escape(client.name)} hisobiga kirmagan:\n"
+    text += "\n".join(line for b in rows for line in balance_lines(b))
+    if hint:
+        text += "\nMijoz hisobiga qo'shish: «🛍 Mijozlar» → mijoz kartasi yoki ilovada mijoz oynasi."
+    return text
 
 
 def balance_lines(b: repo.DebtBalance) -> list[str]:

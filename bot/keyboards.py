@@ -138,7 +138,7 @@ class SupplierCb(CallbackData, prefix="sp"):
 class ClientCb(CallbackData, prefix="cl"):
     """Egasi: mijozlar ro'yxati va mijoz kartasi."""
 
-    action: str  # list | open | add | link | relink | toggle
+    action: str  # list | open | add | link | relink | toggle | merge | merge_yes («Qarzlar»dagi qarzini qo'shish)
     client_id: int = 0
 
 

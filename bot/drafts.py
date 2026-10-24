@@ -69,6 +69,7 @@ from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import (
+    CLIENT_MONEY,
     ClientKind,
     DebtDirection,
     ItemModel,
@@ -208,7 +209,7 @@ def client_total(item: dict, set_size: int) -> None:
     """Dona sonini va jami summani komplekt soni va narxdan hisoblaydi."""
     if item["sets"]:
         item["pieces"] = item["sets"] * set_size
-    if item["kind"] == ClientKind.PAYMENT or not item["price"]:
+    if item["kind"] in CLIENT_MONEY or not item["price"]:
         return
     qty = item["sets"] if item["price_unit"] == PriceUnit.SET else item["pieces"]
     if qty:
@@ -238,7 +239,7 @@ def _client_items(ext: Extraction, default_currency: str, set_size: int) -> list
             "currency": c.currency or default_currency,
             "note": (c.note or "").strip()[:200] or None,
         }
-        if item["kind"] == ClientKind.PAYMENT:
+        if item["kind"] in CLIENT_MONEY:
             item.update(sets=None, pieces=None, price=None, price_unit=None)
         client_total(item, set_size)
         items.append(item)
@@ -806,12 +807,12 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
         for i, c in enumerate(draft["client"]):
             if c["client_id"] is None and not c["client_new"]:
                 return ("client" if c["client_q"] else "client_name"), i
-            if c["kind"] not in (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN):
+            if c["kind"] not in (ClientKind.SALE, ClientKind.PAYMENT, ClientKind.RETURN, ClientKind.DEBT):
                 return "client_kind", i
             if c["total"] is None:
-                if c["kind"] != ClientKind.PAYMENT and not (c["sets"] or c["pieces"]):
+                if c["kind"] not in CLIENT_MONEY and not (c["sets"] or c["pieces"]):
                     return "c_qty", i
-                return ("c_price" if c["kind"] != ClientKind.PAYMENT else "c_amount"), i
+                return ("c_price" if c["kind"] not in CLIENT_MONEY else "c_amount"), i
         return None
     if draft["section"] == "money":
         for i, p in enumerate(draft["personal"]):
@@ -1297,12 +1298,14 @@ CLIENT_KIND_LABELS = {
     ClientKind.SALE: "📦 Mol berildi",
     ClientKind.PAYMENT: "💵 To'lov olindi",
     ClientKind.RETURN: "↩️ Mol qaytarildi",
+    ClientKind.DEBT: "💳 Qarz yozildi",
 }
 # Mijozning o'ziga ko'rsatiladi (u «oldim», «berdim» deydi)
 CLIENT_SIDE_LABELS = {
     ClientKind.SALE: "📦 Mol oldingiz",
     ClientKind.PAYMENT: "💵 Pul to'ladingiz",
     ClientKind.RETURN: "↩️ Mol qaytardingiz",
+    ClientKind.DEBT: "💳 Qarzingiz yozildi",
 }
 
 
@@ -1317,7 +1320,7 @@ def client_line(c: dict, client_side: bool = False) -> str:
     client_side — mijozning o'ziga: «📦 Mol oldingiz: …»."""
     labels = CLIENT_SIDE_LABELS if client_side else CLIENT_KIND_LABELS
     label = labels.get(c["kind"], "❔ Mol yoki to'lov?")
-    if c["kind"] == ClientKind.PAYMENT:
+    if c["kind"] in CLIENT_MONEY:
         return f"{label}: {_money_amount(c['total'], c['currency'])}"
     text = f"{label}: "
     if c["product"]:
@@ -1380,6 +1383,8 @@ async def _present_client(session: AsyncSession, draft: dict, user: User) -> tup
             text + "\n\n❓ Bir komplekt narxi qancha? (yoki jami summani ayting: «jami 1,4 million»)",
             kbs.cancel_only_kb(),
         )
+    if c["kind"] == ClientKind.DEBT:
+        return text + f"\n\n❓ <b>{who}</b> qarzi qancha? Summani yozing.", kbs.cancel_only_kb()
     return text + f"\n\n❓ <b>{who}</b> qancha to'ladi? Summani yozing.", kbs.cancel_only_kb()
 
 

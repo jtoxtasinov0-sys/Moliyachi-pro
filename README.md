@@ -113,6 +113,14 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
   mijoz kartasi (xuddi shu ro'yxat, holati: ✅ ulangan / 🔗 ulanmagan, havola), ilovada mijoz oynasi.
 - Bitta odam bir nechta korxonaning mijozi bo'lsa — yozganda qaysi biri bilan ekani so'raladi. Mijoz o'chirilsa —
   xabar bormaydi va u yoza olmaydi. Avvaldan bor mijozga havola: kartadagi «🔗 Kirish havolasi».
+- Mijozning hamma hisobi bitta joyda: ro'yxatdagi mijoz bilan qarz ham mijoz hisobiga yoziladi, «Qarzlar»ga emas —
+  «Xayrulloda 8 million haqqim bor», «Xayrulloga 1 million qarzga berdim» — 💳 qarz (qoldiqqa qo'shiladi),
+  «Xayrullodan 2 million oldim» — to'lov. Ta'minotchi yoki ishchi bilan bir xil ismli bo'lsa — «Qarzlar»da qoladi.
+- Mijoz qo'shilishidan oldin «Qarzlar»ga yozilgan qarzi («Hayrullo aka» — mijoz Xayrullo) mijoz kartasida
+  «⚠️ «Qarzlar»da ham bor» bo'lib ko'rinadi (mol yozilganda saqlash xabarida ham): «➕ Mijoz hisobiga qo'shish»
+  bosilsa — yozuvlar sanasi bilan mijoz hisobiga o'tadi (umumiy qarzlar jami o'zgarmaydi), ulangan mijozga xabar boradi.
+- Ilovada mijoz oynasida «🗑 O'chirilganlar» — o'chirilgan (yoki «0 qilish» bilan o'chgan) yozuvlar, qachon o'chgani
+  bilan; «↩️» — yozuv qaytadi va qoldiqqa yana kiradi, mijozga xabar boradi.
 
 **🔗 Kirish havolasi — doimiy (ishchi, ta'minotchi, mijoz):** ismini bosing (ilovada — oyna, botda — karta →
 «🔗 Kirish havolasi») — havola har doim chiqadi, ulangandan keyin ham. U chatni o'chirib yuborsa, telefonini yoki
