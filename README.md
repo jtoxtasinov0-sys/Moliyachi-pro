@@ -100,7 +100,8 @@ olinganlar ko'rinadi. Ro'yxatda yo'q odam aytilsa — avvalgidek, faqat ismi yoz
 avval shu ism bilan yozilgan xaridlar ham unga bog'lanadi.
 
 **🛍 Mijozlar bilan o'zaro hisob:** mijozni qo'shing — botda «🛍 Mijozlar → ➕ Mijoz qo'shish» (ismini yozasiz),
-ilovada «Mijozlar → + Qo'shish» — bot doimiy kirish havolasini beradi (start=cli_…). Ovoz bilan yangi mijoz
+ilovada «Mijozlar → + Qo'shish» (ilovada «Mijozlar» pastki menyuda ham, «Jamoa» tepasidagi «Ishchilar · Modellar ·
+Xom ashyo · Mijozlar» tugmalarida ham) — bot doimiy kirish havolasini beradi (start=cli_…). Ovoz bilan yangi mijoz
 aytilsa («Tohirga 10 komplekt berdim») ham — saqlangach havolasi chiqadi. Mijoz bosganda botga ulanadi (ishchi
 bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
 - Egasi yozsa («Tohirga 10 komplekt maksima berdim, 140 mingdan», «Tohir 2 million to'ladi») — mijozga xabar boradi:
