@@ -24,7 +24,7 @@ from bot.db.models import (
     User,
 )
 from bot.drafts import CLIENT_KIND_LABELS, CLIENT_SIDE_LABELS, debt_line, material_line, qty_text
-from bot.handlers.entries import notify_user
+from bot.handlers.entries import ask_delete, cancel_delete, notify_user
 from bot.middlewares import IsOwner
 from bot.services.utils import fmt_date, fmt_money, fmt_number, fmt_totals, period_range
 
@@ -636,12 +636,10 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
         return
     kind, action = callback_data.kind, callback_data.action
     if action == "del":
-        await call.message.edit_reply_markup(reply_markup=kbs.money_confirm_delete_kb(kind, entry.id))
-        await call.answer("Rostdan o'chirilsinmi?")
+        await ask_delete(call, kbs.money_confirm_delete_kb(kind, entry.id))
     elif action == "del_no":
         kb = material_kb(entry) if isinstance(entry, MaterialEntry) else kbs.money_entry_kb(kind, entry.id)
-        await call.message.edit_reply_markup(reply_markup=kb)
-        await call.answer()
+        await cancel_delete(call, kb)
     elif action == "credit" and isinstance(entry, MaterialEntry) and repo.material_credit_ok(entry):
         # Ta'minotchiga qarz (umumiy qarzlarda) yoki to'langan xarid (faqat xom ashyoda)
         entry.on_credit = not entry.on_credit

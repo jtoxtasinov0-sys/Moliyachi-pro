@@ -859,6 +859,9 @@ function renderLedger() {
     list = `<p class="muted lg-empty">Hali yozuv yo'q. ${owner ? `Pul berganingizda yozing yoki ayting: «${esc(d.worker.name)}ga 500 ming berdim».` : "Ish topshirsangiz yoki pul olsangiz — shu yerda hisoblanib boradi."}</p>`;
   }
   const pending = d.pending ? `<span class="status pending">⏳ ${d.pending} ta tasdiq kutmoqda</span>` : "";
+  // Qayta chizilganda yozib turilgan matn yo'qolmasin
+  const typed = el.querySelector(".lg-input");
+  const typedText = typed ? typed.value : "";
 
   el.innerHTML = `
     <div class="lg-head">
@@ -881,6 +884,7 @@ function renderLedger() {
         : "✍️ Yozing yoki 🎤 bilan ayting: «500 ming oldim», «200 ming qaytardim», «15 loaf 15 sapog»"}</p>
     </div>
     <div class="lg-list">${list}</div>`;
+  if (typedText) el.querySelector(".lg-input").value = typedText;
 }
 
 async function onLedgerClick(ev) {
@@ -1953,14 +1957,15 @@ function bindInvite(item, shareText, load) {
   };
 }
 
+const workerStats = (w) => `
+      <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
+      <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>`;
+
 function workerSheet(w) {
   const invite = inviteHtml(w, "Ishchi");
   openSheet(`
     <h3>${esc(w.name)}</h3>
-    <div class="stat-pair">
-      <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
-      <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>
-    </div>
+    <div class="stat-pair" id="wStats">${workerStats(w)}</div>
     <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div>
       <button class="danger" id="wReset">🧹 Hisobini 0 qilish</button>
     </div>
@@ -2777,6 +2782,25 @@ function refreshView() {
   else if (state.view === "materials") loadMaterials();
 }
 
+// Ilova yopilmay turib botga o'tib qaytilsa (Telegram'da yig'ilgan yoki fonda qolgan) — botda qo'shilgan yoki
+// o'chirilgan yozuvlar shu yerda ham ko'rinsin: ochiq bo'lim va ochiq ishchi oynasi qayta yuklanadi
+let away = false;
+function leaveApp() { away = true; }
+function backToApp() {
+  if (!away || !state.me) return;
+  away = false;
+  const sheet = !$("sheet").hidden && ledger.el === $("sheetLedger") ? ledger.el : null;
+  const workers = state.view === "workers" || sheet ? loadWorkers() : null;
+  if (state.view === "models") loadModels();
+  else if (state.view !== "workers") refreshView();
+  if (!sheet) return; // ishchining bosh sahifasidagi hisob-kitob — loadDashboard'da
+  if (!ledger.busy) loadLedger(false);
+  workers.then(() => {
+    const w = state.workers.find((x) => x.id === ledger.workerId);
+    if (w && ledger.el === sheet && $("wStats")) $("wStats").innerHTML = workerStats(w);
+  });
+}
+
 // --- Hisobni 0 qilish: mijozlar, ishchilar, xom ashyo, xarajatlar — har biri alohida ----
 
 const RESET = {
@@ -3293,6 +3317,11 @@ function bind() {
   $("xDebtList").onclick = openDebtRow;
 
   window.addEventListener("pagehide", releaseMic);
+  document.addEventListener("visibilitychange", () => (document.hidden ? leaveApp() : backToApp()));
+  if (tg && tg.onEvent) {
+    tg.onEvent("deactivated", leaveApp);
+    tg.onEvent("activated", backToApp);
+  }
   $("settingsBtn").onclick = settingsSheet;
   $("pdfBtn").onclick = () => { haptic(); pdfSheet(); };
   // Summa kartasini bosganda — maslahat va reja

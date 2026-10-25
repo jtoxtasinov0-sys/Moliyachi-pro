@@ -18,7 +18,7 @@ from bot import drafts, intake
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import Client, User
-from bot.handlers.entries import notify_owner, notify_owner_linked, refuse_link
+from bot.handlers.entries import ask_delete, cancel_delete, notify_owner, notify_owner_linked, refuse_link
 from bot.handlers.money import client_balance_line, client_side_balance, client_side_ledger, client_side_text, client_text
 from bot.monitor import heard
 from bot.services import stt
@@ -158,12 +158,10 @@ async def on_delete(call: CallbackQuery, callback_data: kbs.MyClientCb, session:
         await call.answer("Bu yozuvni korxona kiritgan — faqat u o'chira oladi.", show_alert=True)
         return
     if callback_data.action == "del":
-        await call.message.edit_reply_markup(reply_markup=kbs.my_client_confirm_kb(client.id, entry.id))
-        await call.answer("Rostdan o'chirilsinmi?")
+        await ask_delete(call, kbs.my_client_confirm_kb(client.id, entry.id))
         return
     if callback_data.action == "del_no":
-        await call.message.edit_reply_markup(reply_markup=kbs.my_client_kb(client.id, entry.id))
-        await call.answer()
+        await cancel_delete(call, kbs.my_client_kb(client.id, entry.id))
         return
     await repo.soft_delete(session, entry)
     balance = await repo.client_balance(session, client.owner_id, client.id)

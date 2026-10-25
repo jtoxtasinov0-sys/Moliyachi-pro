@@ -93,6 +93,25 @@ async def notify_user(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardM
     return True
 
 
+# «🗑 O'chirish» faqat so'raydi — xabarning o'zida ham yoziladi: faqat tugmalar o'zgarsa, yozuv o'chdi deb
+# o'ylab qolinadi va u ilovada turaveradi
+DELETE_ASK = "\n\n❓ Hali o'chirilmadi — o'chirish uchun «🗑 Ha, o'chirilsin» ni bosing."
+
+
+async def ask_delete(call: CallbackQuery, markup: InlineKeyboardMarkup) -> None:
+    text = call.message.html_text
+    if not text.endswith(DELETE_ASK):
+        text += DELETE_ASK
+    await call.message.edit_text(text, reply_markup=markup)
+    await call.answer("Rostdan o'chirilsinmi?")
+
+
+async def cancel_delete(call: CallbackQuery, markup: InlineKeyboardMarkup) -> None:
+    """«↩️ Yo'q»: xabar avvalgi holiga qaytadi."""
+    await call.message.edit_text(call.message.html_text.removesuffix(DELETE_ASK), reply_markup=markup)
+    await call.answer()
+
+
 async def notify_owner(
     bot: Bot,
     session: AsyncSession,
@@ -252,8 +271,7 @@ async def on_delete(call: CallbackQuery, callback_data: kbs.EntryCb, session: As
     entry = await _get_entry(call, session, user, callback_data.entry_id)
     if entry is None:
         return
-    await call.message.edit_reply_markup(reply_markup=kbs.confirm_delete_kb(entry.id))
-    await call.answer("Rostdan o'chirilsinmi?")
+    await ask_delete(call, kbs.confirm_delete_kb(entry.id))
 
 
 @router.callback_query(kbs.EntryCb.filter(F.action == "del_no"))
@@ -261,8 +279,7 @@ async def on_delete_no(call: CallbackQuery, callback_data: kbs.EntryCb, session:
     entry = await _get_entry(call, session, user, callback_data.entry_id)
     if entry is None:
         return
-    await call.message.edit_reply_markup(reply_markup=kbs.entry_kb(entry, user))
-    await call.answer()
+    await cancel_delete(call, kbs.entry_kb(entry, user))
 
 
 @router.callback_query(kbs.EntryCb.filter(F.action == "del_yes"))
@@ -479,12 +496,10 @@ async def on_pay_delete(call: CallbackQuery, callback_data: kbs.PayCb, session: 
         await call.answer("Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi.", show_alert=True)
         return
     if callback_data.action == "del":
-        await call.message.edit_reply_markup(reply_markup=kbs.pay_confirm_delete_kb(entry.id))
-        await call.answer("Rostdan o'chirilsinmi?")
+        await ask_delete(call, kbs.pay_confirm_delete_kb(entry.id))
         return
     if callback_data.action == "del_no":
-        await call.message.edit_reply_markup(reply_markup=kbs.pay_entry_kb(entry, user))
-        await call.answer()
+        await cancel_delete(call, kbs.pay_entry_kb(entry, user))
         return
     text = pay_text(entry, user)
     await repo.soft_delete(session, entry)
