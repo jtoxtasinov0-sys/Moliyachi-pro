@@ -532,14 +532,20 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
         await _resolve_clients(session, draft, acc)
         return
     if draft["section"] == "money":
-        # Qarz: avval yozilgan odam bo'lsa — o'sha yozilishi. Yangi odam haqida savol berilmaydi.
-        people = await repo.debt_people(session, acc)
-        items = [(i, name) for i, (_, name) in enumerate(people)]
+        # Qarzdagi odam: mijoz yoki ishchi bo'lsa — uning hisobiga, ta'minotchi yoki avval yozilgan odam bo'lsa —
+        # o'sha yozilishi bilan «Qarzlar»ga. Shu ismda bir nechta odam bo'lsa — qaysi biri so'raladi.
+        # Yangi odam haqida savol berilmaydi.
+        index = await people_index(session, acc)
         for d in draft["debt"]:
-            if d["person"] and items:
-                res = matcher.match(d["person"], items)
-                if res.exact_id is not None:
-                    d["person"] = people[res.exact_id][1]
+            if not d["person"] or d.get("who"):
+                continue
+            found = who_matches(d["person"], index)
+            if len(found) > 1:
+                if not any(w["type"] == "person" for w in found):
+                    found.append({"type": "new", "id": 0, "name": d["person"]})
+                d["who_ask"] = found
+            elif found:
+                set_who(d, found[0])
         return
 
     workers = await repo.list_workers(session, acc)
@@ -754,6 +760,62 @@ async def _resolve_clients(session: AsyncSession, draft: dict, acc: int) -> None
             c["client_new"], c["client_name"] = True, c["client_q"]
 
 
+# --- Qarzdagi odam kim: mijoz, ishchi, ta'minotchi yoki «Qarzlar»dagi odam --------------
+
+WHO_LABELS = {
+    "client": "🛍 {} — mijoz",
+    "supplier": "🏪 {} — ta'minotchi",
+    "worker": "👷 {} — ishchi",
+    "person": "🤝 {} — «Qarzlar»dagi",
+    "new": "🤝 Boshqa odam — «Qarzlar»ga",
+}
+
+
+async def people_index(session: AsyncSession, acc: int) -> dict[str, tuple[list[tuple[int, str]], list]]:
+    """Qarz yozuvidagi ism kimniki bo'lishi mumkin: tur -> ((id, ism) ro'yxati, taxalluslar). Ta'minotchi —
+    ro'yxatdagisi va undan qarzga xom ashyo olingan odam; person — «Qarzlar»dagi qolgan odamlar."""
+    suppliers = await repo.list_suppliers(session, acc, active_only=False)
+    supplier_keys = {repo.person_key(s.name) for s in suppliers}
+    debts = [b for b in await repo.debt_balances(session, acc) if b.key not in supplier_keys]
+    return {
+        "client": (
+            [(c.id, c.name) for c in await repo.list_clients(session, acc)],
+            await repo.get_aliases(session, acc, "client"),
+        ),
+        "supplier": (
+            [(s.id, s.name) for s in suppliers] + [(-i, b.person) for i, b in enumerate(debts, 1) if b.materials],
+            [],
+        ),
+        "worker": (
+            [(w.id, w.name) for w in await repo.list_workers(session, acc)],
+            await repo.get_aliases(session, acc, "worker"),
+        ),
+        "person": ([(i, b.person) for i, b in enumerate(debts) if not b.materials], []),
+    }
+
+
+def who_matches(name: str, index: dict[str, tuple[list[tuple[int, str]], list]]) -> list[dict]:
+    """Ism aniq mos kelgan odamlar, har turdan bittadan: [{"type", "id", "name"}]. Bittadan ko'p bo'lsa — bir xil
+    ismli boshqa-boshqa odamlar (masalan, mijoz ham, ta'minotchi ham Xayrullo): adashmaslik uchun so'raladi."""
+    found = []
+    for kind, (items, aliases) in index.items():
+        item_id = matcher.match(name, items, aliases).exact_id if items else None
+        if item_id is not None:
+            found.append({"type": kind, "id": item_id, "name": dict(items)[item_id]})
+    return found
+
+
+def set_who(d: dict, who: dict) -> None:
+    """Qarz yozuvidagi odam tanlandi: mijoz yoki ishchi — uning hisobiga yoziladi; ta'minotchi yoki «Qarzlar»dagi
+    odam — «Qarzlar»ga, uning yozilishi bilan (o'sha qatorga qo'shiladi); boshqa odam — aytilgan ism bilan."""
+    if who["type"] == "client":
+        d.update(who="client", client_id=who["id"], client_name=who["name"])
+    elif who["type"] == "worker":
+        d.update(who="worker", worker_id=who["id"], worker_name=who["name"])
+    else:
+        d.update(who="person", person=d["person"] if who["type"] == "new" else who["name"])
+
+
 def item_date(draft: dict, item: dict) -> str:
     return item.get("date") or draft["date"]
 
@@ -821,6 +883,8 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
         for i, d in enumerate(draft["debt"]):
             if not d["person"]:
                 return "person", i
+            if d.get("who_ask") and not d.get("who"):
+                return "d_who", i
             if d["direction"] not in (DebtDirection.IN, DebtDirection.OUT):
                 return "direction", i
             if d["amount"] is None:
@@ -1036,6 +1100,15 @@ def debt_line(
     return text
 
 
+def _who_mark(d: dict) -> str:
+    """Qarz kimning hisobiga yoziladi: « → 🛍 Xayrullo (mijoz) hisobiga»."""
+    if d.get("who") == "client":
+        return f" → 🛍 <b>{escape(d['client_name'])}</b> (mijoz) hisobiga"
+    if d.get("who") == "worker":
+        return f" → 👷 <b>{escape(d['worker_name'])}</b> (ishchi) hisobiga"
+    return ""
+
+
 def _day_mark(item: dict) -> str:
     """Yozuvning o'z sanasi bo'lsa: « · 📅 12.10»"""
     return f" · 📅 {date.fromisoformat(item['date']).strftime('%d.%m')}" if item.get("date") else ""
@@ -1084,7 +1157,7 @@ def _render_money(draft: dict) -> str:
         rows = [
             "• " + debt_line(
                 d["person"], d["direction"], _money_amount(d["amount"], d["currency"]), d["note"], d.get("stated", False)
-            ) + _day_mark(d)
+            ) + _day_mark(d) + _who_mark(d)
             for d in draft["debt"]
         ]
         parts.append("🤝 <b>Qarz</b>\n" + "\n".join(rows))
@@ -1115,6 +1188,13 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     debt = draft["debt"][i]
     if kind == "person":
         return text + "\n\n❓ Kim bilan? Ismini yozing.", kbs.cancel_only_kb()
+    if kind == "d_who":
+        options = [(n, WHO_LABELS[w["type"]].format(w["name"])) for n, w in enumerate(debt["who_ask"])]
+        return (
+            text + f"\n\n❓ «{escape(debt['person'])}» — qaysi biri? Shu ismda bir nechta odam bor, adashmaslik "
+            "uchun tanlang:",
+            kbs.debt_who_kb(i, options),
+        )
     if kind == "direction":
         return (
             text + f"\n\n❓ <b>{escape(debt['person'])}</b> — pulni oldingizmi yoki berdingizmi?",

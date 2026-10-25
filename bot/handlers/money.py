@@ -212,11 +212,15 @@ class MergedDebts:
     notice: tuple[int, str] | None  # ulangan mijozga xabar: (chat, matn)
 
 
-async def merge_client_debts(session: AsyncSession, owner: User, client: Client) -> MergedDebts:
-    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi (umumiy qarzlar jami o'zgarmaydi)."""
+async def merge_client_debts(
+    session: AsyncSession, owner: User, client: Client, keys: list[str] | None = None
+) -> MergedDebts:
+    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi (umumiy qarzlar jami o'zgarmaydi).
+    keys — faqat egasi tanlagan odamlar (person_key); bo'lmasa — hammasi."""
     before = await repo.client_balance(session, owner.id, client.id)
     rows = await repo.client_outside_debts(session, owner.id, client)
-    moved = await repo.move_debts_to_client(session, owner.id, client, [b.key for b in rows])
+    chosen = [b.key for b in rows if keys is None or b.key in keys]
+    moved = await repo.move_debts_to_client(session, owner.id, client, chosen)
     balance = await repo.client_balance(session, owner.id, client.id)
     added = {c: balance.get(c, Decimal(0)) - before.get(c, Decimal(0)) for c in {*before, *balance}}
     added = {c: v for c, v in added.items() if v}
@@ -296,14 +300,28 @@ async def client_balance_line(session: AsyncSession, owner_id: int, client: Clie
     return client_balance_text(client.name, await repo.client_balance(session, owner_id, client.id))
 
 
-def client_outside_text(client: Client, rows: list[repo.DebtBalance], hint: bool = True) -> str:
-    """Mijozning «Qarzlar»da qolib ketgan qarzi — u mijoz hisobiga (qoldig'iga) kirmagan.
-    hint — qanday qo'shilishi ham yoziladi (mijoz kartasida tugmasi bor)."""
-    text = f"⚠️ <b>«Qarzlar»da ham bor</b> — {escape(client.name)} hisobiga kirmagan:\n"
-    text += "\n".join(line for b in rows for line in balance_lines(b))
+async def client_outside_block(
+    session: AsyncSession, owner_id: int, client: Client, hint: bool = True
+) -> tuple[list[repo.DebtBalance], str | None]:
+    """Mijozning «Qarzlar»da qolib ketgan qarzi — u mijoz hisobiga (qoldig'iga) kirmagan: (qatorlar, matn).
+    Shu ismda ishchi yoki ta'minotchi ham bo'lsa — aytiladi (boshqa odam bo'lishi mumkin). hint — qanday
+    qo'shilishi ham yoziladi (mijoz kartasida tugmasi bor)."""
+    rows = await repo.client_outside_debts(session, owner_id, client)
+    if not rows:
+        return rows, None
+    also = await repo.namesakes(session, owner_id, [b.person for b in rows])
+    lines = []
+    for b in rows:
+        lines.extend(balance_lines(b))
+        if b.person in also:
+            lines.append(f"   ❗ Shu ismda {escape(', '.join(also[b.person]))} ham bor — o'sha emasligini tekshiring")
+    text = f"⚠️ <b>«Qarzlar»da ham bor</b> — {escape(client.name)} hisobiga kirmagan:\n" + "\n".join(lines)
     if hint:
-        text += "\nMijoz hisobiga qo'shish: «🛍 Mijozlar» → mijoz kartasi yoki ilovada mijoz oynasi."
-    return text
+        text += (
+            "\nBu o'shami — tekshirib, mijoz hisobiga qo'shing: «🛍 Mijozlar» → mijoz kartasi yoki ilovada mijoz "
+            "oynasi (har biri alohida so'raladi)."
+        )
+    return rows, text
 
 
 def balance_lines(b: repo.DebtBalance) -> list[str]:

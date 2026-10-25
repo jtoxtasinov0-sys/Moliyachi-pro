@@ -115,9 +115,36 @@ async def _ping(http: aiohttp.ClientSession) -> None:
         log.warning("O'zini uyg'otish so'rovi o'tmadi: %s", e)
 
 
+MENU_NEWS = "📋 Menyu yangilandi: «🏪 Ta'minotchilar» qo'shildi — pastdagi tugmalardan foydalaning."
+
+
+async def refresh_menus(bot: Bot) -> None:
+    """Menyu o'zgargan bo'lsa (keyboards.MENU_VERSION) — har bir egaga yangi tugmalar bir marta yuboriladi:
+    Telegram eski menyuni o'zi almashtirmaydi, yangi bo'lim tugmasi /start bosilmaguncha ko'rinmaydi."""
+    for tg_id in settings.owner_ids:
+        async with session_factory() as session:
+            user = await repo.get_user_by_tg(session, tg_id)
+            if user is None or not user.is_owner:
+                continue  # botni hali ochmagan — /start da yangi menyu oladi
+            if await repo.get_setting(session, user.id, "menu_version") == kbs.MENU_VERSION:
+                continue
+            await repo.set_setting(session, user.id, "menu_version", kbs.MENU_VERSION)
+            await session.commit()
+        try:
+            await bot.send_message(tg_id, MENU_NEWS, reply_markup=kbs.main_menu(user))
+        except TelegramForbiddenError:
+            log.info("Yangi menyu yuborilmadi: %s botni bloklagan", tg_id)
+        except TelegramAPIError:
+            log.exception("Yangi menyu yuborilmadi: %s", tg_id)
+
+
 async def run(bot: Bot) -> None:
     keep_awake = settings.keep_awake and bool(settings.webapp_url)
     last_ping = 0.0
+    try:
+        await refresh_menus(bot)
+    except Exception:
+        log.exception("Yangi menyuni yuborishda xato")
     async with aiohttp.ClientSession() as http:
         while True:
             try:

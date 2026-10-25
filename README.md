@@ -88,8 +88,8 @@ holati yozilmagan ishchining qoldig'i — tasdiqlangan ishlari summasi (to'g'ril
 hisob yopildi» yoki «Robiyaga 900 ming qarzman»). Hisobi yopilgan ishchi va mijoz ko'rsatilmaydi. Ilovada ishchi qatorini bossangiz — uning hisob-kitob oynasi, mijozni — mijoz oynasi,
 ta'minotchini — qarz va undan olingan xom ashyo tarixi ochiladi.
 
-**🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda «🧱 Xom ashyo →
-🏪 Ta'minotchilar → ➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga
+**🏪 Ta'minotchilar:** xom ashyo kimdan olinishini ishchilardek ro'yxatga qo'shing: botda pastki menyudagi
+«🏪 Ta'minotchilar» (ular bilan qarz ham shu yerda) yoki «🧱 Xom ashyo → 🏪 Ta'minotchilar» → «➕ Ta'minotchi qo'shish», ilovada «Jamoa → Xom ashyo → Ta'minotchilar → + Qo'shish». Har biriga
 doimiy kirish havolasi beriladi — ta'minotchi bosganda botga ulanadi (ishchi bo'lmaydi, faqat xabar oladi).
 Keyin «Xayrulloh Uz charmdan 1 millionlik material oldim» desangiz, xarid xom ashyoga yoziladi va Xayrulloh Uz
 charmga xabar boradi: «Jasur sizdan xom ashyo oldi — Material 1 000 000 so'm», egasiga esa «📨 Xabar yuborildi».
@@ -113,12 +113,19 @@ bo'lmaydi) va ikkala tomon bir xil oldi-berdini ko'radi:
   mijoz kartasi (xuddi shu ro'yxat, holati: ✅ ulangan / 🔗 ulanmagan, havola), ilovada mijoz oynasi.
 - Bitta odam bir nechta korxonaning mijozi bo'lsa — yozganda qaysi biri bilan ekani so'raladi. Mijoz o'chirilsa —
   xabar bormaydi va u yoza olmaydi. Avvaldan bor mijozga havola: kartadagi «🔗 Kirish havolasi».
-- Mijozning hamma hisobi bitta joyda: ro'yxatdagi mijoz bilan qarz ham mijoz hisobiga yoziladi, «Qarzlar»ga emas —
+- Mijozning hamma hisobi bitta joyda: ro'yxatdagi mijoz bilan qarz ham mijoz hisobiga yoziladi —
   «Xayrulloda 8 million haqqim bor», «Xayrulloga 1 million qarzga berdim» — 💳 qarz (qoldiqqa qo'shiladi),
-  «Xayrullodan 2 million oldim» — to'lov. Ta'minotchi yoki ishchi bilan bir xil ismli bo'lsa — «Qarzlar»da qoladi.
+  «Xayrullodan 2 million oldim» — to'lov. U mijoz oynasida ham, umumiy «🤝 Qarzlar»da (🛍 mijozlar bo'limi) ham
+  ko'rinadi. Xarajat bilan bitta xabarda aytilsa ham («benzin 200 ming, Xayrulloda 2 mln haqqim bor»), ishchi
+  bo'lsa — ishchi hisob-kitobiga.
+- Bir xil ismli odamlar adashtirilmaydi: ism ham mijozga, ham ta'minotchiga (yoki ishchiga, «Qarzlar»dagi boshqa
+  odamga) mos kelsa — bot o'zi tanlamaydi, «❓ «Xayrullo» — qaysi biri?» deb so'raydi: «🛍 Xayrullo — mijoz»,
+  «🏪 Xayrullo — ta'minotchi», «🤝 Boshqa odam». Tanlangani bo'yicha yoziladi.
 - Mijoz qo'shilishidan oldin «Qarzlar»ga yozilgan qarzi («Hayrullo aka» — mijoz Xayrullo) mijoz kartasida
-  «⚠️ «Qarzlar»da ham bor» bo'lib ko'rinadi (mol yozilganda saqlash xabarida ham): «➕ Mijoz hisobiga qo'shish»
-  bosilsa — yozuvlar sanasi bilan mijoz hisobiga o'tadi (umumiy qarzlar jami o'zgarmaydi), ulangan mijozga xabar boradi.
+  «⚠️ «Qarzlar»da ham bor» bo'lib ko'rinadi (mol yozilganda saqlash xabarida ham); shu ismda ta'minotchi yoki ishchi
+  ham bo'lsa — «❗ tekshiring» deb aytiladi. Har bir odam alohida qo'shiladi: «➕ Hayrullo aka — mijoz hisobiga
+  qo'shish» → «bu Xayrullomi?» → «Ha» — yozuvlar sanasi bilan mijoz hisobiga o'tadi (umumiy qarzlar jami
+  o'zgarmaydi), ulangan mijozga xabar boradi.
 - Ilovada mijoz oynasida «🗑 O'chirilganlar» — o'chirilgan (yoki «0 qilish» bilan o'chgan) yozuvlar, qachon o'chgani
   bilan; «↩️» — yozuv qaytadi va qoldiqqa yana kiradi, mijozga xabar boradi.
 

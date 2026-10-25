@@ -66,6 +66,8 @@ DEFAULT_SETTINGS = {
     "guide_video_id": "",
     # Standart kasblar (Kroychi, Brsovkachi...) bir marta qo'shilgan: egasi o'chirsa, qaytib chiqmaydi
     "jobs_seeded": "0",
+    # Egasi oxirgi marta olgan menyu (keyboards.MENU_VERSION) — yangisi bo'lsa bir marta yuboriladi
+    "menu_version": "",
 }
 
 
@@ -1709,20 +1711,31 @@ async def client_ledger(
 
 async def client_outside_debts(session: AsyncSession, owner_id: int, client: Client) -> list[DebtBalance]:
     """«Qarzlar»da shu mijozning ismi bilan turgan ochiq qarzlar — mijoz hisobiga kirmagan («Hayrullo aka» —
-    mijoz Xayrullo): mijoz qo'shilishidan oldin yoki u mijoz ekani tanilmay yozilgan. Ism boshqa mijozga yoki
-    ishchiga mos kelsa, ta'minotchi bo'lsa — olinmaydi (boshqa odam bo'lishi mumkin)."""
+    mijoz Xayrullo): mijoz qo'shilishidan oldin yoki u mijoz ekani tanilmay yozilgan. Ism boshqa mijozga mosrog'i
+    bo'lsa — olinmaydi. Ta'minotchining o'z qatori olinmaydi; ismi ishchi yoki ta'minotchiga ham o'xshasa —
+    ko'rsatiladi, lekin egasi har birini o'zi tekshirib qo'shadi (namesakes)."""
     rows = [b for b in await _debts_with_suppliers(session, owner_id) if b.source == "debt" and not b.settled]
     if not rows:
         return []
     clients = [(c.id, c.name) for c in await list_clients(session, owner_id, active_only=False)]
     aliases = await get_aliases(session, owner_id, "client")
-    workers = [(w.id, w.name) for w in await list_workers(session, owner_id, active_only=False)]
-    return [
-        b
-        for b in rows
-        if matcher.match(b.person, clients, aliases).exact_id == client.id
-        and (not workers or matcher.match(b.person, workers).exact_id is None)
-    ]
+    return [b for b in rows if matcher.match(b.person, clients, aliases).exact_id == client.id]
+
+
+async def namesakes(session: AsyncSession, owner_id: int, names: list[str]) -> dict[str, list[str]]:
+    """Ism -> shu ismga mos keladigan ishchi va ta'minotchilar: ["Xayrulloh Uz charm (ta'minotchi)"] — bir xil
+    ismli boshqa odam bo'lishi mumkin, adashmaslik uchun egasiga ko'rsatiladi."""
+    groups = (
+        ("ishchi", [(w.id, w.name) for w in await list_workers(session, owner_id, active_only=False)]),
+        ("ta'minotchi", [(s.id, s.name) for s in await list_suppliers(session, owner_id, active_only=False)]),
+    )
+    out: dict[str, list[str]] = {}
+    for name in names:
+        for label, items in groups:
+            found = matcher.match(name, items).exact_id if items else None
+            if found is not None:
+                out.setdefault(name, []).append(f"{dict(items)[found]} ({label})")
+    return out
 
 
 async def move_debts_to_client(

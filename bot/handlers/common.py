@@ -45,6 +45,8 @@ OWNER_HELP = """\
 • <i>Abbosdan 100 ming won oldim</i> — qarz (kimligi so'ralmaydi)
 • <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i> — mijozga mol
 • <i>Tohir 2 million to'ladi</i> — mijoz to'lovi
+• <i>Tohirda 5 million haqqim bor</i> — mijozning eski qarzi: mijoz hisobiga ham, «Qarzlar»ga ham
+  (shu ismda ta'minotchi yoki ishchi ham bo'lsa — qaysi biri ekani so'raladi)
 
 Bot yozuvni tushunib, «To'g'rimi?» deb so'raydi. Xato bo'lsa — shunchaki
 tuzatishni ayting: <i>«soni 45 ta»</i>, <i>«kecha edi»</i>.
@@ -72,9 +74,9 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
      tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb), 🧾 hisob-kitobi: ishlari,
      olgan puli va qoldig'i
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
-🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi;
-     🏪 Ta'minotchilar — kimdan olinadi: qo'shish va taklif havolasi (ulangan ta'minotchiga
-     undan olingan xom ashyo haqida xabar boradi)
+🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
+🏪 Ta'minotchilar — kimdan olinadi va ular bilan qarz: qo'shish va taklif havolasi (ulangan
+     ta'minotchiga undan olingan xom ashyo haqida xabar boradi)
 ⚙️ Sozlamalar — ish va pul yozuvlarini tasdiqlash, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
@@ -183,9 +185,16 @@ async def send_guide(message: Message, session: AsyncSession, user: User) -> boo
     return False
 
 
+async def _menu_sent(session: AsyncSession, user: User) -> None:
+    """Egasi hozirgi menyuni oldi — bot yangilanganda qayta yuborilmaydi (reminders.refresh_menus)."""
+    if user.is_owner:
+        await repo.set_setting(session, user.id, "menu_version", kbs.MENU_VERSION)
+
+
 @router.message(CommandStart(), Registered())
 async def start(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
+    await _menu_sent(session, user)
     if user.is_owner and await send_guide(message, session, user):
         return
     help_text = OWNER_HELP if user.is_owner else WORKER_HELP
@@ -194,8 +203,9 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, user
 
 @router.message(Command("yordam", "help"), Registered())
 @router.message(F.text == kbs.BTN_HELP, Registered())
-async def help_cmd(message: Message, state: FSMContext, user: User) -> None:
+async def help_cmd(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
+    await _menu_sent(session, user)
     await message.answer(OWNER_HELP if user.is_owner else WORKER_HELP, reply_markup=kbs.main_menu(user))
 
 

@@ -1244,7 +1244,8 @@ async def reinvite_client(request: web.Request, session: AsyncSession, user: Use
 @endpoint(owner_only=True)
 async def client_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """Oldi-berdi. Bitta mijoznikida (client_id) birinchi sahifada yana: outside — «Qarzlar»da qolib ketgan, mijoz
-    hisobiga kirmagan qarzlari; deleted — o'chirilgan yozuvlari (xato o'chgan bo'lsa qaytarish uchun)."""
+    hisobiga kirmagan qarzlari (also — shu ismli ishchi yoki ta'minotchi); deleted — o'chirilgan yozuvlari (xato
+    o'chgan bo'lsa qaytarish uchun)."""
     limit, offset = _paging(request)
     client_id = request.query.get("client_id")
     client_id = int(client_id) if client_id and client_id.isdigit() else None
@@ -1252,8 +1253,9 @@ async def client_entries(request: web.Request, session: AsyncSession, user: User
     data = {"items": [_client_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit}
     if client_id is not None and offset == 0 and (client := await repo.get_client(session, user.id, client_id)):
         outside = await repo.client_outside_debts(session, user.id, client)
+        also = await repo.namesakes(session, user.id, [b.person for b in outside])
         deleted = await repo.deleted_client_entries(session, user.id, client_id)
-        data["outside"] = [_debt_balance_json(b) for b in outside]
+        data["outside"] = [{**_debt_balance_json(b), "also": also.get(b.person, [])} for b in outside]
         data["deleted"] = [_client_entry_json(e) for e in deleted]
     return web.json_response(data)
 
@@ -1261,13 +1263,17 @@ async def client_entries(request: web.Request, session: AsyncSession, user: User
 @routes.post(r"/api/clients/{id:\d+}/merge-debts")
 @endpoint(owner_only=True)
 async def merge_into_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi; ulangan mijozga xabar boradi."""
+    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi — keys bo'lsa faqat tanlangan odamlar
+    (har biri alohida qo'shiladi, adashmaslik uchun); ulangan mijozga xabar boradi."""
     from bot.handlers.money import merge_client_debts  # aylanma importdan qochish uchun
 
     client = await repo.get_client(session, user.id, int(request.match_info["id"]))
     if client is None:
         raise ApiError(404, "Mijoz topilmadi")
-    merged = await merge_client_debts(session, user, client)
+    keys = (await _json(request)).get("keys") if request.can_read_body else None
+    if keys is not None and not (isinstance(keys, list) and all(isinstance(k, str) for k in keys)):
+        raise ApiError(400, "Noto'g'ri so'rov")
+    merged = await merge_client_debts(session, user, client, keys)
     if merged.notice:
         _notify(request, *merged.notice)
     return web.json_response(

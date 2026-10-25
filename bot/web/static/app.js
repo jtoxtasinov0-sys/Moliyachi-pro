@@ -1533,22 +1533,29 @@ async function clientSheet(id) {
       const btn = ev.target.closest("[data-del-feed]");
       if (btn) deleteClientEntry(Number(btn.dataset.delFeed.split(":")[1]), () => closeSheet());
     };
-    const merge = $("clMerge");
-    if (merge) merge.onclick = () => mergeClientDebts(c, data.outside);
+    const outsideBox = $("clOutside");
+    if (outsideBox) outsideBox.onclick = (ev) => {
+      const btn = ev.target.closest("[data-merge]");
+      if (btn) mergeClientDebts(c, data.outside[Number(btn.dataset.merge)]);
+    };
   } catch (e) { fail(e); }
 }
 
-// «Qarzlar»da shu mijoz ismi bilan turgan qarz — mijoz qoldig'iga kirmagan: ko'rsatiladi va qo'shish tugmasi
+// «Qarzlar»da shu mijoz ismi bilan turgan qarz — mijoz qoldig'iga kirmagan: har bir odam alohida ko'rsatiladi va
+// alohida qo'shiladi (shu ismli boshqa odam bo'lishi mumkin — egasi o'zi tanlaydi)
 function clientOutsideHtml(c, outside) {
   if (!outside || !outside.length) return "";
-  const rows = outside.map((p) => {
+  const rows = outside.map((p, i) => {
     const b = balanceInfo(p);
-    return `<br>• <b>${esc(p.name)}</b> — ${b.label}: <b>${esc(b.text)}</b>`;
+    const also = (p.also || []).length
+      ? `<br>❗ Shu ismda ${esc(p.also.join(", "))} ham bor — o'sha emasligini tekshiring` : "";
+    return `<div class="cl-out-row">• <b>${esc(p.name)}</b> — ${b.label}: <b>${esc(b.text)}</b>${also}
+      <button class="act ok cl-merge" data-merge="${i}">➕ ${esc(p.name)} — ${esc(c.name)} hisobiga qo'shish</button></div>`;
   }).join("");
+  const many = outside.length > 1 || outside.some((p) => (p.also || []).length)
+    ? " Bu o'sha odammi — har birini o'zingiz tekshirib qo'shing." : "";
   return `
-    <div class="lg-tip">⚠️ <b>«Qarzlar»da ham bor</b> — bu qarz ${esc(c.name)} hisobiga (yuqoridagi qoldiqqa) kirmagan:${rows}
-      <button class="act ok cl-merge" id="clMerge">➕ Mijoz hisobiga qo'shish</button>
-    </div>`;
+    <div class="lg-tip" id="clOutside">⚠️ <b>«Qarzlar»da ham bor</b> — bu qarz ${esc(c.name)} hisobiga (yuqoridagi qoldiqqa) kirmagan.${many}${rows}</div>`;
 }
 
 // Qo'shilgach mijoz qoldig'i: hozirgisi + «Qarzlar»dagisi
@@ -1565,14 +1572,13 @@ async function reopenClient(id) {
   clientSheet(id);
 }
 
-async function mergeClientDebts(c, outside) {
-  const names = outside.map((p) => p.name).join(", ");
-  const after = clientBalance({ balance: sumBalances([c.balance, ...outside.map((p) => p.balance)]) });
-  const ask = `«Qarzlar»dagi ${names} qarzi ${c.name} hisobiga qo'shilsinmi? Shundan keyin: ${after.label} ${after.text}.`
+async function mergeClientDebts(c, person) {
+  const after = clientBalance({ balance: sumBalances([c.balance, person.balance]) });
+  const ask = `«Qarzlar»dagi «${person.name}» — bu ${c.name}mi? Qarzi ${c.name} hisobiga qo'shilsinmi? Shundan keyin: ${after.label} ${after.text}.`
     + (c.linked ? " Mijozga ham xabar boradi." : "");
   if (!(await confirmBox(ask))) return;
   try {
-    const res = await api(`/api/clients/${c.id}/merge-debts`, { method: "POST" });
+    const res = await api(`/api/clients/${c.id}/merge-debts`, { method: "POST", body: { keys: [person.key] } });
     haptic("ok");
     toast(res.count ? `Qo'shildi: ${res.count} ta yozuv` : "Qo'shiladigan qarz qolmagan");
     await reopenClient(c.id);
