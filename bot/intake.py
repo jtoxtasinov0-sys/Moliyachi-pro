@@ -3,9 +3,11 @@
 Bot chati (handlers/input.py) ham, Mini App (web/api.py) ham shu funksiyalardan foydalanadi:
 qoralama har ikkisida bir xil dict, faqat saqlanadigan joyi boshqa (FSM yoki xotira).
 """
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import partial
 from html import escape
 
 from aiogram import Bot
@@ -29,7 +31,7 @@ from bot.db.models import (
     WorkEntry,
     WorkerPayment,
 )
-from bot.services import llm, matcher
+from bot.services import llm
 from bot.services.utils import fmt_money, today
 
 
@@ -143,29 +145,24 @@ def _understood(user: User, ext: llm.Extraction) -> bool:
 
 async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction) -> None:
     """Qarz deb ajratilgan odam aslida ishchi yoki mijoz bo'lsa (ovozda ism buzilib, Claude tanimay qolgan:
-    «Rabiyaga 500 ming berdim») — ishchi bilan hisob-kitobga yoki mijoz to'loviga o'tkaziladi. Faqat hamma
-    odamlar bitta turga aniq mos kelsa; aks holda qarz bo'lib qoladi."""
+    «Rabiyaga 500 ming berdim») — ishchi bilan hisob-kitobga yoki mijoz hisobiga o'tkaziladi. Mijozning qarzi
+    «Qarzlar»da alohida qolib ketmasin («Xayrulloda 8 million haqqim bor» — mijoz kartasida ham shu qarz):
+    undan olingan pul — to'lov, unga berilgani va «haqqim bor» — 💳 qarz. Faqat hamma odamlar bitta turga aniq
+    mos kelsa. Shu ismda yana boshqa odam bo'lsa (ta'minotchi, «Qarzlar»dagi odam, ham ishchi ham mijoz) —
+    o'tkazilmaydi: qarz qoralamasida qaysi biri ekani so'raladi (drafts.resolve)."""
     if not user.is_owner or ext.section not in ("personal", "debt") or ext.personal or not ext.debt:
         return
-    acc = user.account_id
-    workers = [(w.id, w.name) for w in await repo.list_workers(session, acc)]
-    clients = [(c.id, c.name) for c in await repo.list_clients(session, acc)]
-    if not workers and not clients:
+    index = await drafts.people_index(session, user.account_id)
+    if not index["worker"][0] and not index["client"][0]:
         return
-    worker_aliases = await repo.get_aliases(session, acc, "worker")
-    client_aliases = await repo.get_aliases(session, acc, "client")
     found: list[tuple[str, str]] = []
     for d in ext.debt:
         if not d.person or d.direction not in (DebtDirection.IN, DebtDirection.OUT):
             return
-        worker_id = matcher.match(d.person, workers, worker_aliases).exact_id
-        client_id = matcher.match(d.person, clients, client_aliases).exact_id
-        if worker_id is not None and client_id is None:
-            found.append(("worker", dict(workers)[worker_id]))
-        elif client_id is not None and worker_id is None and d.direction == DebtDirection.IN and not d.stated:
-            found.append(("client", dict(clients)[client_id]))
-        else:
+        who = drafts.who_matches(d.person, index)
+        if len(who) != 1 or who[0]["type"] not in ("worker", "client"):
             return
+        found.append((who[0]["type"], who[0]["name"]))
     if len({kind for kind, _ in found}) != 1:
         return
     if found[0][0] == "worker":
@@ -185,13 +182,17 @@ async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction)
         ]
         ext.section = "pay"
     else:
-        ext.client = [
-            llm.ClientItem(
-                client_name=name, kind=ClientKind.PAYMENT, product=None, sets=None, pieces=None,
-                price_per_set=None, price_per_piece=None, total=d.amount, currency=d.currency, note=d.note,
+        ext.client = []
+        for d, (_, name) in zip(ext.debt, found):
+            took = d.direction == DebtDirection.IN
+            ext.client.append(
+                llm.ClientItem(
+                    client_name=name, kind=ClientKind.PAYMENT if took else ClientKind.DEBT, product=None,
+                    sets=None, pieces=None, price_per_set=None, price_per_piece=None, total=d.amount,
+                    currency=d.currency,
+                    note=d.note or ("qarz holati: siz unga qarzdorsiz" if took and d.stated else None),
+                )
             )
-            for d, (_, name) in zip(ext.debt, found)
-        ]
         ext.section = "client"
     ext.debt = []
 
@@ -253,6 +254,8 @@ async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
 
 async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
     """Ishchi, model, kasb, mijoz yoki ta'minotchini tanlash tugmasi. False — o'zgarish yo'q."""
+    if draft["section"] == "money":
+        return _choose_debt_who(draft, cb)
     if draft["section"] == "client":
         return await _choose_client(session, user, draft, cb)
     if draft["section"] == "material":
@@ -358,6 +361,18 @@ async def _choose_price(session: AsyncSession, user: User, draft: dict, cb: kbs.
     return True
 
 
+def _choose_debt_who(draft: dict, cb: kbs.ResolveCb) -> bool:
+    """Qarzdagi bir xil ismli odamlardan qaysi biri — tanlangani bo'yicha yoziladi."""
+    if cb.kind != "dwho" or cb.line >= len(draft["debt"]):
+        return False
+    d = draft["debt"][cb.line]
+    options = d.get("who_ask") or []
+    if not 0 <= cb.item_id < len(options):
+        return False
+    drafts.set_who(d, options[cb.item_id])
+    return True
+
+
 async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
     if cb.kind != "client" or not user.is_owner or cb.line >= len(draft["client"]):
         return False
@@ -426,6 +441,8 @@ def pays_to_debt(draft: dict, user: User) -> bool:
         debt.append(
             {
                 "person": p["worker_q"] or p["worker_name"],
+                # Egasi «ishchi emas» dedi — qayta ishchiga yoki boshqa hisobga o'tkazilmaydi
+                "who": "person",
                 "direction": direction,
                 "stated": stated,
                 "amount": p["amount"] if p["amount"] != "0" else None,
@@ -482,7 +499,7 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
             return await _save_prices(session, user, draft)
         if draft["section"] == "material":
             return await _save_materials(session, bot, user, draft)
-        return await _save_money(session, user, draft)
+        return await _save_money(session, bot, user, draft)
 
     acc = user.account_id
     needs_approval = not user.is_owner and await repo.require_approval(session, acc)
@@ -800,10 +817,21 @@ async def _notify_suppliers(
     return notified, unlinked
 
 
-async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
-    from bot.handlers.money import debt_text, person_balance, personal_text
+async def _save_money(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
+    """Xarajat, daromad va qarz. Qarzdagi odam mijoz yoki ishchi bo'lsa (drafts.set_who) — uning hisobiga
+    yoziladi va unga xabar boradi; qolganlari — «Qarzlar»ga."""
+    from bot.handlers.entries import pay_text
+    from bot.handlers.money import (
+        client_balance_line,
+        client_outside_block,
+        client_text,
+        debt_text,
+        person_balance,
+        personal_text,
+    )
 
-    cards: list[tuple[str, str, int]] = []
+    # Kartochka va uning tugmalari (app=True — oxirgisida «Ilovani ochish»)
+    cards: list[tuple[str, Callable[..., InlineKeyboardMarkup]]] = []
     personal = []
     for p in draft["personal"]:
         if p.get("dup"):
@@ -819,10 +847,22 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             entry_date=date.fromisoformat(drafts.item_date(draft, p)),
             raw_text=draft["raw_text"],
         )
-        cards.append((personal_text(e), "p", e.id))
+        cards.append((personal_text(e), partial(kbs.money_entry_kb, "p", e.id)))
         personal.append(e)
     people: list[str] = []
+    client_entries: list[ClientEntry] = []
+    payments: list[WorkerPayment] = []
     for d in draft["debt"]:
+        if d.get("who") == "client":
+            e = await _save_debt_to_client(session, user, draft, d)
+            client_entries.append(e)
+            cards.append((client_text(e), partial(kbs.money_entry_kb, "c", e.id)))
+            continue
+        if d.get("who") == "worker":
+            pay = await _save_pay(session, user, draft, _debt_as_pay(d))
+            payments.append(pay)
+            cards.append((pay_text(pay, user), partial(kbs.pay_entry_kb, pay, user)))
+            continue
         e = await repo.create_debt_entry(
             session,
             owner_id=user.id,
@@ -835,7 +875,7 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
             entry_date=date.fromisoformat(drafts.item_date(draft, d)),
             raw_text=draft["raw_text"],
         )
-        cards.append((debt_text(e), "d", e.id))
+        cards.append((debt_text(e), partial(kbs.money_entry_kb, "d", e.id)))
         if e.person not in people:
             people.append(e.person)
 
@@ -845,23 +885,71 @@ async def _save_money(session: AsyncSession, user: User, draft: dict) -> Saved:
     skipped = sum(1 for p in draft["personal"] if p.get("dup"))
     if skipped:
         header += f"\n🔁 Avval kiritilgan {skipped} ta yozuv qayta qo'shilmadi."
+    clients = list({e.client_id: e.client for e in client_entries}.values())
     balance = [line for person in people for line in await person_balance(session, user.id, person)]
+    balance += [await client_balance_line(session, user.id, client) for client in clients]
+    balance += await _balance_lines(session, user, [], payments)
     if balance:
         header += "\n\n" + "\n".join(balance)
+    for client in clients:
+        if outside := (await client_outside_block(session, user.id, client))[1]:
+            header += "\n\n" + outside
+    notified = await _notify_clients(bot, session, user, client_entries)
+    notified += await _notify_workers(bot, session, user, [], payments, False)
+    if notified:
+        header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
     hint = await advisor.saved_hint(session, user.id, personal)
     if hint:
         header += "\n\n" + hint
     last = len(cards) - 1
-    return Saved(
-        header,
-        [(text, kbs.money_entry_kb(kind, entry_id, app=i == last)) for i, (text, kind, entry_id) in enumerate(cards)],
+    return Saved(header, [(text, make_kb(app=i == last)) for i, (text, make_kb) in enumerate(cards)])
+
+
+async def _save_debt_to_client(session: AsyncSession, user: User, draft: dict, d: dict) -> ClientEntry:
+    """Mijoz bilan qarz: undan olingan — to'lov, unga berilgan va «haqqim bor» — 💳 qarz."""
+    client = await repo.get_client(session, user.id, d["client_id"])
+    if client is None:
+        raise IntakeError("⚠️ Mijoz topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
+    took = d["direction"] == DebtDirection.IN
+    return await repo.create_client_entry(
+        session,
+        owner_id=user.id,
+        client_id=client.id,
+        kind=ClientKind.PAYMENT if took else ClientKind.DEBT,
+        product=None,
+        sets=None,
+        pieces=None,
+        unit_price=None,
+        price_unit=None,
+        amount=Decimal(d["amount"]),
+        currency=d["currency"],
+        note=d["note"] or ("qarz holati: siz unga qarzdorsiz" if took and d.get("stated") else None),
+        entry_date=date.fromisoformat(drafts.item_date(draft, d)),
+        raw_text=draft["raw_text"],
+        created_by=user.id,
     )
+
+
+def _debt_as_pay(d: dict) -> dict:
+    """Ishchi bilan qarz — hisob-kitob yozuvi: berdim — pay, oldim — return; qarz holati — balance
+    («u menga qarzdor» — ishchi qarzdor)."""
+    stated = bool(d.get("stated"))
+    out = d["direction"] == DebtDirection.OUT
+    return {
+        "worker_id": d["worker_id"],
+        "kind": PayKind.BALANCE if stated else PayKind.PAY if out else PayKind.RETURN,
+        "amount": d["amount"],
+        "worker_owes": stated and out,
+        "currency": d["currency"],
+        "note": d["note"],
+        "date": d.get("date"),
+    }
 
 
 async def _save_client(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
     """Mijoz bilan oldi-berdi. Botga ulangan mijozga xabar boradi; yangi mijoz bo'lsa — uning taklif havolasi."""
     from bot.handlers.admin import invite_link
-    from bot.handlers.money import client_balance_line, client_text
+    from bot.handlers.money import client_balance_line, client_outside_block, client_text
 
     entry_date = date.fromisoformat(draft["date"])
     entries = []
@@ -896,6 +984,10 @@ async def _save_client(session: AsyncSession, bot: Bot, user: User, draft: dict)
     clients = list({e.client_id: e.client for e in entries}.values())
     balance = [await client_balance_line(session, user.id, client) for client in clients]
     header += "\n\n" + "\n".join(balance)
+    # Mijozning eski qarzi «Qarzlar»da alohida turgan bo'lsa — qoldig'i kam ko'rinmasin, darhol aytiladi
+    for client in clients:
+        if outside := (await client_outside_block(session, user.id, client))[1]:
+            header += "\n\n" + outside
     notified = await _notify_clients(bot, session, user, entries)
     if notified:
         header += "\n📨 Xabar yuborildi: " + ", ".join(escape(name) for name in notified)
@@ -967,6 +1059,12 @@ async def analyze_for_client(session: AsyncSession, links: list[Client], text: s
     if not drafts.is_client(ext):
         hint = ext.question or "Tushunmadim. Masalan: «10 komplekt oldim», «2 million berdim», «3 komplekt qaytardim»."
         raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
+    if any(c.kind == ClientKind.DEBT for c in ext.client):
+        # Qarz holatini faqat korxona yozadi: mijoz «qarzim 5 million» desa — qoldig'iga qo'shilib ketmasin
+        raise IntakeError(
+            f"{said}\n\n🤔 Qarzingizni korxona yozadi — «🧾 Hisob-kitob»da ko'rasiz. Siz mol olsangiz, pul "
+            "to'lasangiz yoki mol qaytarsangiz yozing: «10 komplekt oldim», «2 million berdim»."
+        )
     raw = f"{draft['raw_text']} → {text}" if correcting and draft.get("raw_text") else text
     currency = (await repo.enabled_currencies(session, ctx.owner_id))[0]
     new = drafts.from_extraction(ext, raw, default_currency=currency, set_size=set_size)

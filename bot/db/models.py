@@ -239,6 +239,14 @@ class ClientKind:
     SALE = "sale"  # mijozga mol berildi — u qarzdor bo'ladi
     PAYMENT = "payment"  # mijoz pul to'ladi
     RETURN = "return"  # mijoz mol qaytardi
+    # Mol emas, qarz — u qarzdor bo'ladi: eski qarzi («Qarzlar»dan o'tkazilgan), «Tohirda 5 million haqqim bor»,
+    # unga qarzga berilgan pul
+    DEBT = "debt"
+
+
+# Mijoz qarzini oshiradiganlar (qolganlari kamaytiradi) va mol aytilmaydiganlar (faqat summa)
+CLIENT_OWES = (ClientKind.SALE, ClientKind.DEBT)
+CLIENT_MONEY = (ClientKind.PAYMENT, ClientKind.DEBT)
 
 
 class PriceUnit:
@@ -247,7 +255,7 @@ class PriceUnit:
 
 
 class ClientEntry(TimestampMixin, Base):
-    """Mijoz bilan oldi-berdi. Qoldiq = mol (sale) − to'lov (payment) − qaytgan mol (return):
+    """Mijoz bilan oldi-berdi. Qoldiq = mol (sale) + qarz (debt) − to'lov (payment) − qaytgan mol (return):
     musbat — mijoz bizga qarzdor."""
 
     __tablename__ = "client_entries"

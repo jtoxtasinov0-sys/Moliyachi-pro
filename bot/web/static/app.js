@@ -83,6 +83,14 @@ function dateLabel(iso) {
   return `${base}, ${WD_LONG[(d.getDay() + 6) % 7]}`;
 }
 
+// Vaqt belgisi (ISO, UTC) — mahalliy kun va soat, qisqa: «24.10 21:40»
+function timeLabel(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function haptic(kind) {
   try {
     if (!tg || !tg.HapticFeedback) return;
@@ -393,7 +401,7 @@ function feedRow(e, opts = {}) {
     amt = money(e.amount, e.currency);
     amtCls = e.kind === "payment" ? "pos" : "";
     if (!opts.noWho) sub.push("Mijoz");
-    if (e.kind !== "payment") {
+    if (e.kind === "sale" || e.kind === "return") {
       sub.push([e.product, qtyText(e)].filter(Boolean).join(" — "));
       if (e.unit_price != null) sub.push(money(e.unit_price, e.currency) + (e.price_unit === "piece" ? " / dona" : " / komplekt"));
     }
@@ -418,12 +426,15 @@ function feedRow(e, opts = {}) {
   }
   const del = opts.del ? `<button class="mini-del" data-del-feed="${e.type}:${e.id}" aria-label="O'chirish">🗑</button>` : "";
   const credit = opts.credit && e.type === "material" ? creditButton(e) : "";
+  // O'chirilgan yozuv: qachon o'chgani va «↩️ Qaytarish»
+  if (opts.restore && e.deleted_at) sub.unshift("🗑 " + timeLabel(e.deleted_at));
+  const restore = opts.restore ? `<button class="mini-restore" data-restore="${e.id}" aria-label="Qaytarish">↩️</button>` : "";
   return `
     <div class="mini-entry">
       <div class="mini-icon ${iconCls}">${icon}</div>
       <div class="info"><b>${esc(title)}</b><small>${esc(sub.filter(Boolean).join(" · "))}</small></div>
       <div class="amt ${amtCls}">${esc(amt)}</div>
-      ${credit}${del}
+      ${credit}${del}${restore}
     </div>`;
 }
 
@@ -1362,8 +1373,8 @@ async function personSheet(key) {
 
 // --- Mijozlar: optom savdo ---------------------------------------------------
 
-const CLIENT_KIND = { sale: "Mol berildi", payment: "To'lov olindi", return: "Mol qaytarildi" };
-const CLIENT_ICON = { sale: "📦", payment: "💵", return: "↩️" };
+const CLIENT_KIND = { sale: "Mol berildi", payment: "To'lov olindi", return: "Mol qaytarildi", debt: "Qarz yozildi" };
+const CLIENT_ICON = { sale: "📦", payment: "💵", return: "↩️", debt: "💳" };
 
 function qtyText(e) {
   if (e.sets) return `${fmtNum(e.sets)} komplekt` + (e.pieces ? ` (${fmtNum(e.pieces)} dona)` : "");
@@ -1492,6 +1503,7 @@ async function clientSheet(id) {
       <div><b class="amt ${b.cls}">${esc(b.text)}</b><small>${b.label}</small></div>
       <div><b>${fmtNum(c.sets)} komplekt</b><small>${periodLabel} · ${esc(moneyList(c.sold) || "0")}</small></div>
     </div>
+    <div id="clientOutside"></div>
     <div id="clientHistory">${SKELETONS}</div>
     ${invite}
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
@@ -1505,13 +1517,81 @@ async function clientSheet(id) {
   try {
     const data = await api(`/api/clients/entries?client_id=${id}&limit=100`);
     if (!$("clientHistory")) return;
-    $("clientHistory").innerHTML = data.items.map((e) => feedRow({ type: "client", ...e }, { date: true, del: true, noWho: true })).join("")
+    $("clientOutside").innerHTML = clientOutsideHtml(c, data.outside);
+    const deleted = data.deleted || [];
+    $("clientHistory").innerHTML = (data.items.map((e) => feedRow({ type: "client", ...e }, { date: true, del: true, noWho: true })).join("")
       + (data.items.some((e) => e.by_client) ? `<p class="muted small">✍️ — mijoz o'zi botda yozgan</p>` : "")
-      || `<p class="muted">Hali oldi-berdi yo'q</p>`;
+      || `<p class="muted">Hali oldi-berdi yo'q</p>`)
+      + (deleted.length ? `
+        <details class="cl-deleted">
+          <summary>🗑 O'chirilganlar (${deleted.length} ta) — xato o'chgan bo'lsa qaytaring</summary>
+          ${deleted.map((e) => feedRow({ type: "client", ...e }, { date: true, noWho: true, restore: true })).join("")}
+        </details>` : "");
     $("clientHistory").onclick = (ev) => {
+      const back = ev.target.closest("[data-restore]");
+      if (back) return restoreClientEntry(c, Number(back.dataset.restore));
       const btn = ev.target.closest("[data-del-feed]");
       if (btn) deleteClientEntry(Number(btn.dataset.delFeed.split(":")[1]), () => closeSheet());
     };
+    const outsideBox = $("clOutside");
+    if (outsideBox) outsideBox.onclick = (ev) => {
+      const btn = ev.target.closest("[data-merge]");
+      if (btn) mergeClientDebts(c, data.outside[Number(btn.dataset.merge)]);
+    };
+  } catch (e) { fail(e); }
+}
+
+// «Qarzlar»da shu mijoz ismi bilan turgan qarz — mijoz qoldig'iga kirmagan: har bir odam alohida ko'rsatiladi va
+// alohida qo'shiladi (shu ismli boshqa odam bo'lishi mumkin — egasi o'zi tanlaydi)
+function clientOutsideHtml(c, outside) {
+  if (!outside || !outside.length) return "";
+  const rows = outside.map((p, i) => {
+    const b = balanceInfo(p);
+    const also = (p.also || []).length
+      ? `<br>❗ Shu ismda ${esc(p.also.join(", "))} ham bor — o'sha emasligini tekshiring` : "";
+    return `<div class="cl-out-row">• <b>${esc(p.name)}</b> — ${b.label}: <b>${esc(b.text)}</b>${also}
+      <button class="act ok cl-merge" data-merge="${i}">➕ ${esc(p.name)} — ${esc(c.name)} hisobiga qo'shish</button></div>`;
+  }).join("");
+  const many = outside.length > 1 || outside.some((p) => (p.also || []).length)
+    ? " Bu o'sha odammi — har birini o'zingiz tekshirib qo'shing." : "";
+  return `
+    <div class="lg-tip" id="clOutside">⚠️ <b>«Qarzlar»da ham bor</b> — bu qarz ${esc(c.name)} hisobiga (yuqoridagi qoldiqqa) kirmagan.${many}${rows}</div>`;
+}
+
+// Qo'shilgach mijoz qoldig'i: hozirgisi + «Qarzlar»dagisi
+function sumBalances(list) {
+  const out = {};
+  for (const bal of list) for (const [cur, v] of Object.entries(bal || {})) out[cur] = (out[cur] || 0) + v;
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => Math.abs(v) > 0.001));
+}
+
+async function reopenClient(id) {
+  const c = state.clients.byId[id];
+  rememberClients(await api(`/api/clients?period=${(c && c.period) || state.clients.period}`));
+  refreshView();
+  clientSheet(id);
+}
+
+async function mergeClientDebts(c, person) {
+  const after = clientBalance({ balance: sumBalances([c.balance, person.balance]) });
+  const ask = `«Qarzlar»dagi «${person.name}» — bu ${c.name}mi? Qarzi ${c.name} hisobiga qo'shilsinmi? Shundan keyin: ${after.label} ${after.text}.`
+    + (c.linked ? " Mijozga ham xabar boradi." : "");
+  if (!(await confirmBox(ask))) return;
+  try {
+    const res = await api(`/api/clients/${c.id}/merge-debts`, { method: "POST", body: { keys: [person.key] } });
+    haptic("ok");
+    toast(res.count ? `Qo'shildi: ${res.count} ta yozuv` : "Qo'shiladigan qarz qolmagan");
+    await reopenClient(c.id);
+  } catch (e) { fail(e); }
+}
+
+async function restoreClientEntry(c, entryId) {
+  if (!(await confirmBox("Yozuv qaytarilsinmi? U yana mijoz qoldig'iga kiradi."))) return;
+  try {
+    await api(`/api/clients/entries/${entryId}/restore`, { method: "POST" });
+    haptic("ok");
+    toast("Qaytarildi");
+    await reopenClient(c.id);
   } catch (e) { fail(e); }
 }
 

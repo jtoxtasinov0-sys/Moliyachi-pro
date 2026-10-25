@@ -1118,6 +1118,7 @@ def _client_entry_json(e: ClientEntry) -> dict:
         "note": e.note,
         "raw_text": e.raw_text,
         "by_client": e.by_client,
+        "deleted_at": e.deleted_at.isoformat() if e.deleted_at else None,
     }
 
 
@@ -1242,14 +1243,41 @@ async def reinvite_client(request: web.Request, session: AsyncSession, user: Use
 @routes.get("/api/clients/entries")
 @endpoint(owner_only=True)
 async def client_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Oldi-berdi. Bitta mijoznikida (client_id) birinchi sahifada yana: outside — «Qarzlar»da qolib ketgan, mijoz
+    hisobiga kirmagan qarzlari (also — shu ismli ishchi yoki ta'minotchi); deleted — o'chirilgan yozuvlari (xato
+    o'chgan bo'lsa qaytarish uchun)."""
     limit, offset = _paging(request)
     client_id = request.query.get("client_id")
-    rows = await repo.list_client_entries(
-        session, user.id, client_id=int(client_id) if client_id and client_id.isdigit() else None,
-        limit=limit + 1, offset=offset,
-    )
+    client_id = int(client_id) if client_id and client_id.isdigit() else None
+    rows = await repo.list_client_entries(session, user.id, client_id=client_id, limit=limit + 1, offset=offset)
+    data = {"items": [_client_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit}
+    if client_id is not None and offset == 0 and (client := await repo.get_client(session, user.id, client_id)):
+        outside = await repo.client_outside_debts(session, user.id, client)
+        also = await repo.namesakes(session, user.id, [b.person for b in outside])
+        deleted = await repo.deleted_client_entries(session, user.id, client_id)
+        data["outside"] = [{**_debt_balance_json(b), "also": also.get(b.person, [])} for b in outside]
+        data["deleted"] = [_client_entry_json(e) for e in deleted]
+    return web.json_response(data)
+
+
+@routes.post(r"/api/clients/{id:\d+}/merge-debts")
+@endpoint(owner_only=True)
+async def merge_into_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """«Qarzlar»da shu mijoz ismi bilan turgan qarzlar uning hisobiga o'tadi — keys bo'lsa faqat tanlangan odamlar
+    (har biri alohida qo'shiladi, adashmaslik uchun); ulangan mijozga xabar boradi."""
+    from bot.handlers.money import merge_client_debts  # aylanma importdan qochish uchun
+
+    client = await repo.get_client(session, user.id, int(request.match_info["id"]))
+    if client is None:
+        raise ApiError(404, "Mijoz topilmadi")
+    keys = (await _json(request)).get("keys") if request.can_read_body else None
+    if keys is not None and not (isinstance(keys, list) and all(isinstance(k, str) for k in keys)):
+        raise ApiError(400, "Noto'g'ri so'rov")
+    merged = await merge_client_debts(session, user, client, keys)
+    if merged.notice:
+        _notify(request, *merged.notice)
     return web.json_response(
-        {"items": [_client_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit}
+        {"ok": True, "count": len(merged.entries), "added": _money(merged.added), "balance": _money(merged.balance)}
     )
 
 
@@ -1263,6 +1291,20 @@ async def delete_client_entry(request: web.Request, session: AsyncSession, user:
         raise ApiError(404, "Yozuv topilmadi")
     await repo.soft_delete(session, entry)
     if notice := await client_deleted_message(session, user, entry):
+        _notify(request, *notice)
+    return web.json_response({"ok": True})
+
+
+@routes.post(r"/api/clients/entries/{id:\d+}/restore")
+@endpoint(owner_only=True)
+async def restore_client_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """O'chirilgan yozuv qaytadi (qoldiqqa yana kiradi); ulangan mijozga xabar boradi."""
+    from bot.handlers.money import client_restored_message  # aylanma importdan qochish uchun
+
+    entry = await repo.restore_client_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi yoki allaqachon qaytarilgan")
+    if notice := await client_restored_message(session, user, entry):
         _notify(request, *notice)
     return web.json_response({"ok": True})
 

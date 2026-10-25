@@ -19,13 +19,19 @@ BTN_PENDING = "⏳ Tasdiq kutayotganlar"
 BTN_WORKERS = "👷 Ishchilar"
 BTN_MODELS = "🧵 Modellar"
 BTN_MATERIALS = "🧱 Xom ashyo"
+BTN_SUPPLIERS = "🏪 Ta'minotchilar"
 BTN_SETTINGS = "⚙️ Sozlamalar"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
     BTN_REPORT, BTN_RECENT, BTN_LEDGER, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
-    BTN_MODELS, BTN_MATERIALS, BTN_SETTINGS, BTN_HELP,
+    BTN_MODELS, BTN_MATERIALS, BTN_SUPPLIERS, BTN_SETTINGS, BTN_HELP,
 }
+
+
+# Egasining menyusi o'zgarganda oshiriladi: Telegram eski tugmalarni o'zi almashtirmaydi, shuning uchun
+# bot yangilangach har bir egaga yangi menyu bir marta yuboriladi (reminders.refresh_menus)
+MENU_VERSION = "2"
 
 
 def main_menu(user: User) -> ReplyKeyboardMarkup:
@@ -41,8 +47,9 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
         kb.button(text=BTN_ADVICE)
         kb.button(text=BTN_PENDING)
         kb.button(text=BTN_WORKERS)
-        kb.button(text=BTN_MODELS)
         kb.button(text=BTN_MATERIALS)
+        kb.button(text=BTN_SUPPLIERS)
+        kb.button(text=BTN_MODELS)
         kb.button(text=BTN_SETTINGS)
     kb.button(text=BTN_HELP)
     kb.adjust(2)
@@ -56,7 +63,8 @@ class DraftCb(CallbackData, prefix="d"):
 
 
 class ResolveCb(CallbackData, prefix="r"):
-    # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb) | pworker (pul) | supplier
+    # worker | model | job | client | pmodel | pjob (narx belgilashda model va kasb) | pworker (pul) | supplier |
+    # dwho (qarzdagi bir xil ismli odamlardan qaysi biri; item_id — variant tartibi)
     kind: str
     line: int
     item_id: int  # 0 — yangi qo'shish
@@ -138,7 +146,9 @@ class SupplierCb(CallbackData, prefix="sp"):
 class ClientCb(CallbackData, prefix="cl"):
     """Egasi: mijozlar ro'yxati va mijoz kartasi."""
 
-    action: str  # list | open | add | link | relink | toggle
+    # list | open | add | link | relink | toggle | merge<id> / mergey<id> («Qarzlar»dagi shu qarz yozuvi odamini
+    # mijoz hisobiga qo'shish: so'rash / qo'shish)
+    action: str
     client_id: int = 0
 
 
@@ -316,6 +326,16 @@ def debt_direction_kb(line: int, person: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=f"📥 {person[:20]}dan oldim", callback_data=DebtDirCb(line=line, direction="in"))
     kb.button(text=f"📤 {person[:20]}ga berdim", callback_data=DebtDirCb(line=line, direction="out"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def debt_who_kb(line: int, options: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Bir xil ismli odamlardan qaysi biri: mijoz, ta'minotchi, ishchi yoki «Qarzlar»dagi odam."""
+    kb = InlineKeyboardBuilder()
+    for n, label in options:
+        kb.button(text=label[:60], callback_data=ResolveCb(kind="dwho", line=line, item_id=n))
     kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
     kb.adjust(1)
     return kb.as_markup()

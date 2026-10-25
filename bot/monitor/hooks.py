@@ -220,6 +220,8 @@ _ACTIONS = [
     ("DELETE", r"/api/personal/\d+", "Xarajat/daromad yozuvini o'chirdi"),
     ("DELETE", r"/api/debts/\d+", "Qarz yozuvini o'chirdi"),
     ("DELETE", r"/api/clients/entries/\d+", "Mijoz yozuvini o'chirdi"),
+    ("POST", r"/api/clients/entries/\d+/restore", "↩️ O'chirilgan mijoz yozuvini qaytardi"),
+    ("POST", r"/api/clients/\d+/merge-debts", "➕ «Qarzlar»dagi qarzni mijoz hisobiga qo'shdi"),
     ("DELETE", r"/api/entries/\d+", "Ish yozuvini o'chirdi"),
     ("POST", r"/api/entries/\d+/approve", "Ish yozuvini tasdiqladi"),
     ("POST", r"/api/entries/\d+/reject", "Ish yozuvini rad etdi"),

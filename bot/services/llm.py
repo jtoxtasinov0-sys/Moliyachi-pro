@@ -108,9 +108,10 @@ class PayItem(BaseModel):
 
 class ClientItem(BaseModel):
     client_name: str | None = Field(description="Mijoz ismi, aytilmagan bo'lsa null")
-    kind: Literal["sale", "payment", "return"] | None = Field(
+    kind: Literal["sale", "payment", "return", "debt"] | None = Field(
         description="sale — mijozga mol berdim/sotdim; payment — mijoz pul to'ladi (men undan pul oldim); "
-        "return — mijoz molni qaytardi"
+        "return — mijoz molni qaytardi; debt — mol emas, mijoz menga qarzdor: eski qarzi yoki qarz holati "
+        "(\"Tohirda 5 million haqqim bor\", \"Tohirning 5 million qarzi bor\"), unga qarzga pul berdim"
     )
     product: str | None = Field(description="Mahsulot/model nomi (masalan: Maksima), aytilmasa null")
     sets: int | None = Field(description="Komplekt soni, aytilmasa null")
@@ -248,6 +249,10 @@ berilsa ("Aslcharmga 10 million berdim", "teri qarzini to'ladim") — debt, dire
 ro'yxatida bo'lmasa ham (yangi mijoz).
   * "Mijozlar" ro'yxatidagi odam pul to'lasa yoki undan pul olinsa — client, kind=payment. \
 "mijoz", "to'lov qildi", "pul tashladi" so'zlari ham client payment.
+  * "Mijozlar" ro'yxatidagi odam bilan qarz (mol yoki to'lov emas) ham client, debt emas — mijozning hamma \
+hisobi bitta joyda bo'lsin. U menga qarzdor — kind=debt, total — summa: "Tohirda 5 million haqqim bor", \
+"Tohirning eski qarzi 3 million", "Tohirga 1 million qarzga berdim". Men unga qarzdorman — kind=payment: \
+"Tohirga 2 million qarzman". Odam "Mijozlar" ro'yxatida bo'lmasa — debt.
   * Komplekt — bitta modelning har razmeridan bittadan. Komplekt soni — sets, dona soni — pieces.
   * Narx: "140 mingdan", "140 ming so'mlik" (komplekt soni bilan birga) — bir komplekt narxi \
 (price_per_set). "donasi 28 ming" — price_per_piece. "jami", "hammasi", "umumiy" bilan — total. \
@@ -447,7 +452,8 @@ def _client_rules(client_name: str) -> str:
         "\"1 millionlik mol oldim\" — sale (korxona mijozga mol berdi); \"2 million berdim\", \"2 million "
         "to'ladim\", \"pul tashladim\", \"pul o'tkazdim\" — payment; \"3 komplekt qaytardim\", \"molni "
         "qaytardim\" — return. Mol aytilmay faqat pul bilan \"oldim\" (\"500 ming oldim\") — mol emas, unknown: "
-        "question'da \"Mol oldingizmi yoki pul berdingizmi?\" deb so'ra."
+        "question'da \"Mol oldingizmi yoki pul berdingizmi?\" deb so'ra. Qarz holati (\"qarzim 5 million\") — "
+        "debt emas, unknown: question'da \"Qarzingizni korxona yozadi — «🧾 Hisob-kitob»da ko'rasiz\" deb yoz."
     )
 
 

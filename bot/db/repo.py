@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import (
+    CLIENT_OWES,
     Alias,
     Client,
     ClientEntry,
@@ -33,6 +34,7 @@ from bot.db.models import (
     WorkEntry,
     WorkerPayment,
 )
+from bot.services import matcher
 from bot.services.matcher import normalize
 
 # --- Sozlamalar -------------------------------------------------------------
@@ -64,6 +66,8 @@ DEFAULT_SETTINGS = {
     "guide_video_id": "",
     # Standart kasblar (Kroychi, Brsovkachi...) bir marta qo'shilgan: egasi o'chirsa, qaytib chiqmaydi
     "jobs_seeded": "0",
+    # Egasi oxirgi marta olgan menyu (keyboards.MENU_VERSION) — yangisi bo'lsa bir marta yuboriladi
+    "menu_version": "",
 }
 
 
@@ -1639,7 +1643,7 @@ async def client_stats(
         if st is None:
             continue
         amount = Decimal(str(amount or 0))
-        sign = 1 if kind == ClientKind.SALE else -1
+        sign = 1 if kind in CLIENT_OWES else -1
         st.balance[currency] = st.balance.get(currency, Decimal(0)) + sign * amount
         st.last_date = max(filter(None, [st.last_date, entry_date]), default=None)
         st.count += int(count)
@@ -1662,8 +1666,8 @@ async def client_stats(
 
 
 def _client_delta(e: ClientEntry) -> Decimal:
-    """Yozuvning qoldiqqa ta'siri: mol — qarz qo'shiladi, to'lov va qaytgan mol — ayriladi."""
-    return _dec(e.amount) if e.kind == ClientKind.SALE else -_dec(e.amount)
+    """Yozuvning qoldiqqa ta'siri: mol va qarz — qo'shiladi, to'lov va qaytgan mol — ayriladi."""
+    return _dec(e.amount) if e.kind in CLIENT_OWES else -_dec(e.amount)
 
 
 async def first_client_date(session: AsyncSession, owner_id: int) -> date | None:
@@ -1677,7 +1681,7 @@ async def first_client_date(session: AsyncSession, owner_id: int) -> date | None
 
 async def client_balance(session: AsyncSession, owner_id: int, client_id: int) -> dict[str, Decimal]:
     """Valyuta -> qoldiq: musbat — mijoz qarzdor, manfiy — oldindan to'lagan."""
-    signed = case((ClientEntry.kind == ClientKind.SALE, ClientEntry.amount), else_=-ClientEntry.amount)
+    signed = case((ClientEntry.kind.in_(CLIENT_OWES), ClientEntry.amount), else_=-ClientEntry.amount)
     rows = await session.execute(
         select(ClientEntry.currency, func.sum(signed))
         .where(ClientEntry.owner_id == owner_id, ClientEntry.client_id == client_id, ClientEntry.deleted_at.is_(None))
@@ -1703,6 +1707,101 @@ async def client_ledger(
         rows.append(ClientLedgerRow(e, {c: v for c, v in running.items() if v}))
         running[e.currency] = running.get(e.currency, Decimal(0)) - _client_delta(e)
     return rows, len(entries) > limit
+
+
+async def client_outside_debts(session: AsyncSession, owner_id: int, client: Client) -> list[DebtBalance]:
+    """«Qarzlar»da shu mijozning ismi bilan turgan ochiq qarzlar — mijoz hisobiga kirmagan («Hayrullo aka» —
+    mijoz Xayrullo): mijoz qo'shilishidan oldin yoki u mijoz ekani tanilmay yozilgan. Ism boshqa mijozga mosrog'i
+    bo'lsa — olinmaydi. Ta'minotchining o'z qatori olinmaydi; ismi ishchi yoki ta'minotchiga ham o'xshasa —
+    ko'rsatiladi, lekin egasi har birini o'zi tekshirib qo'shadi (namesakes)."""
+    rows = [b for b in await _debts_with_suppliers(session, owner_id) if b.source == "debt" and not b.settled]
+    if not rows:
+        return []
+    clients = [(c.id, c.name) for c in await list_clients(session, owner_id, active_only=False)]
+    aliases = await get_aliases(session, owner_id, "client")
+    return [b for b in rows if matcher.match(b.person, clients, aliases).exact_id == client.id]
+
+
+async def namesakes(session: AsyncSession, owner_id: int, names: list[str]) -> dict[str, list[str]]:
+    """Ism -> shu ismga mos keladigan ishchi va ta'minotchilar: ["Xayrulloh Uz charm (ta'minotchi)"] — bir xil
+    ismli boshqa odam bo'lishi mumkin, adashmaslik uchun egasiga ko'rsatiladi."""
+    groups = (
+        ("ishchi", [(w.id, w.name) for w in await list_workers(session, owner_id, active_only=False)]),
+        ("ta'minotchi", [(s.id, s.name) for s in await list_suppliers(session, owner_id, active_only=False)]),
+    )
+    out: dict[str, list[str]] = {}
+    for name in names:
+        for label, items in groups:
+            found = matcher.match(name, items).exact_id if items else None
+            if found is not None:
+                out.setdefault(name, []).append(f"{dict(items)[found]} ({label})")
+    return out
+
+
+async def move_debts_to_client(
+    session: AsyncSession, owner_id: int, client: Client, keys: list[str]
+) -> list[ClientEntry]:
+    """«Qarzlar»dagi shu odamlarning (person_key) yozuvlari mijoz hisobiga o'tadi: unga berilgani va «haqqim
+    bor» — 💳 qarz, undan olingani va «men qarzdorman» — to'lov. Sanasi o'zgarmaydi. Qarz yozuvi o'chadi (bazada
+    qoladi), shuning uchun umumiy qarzlar jami o'zgarmaydi. Qaytadi: mijozning yangi yozuvlari."""
+    if not keys:
+        return []
+    debts = await session.scalars(
+        select(DebtEntry)
+        .where(DebtEntry.owner_id == owner_id, DebtEntry.deleted_at.is_(None), DebtEntry.person_key.in_(keys))
+        .order_by(DebtEntry.entry_date, DebtEntry.id)
+    )
+    now = _now()
+    moved = []
+    for d in debts:
+        # Izoh mijozga ham ko'rinadi: qarz yozuvidagi ism va izoh (egasining o'zi uchun yozgani) qo'shilmaydi
+        note = "«Qarzlar»dan o'tkazildi" + (" (qarz holati)" if d.stated else "")
+        moved.append(
+            ClientEntry(
+                owner_id=owner_id,
+                client_id=client.id,
+                kind=ClientKind.DEBT if d.direction == DebtDirection.OUT else ClientKind.PAYMENT,
+                amount=d.amount,
+                currency=d.currency,
+                note=note,
+                entry_date=d.entry_date,
+                raw_text=d.raw_text,
+                created_by=owner_id,
+            )
+        )
+        d.deleted_at = now
+    session.add_all(moved)
+    await session.flush()
+    for e in moved:
+        await session.refresh(e, ["client"])
+    return moved
+
+
+async def deleted_client_entries(
+    session: AsyncSession, owner_id: int, client_id: int, limit: int = 50
+) -> list[ClientEntry]:
+    """Mijozning o'chirilgan yozuvlari (oxirgi o'chirilgani birinchi) — xato o'chgan bo'lsa qaytarish uchun."""
+    q = (
+        select(ClientEntry)
+        .where(
+            ClientEntry.owner_id == owner_id,
+            ClientEntry.client_id == client_id,
+            ClientEntry.deleted_at.is_not(None),
+        )
+        .order_by(ClientEntry.deleted_at.desc(), ClientEntry.id.desc())
+        .limit(limit)
+    )
+    return list(await session.scalars(q))
+
+
+async def restore_client_entry(session: AsyncSession, owner_id: int, entry_id: int) -> ClientEntry | None:
+    """O'chirilgan yozuv qaytadi va qoldiqqa yana kiradi. None — topilmadi yoki o'chirilmagan."""
+    entry = await session.get(ClientEntry, entry_id)
+    if entry is None or entry.owner_id != owner_id or entry.deleted_at is None:
+        return None
+    entry.deleted_at = None
+    await session.flush()
+    return entry
 
 
 # --- Xom ashyo --------------------------------------------------------------
