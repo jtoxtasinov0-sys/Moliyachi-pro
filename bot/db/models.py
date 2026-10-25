@@ -104,7 +104,8 @@ class Job(Base):
 
 class ModelPrice(Base):
     """Model bo'yicha kasb narxi: A-12 — Brsovkachi uchun bir dona 2000 so'm.
-    Bo'lmasa — kasbning o'z narxi (Job.price), u ham bo'lmasa — modelning umumiy narxi (ItemModel.price)."""
+    Bo'lmasa — kasbning o'z narxi (Job.price), u ham bo'lmasa — modelning umumiy (zagatovka) narxi
+    (ItemModel.price), faqat tikuvchiga: kroychi va boshqalarga narxsiz yoziladi."""
 
     __tablename__ = "model_prices"
 

@@ -612,8 +612,9 @@ async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> 
 
 
 def job_price_hint(entries: list[WorkEntry]) -> str | None:
-    """Model so'ralmaydigan kasbda (kroy, brsovka) narx yozilmagan bo'lsa — egasiga qanday qo'yish."""
-    jobs = sorted({e.job.name for e in entries if e.model_id is None and e.unit_price is None and e.job is not None})
+    """Kasb narxi yozilmagan bo'lsa (kroy, brsovka; kroychiga modelning zagatovka narxi olinmaydi) — egasiga qanday
+    qo'yish."""
+    jobs = sorted({e.job.name for e in entries if e.unit_price is None and e.job is not None})
     if not jobs:
         return None
     return (

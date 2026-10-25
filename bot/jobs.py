@@ -14,6 +14,8 @@ from bot.services.utils import parse_price
 DEFAULT_JOBS = ("Kroychi", "Brsovkachi", "Tikuvchi", "Tortuvchi", "Pardozchi")
 # Bu ishlarda model so'ralmaydi: «50 ta ish qildim» — kasbning o'z narxi bilan hisoblanadi
 MODEL_FREE_JOBS = ("Kroychi", "Brsovkachi")
+# Modelning umumiy narxi — zagatovka (tikuv) narxi: faqat shu so'zli kasbga («Tikuvchi», «Zagatovkachi»)
+SEWING_WORDS = ("tikuv", "tikish", "zagatov")
 
 # Standart kasblarning boshqacha aytilishi (normallashgan ko'rinishda)
 SYNONYMS = {
@@ -29,6 +31,18 @@ def _stems(name: str) -> list[str]:
     """«Kroychi» -> «kroy», «Tikuvchi» -> «tikuv»: kasb ham, ish ham shu so'z bilan aytiladi."""
     n = matcher.normalize(name)
     return [n[: -len(suffix)] for suffix in ("chi", "shi") if n.endswith(suffix) and len(n) > len(suffix) + 2]
+
+
+def is_sewing(name: str) -> bool:
+    """Tikuvchi kasbi: «Tikuvchi», «Тикувчи», «Zagatovkachi»."""
+    n = matcher.normalize(name)
+    return any(word in n for word in SEWING_WORDS)
+
+
+def takes_model_price(job: Job | None) -> bool:
+    """Modelning umumiy (zagatovka) narxi shu ishga olinadimi: faqat tikuvchiga va kasbsiz ishga. Kroychi va
+    boshqalarga — o'z narxi; yozilmagan bo'lsa ish narxsiz saqlanadi va egasiga eslatma chiqadi."""
+    return job is None or is_sewing(job.name)
 
 
 def price_example(name: str) -> str:

@@ -15,6 +15,7 @@ from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import advisor, drafts, intake, pdf_report
+from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
@@ -809,14 +810,17 @@ def _model_json(m: ItemModel, prices: dict[int, ModelPrice]) -> dict:
 
 
 def _worker_model_json(m: ItemModel, prices: dict[int, ModelPrice], job: Job | None) -> dict:
-    """Ishchiga faqat o'z kasbining narxi (bo'lmasa kasbning o'z narxi, u ham bo'lmasa umumiy narx) ko'rinadi."""
+    """Ishchiga faqat o'z kasbining narxi (bo'lmasa kasbning o'z narxi, u ham bo'lmasa modelning umumiy narxi —
+    faqat tikuvchiga: kroychiga zagatovka narxi ko'rinmaydi) ko'rinadi."""
     row = prices.get(job.id) if job else None
     if row:
         price, currency = row.price, row.currency
     elif job is not None and job.price is not None:
         price, currency = job.price, job.currency
-    else:
+    elif jobs_mod.takes_model_price(job):
         price, currency = m.price, m.currency
+    else:
+        price, currency = None, m.currency
     return {"id": m.id, "name": m.name, "price": _num(price), "currency": currency, "is_active": m.is_active}
 
 

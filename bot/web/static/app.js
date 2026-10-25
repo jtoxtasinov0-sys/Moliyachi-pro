@@ -2109,7 +2109,7 @@ function jobSheet(j, onCreated) {
     </div>
     <div class="field"><label>Modellar bo'yicha narx (shu kasb uchun)</label>
       <div class="price-list" id="jModelPrices"><div class="skeleton"></div></div>
-      <p class="muted small">Bo'sh — umumiy narx olinadi. Tikuvchi va kroychining narxi alohida: har bir kasbga o'z narxi.</p>
+      <p class="muted small">Bo'sh — yuqoridagi kasb narxi olinadi. Tikuvchi va kroychining narxi alohida: modelning zagatovka narxi faqat tikuvchiga.</p>
     </div>
     <label class="switch-row"><div>✂️ Modelsiz ham bo'ladi<small>Kroy, brsovka: modellarga narx qo'yilmagan bo'lsa «50 ta ish qildim» umumiy narx bilan darhol yoziladi; qo'yilgan bo'lsa — modellar narxi bilan variant chiqadi</small></div><span class="switch"><input type="checkbox" id="jFree" ${j.model_free ? "checked" : ""}><i></i></span></label>`}
     <button class="primary" id="jSave">${isNew ? "Qo'shish" : "Saqlash"}</button>
@@ -2227,7 +2227,7 @@ function modelSheet(m) {
     <div class="field"><label>Bir dona uchun ish haqi</label>
       <div class="price-list">
         ${rows}
-        <div class="price-row"><span>Umumiy<small>kasbining narxi yozilmagan ishlarga</small></span><input class="input" id="mPrice" inputmode="decimal" value="${m.price != null ? m.price : ""}" placeholder="—" aria-label="Umumiy narx"></div>
+        <div class="price-row"><span>Umumiy<small>zagatovka narxi — faqat tikuvchiga</small></span><input class="input" id="mPrice" inputmode="decimal" value="${m.price != null ? m.price : ""}" placeholder="—" aria-label="Umumiy narx"></div>
         <div class="price-row"><span>Valyuta</span><select class="select" id="mCur" style="margin:0" aria-label="Valyuta">${curOptions}</select></div>
       </div>
     </div>
