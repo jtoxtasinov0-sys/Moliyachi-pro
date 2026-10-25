@@ -201,6 +201,12 @@
 
       <!-- Mijozlar: optom savdo (mol berildi, to'lov olindi) -->
       <section class="view" id="view-clients" hidden>
+        <div class="seg team-seg" hidden>
+          <button data-team="workers">Ishchilar</button>
+          <button data-team="models">Modellar</button>
+          <button data-team="materials">Xom ashyo</button>
+          <button data-team="clients" class="on">Mijozlar</button>
+        </div>
         <div class="seg" id="cPeriodSeg">
           <button data-period="day">Bugun</button>
           <button data-period="week">Hafta</button>
@@ -305,10 +311,11 @@
 
       <!-- Ishchilar -->
       <section class="view" id="view-workers" hidden>
-        <div class="seg trio team-seg" hidden>
+        <div class="seg team-seg" hidden>
           <button data-team="workers" class="on">Ishchilar</button>
           <button data-team="models">Modellar</button>
           <button data-team="materials">Xom ashyo</button>
+          <button data-team="clients">Mijozlar</button>
         </div>
         <div class="page-head">
           <h2 class="page-title">Ishchilar</h2>
@@ -326,10 +333,11 @@
 
       <!-- Modellar -->
       <section class="view" id="view-models" hidden>
-        <div class="seg trio team-seg" hidden>
+        <div class="seg team-seg" hidden>
           <button data-team="workers">Ishchilar</button>
           <button data-team="models" class="on">Modellar</button>
           <button data-team="materials">Xom ashyo</button>
+          <button data-team="clients">Mijozlar</button>
         </div>
         <div class="page-head">
           <h2 class="page-title" id="modelsTitle">Modellar</h2>
@@ -341,10 +349,11 @@
 
       <!-- Xom ashyo: teri, material, kley... xaridlari -->
       <section class="view" id="view-materials" hidden>
-        <div class="seg trio team-seg" hidden>
+        <div class="seg team-seg" hidden>
           <button data-team="workers">Ishchilar</button>
           <button data-team="models">Modellar</button>
           <button data-team="materials" class="on">Xom ashyo</button>
+          <button data-team="clients">Mijozlar</button>
         </div>
         <div class="seg" id="xPeriodSeg">
           <button data-period="day">Bugun</button>
