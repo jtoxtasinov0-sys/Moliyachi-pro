@@ -12,7 +12,8 @@ qo'lda qo'shgan boshqa kasb («👷 Ishchilar → 🏷 Kasblar», ilovada «Jamo
 narxi qo'yiladi: «🧵 Modellar → 💰 A-12» da tugma bilan yoki «brsovka 2000, kroy 1500» deb yozib, ilovada model
 oynasida yoki istalgan joyda ovoz/matn bilan: «A-12 modelga brsovka 2000dan». Ish topshirilganda kasb aytilsa
 («A-12 dan 40 ta brsovka qildim») — o'sha kasb narxi, aytilmasa — ishchining o'z kasbi narxi olinadi; kasb narxi
-yozilmagan bo'lsa — kasbning o'z narxi, u ham bo'lmasa — modelning umumiy narxi. Hisobotda har bir model qaysi
+yozilmagan bo'lsa — kasbning o'z narxi, u ham bo'lmasa — modelning umumiy (zagatovka) narxi, faqat tikuvchiga.
+Kroychiga faqat kroy narxlari: zagatovka narxi unga hech qachon olinmaydi. Hisobotda har bir model qaysi
 bosqichdan (kroy, brsovka, tikuv...) qancha o'tgani ko'rinadi.
 
 **✂️ Kroy va brsovka — modellar narxi yoki modelsiz:** har bir kasbning o'z narxlari bor — tikuvchi va kroychining
@@ -25,8 +26,11 @@ Kroychi «10 ta kroy qildim» desa: modellarga Kroychi narxi qo'yilgan bo'lsa �
 qo'yilmagan bo'lsa — model so'ralmay umumiy narx bilan darhol yoziladi (50 × 2000 = 100 000 so'm). Bu — kasb
 kartasidagi «✂️ Modelsiz ham bo'ladi» (Kroychi va Brsovkachida sukut bo'yicha yoqiq); o'chirilsa — har doim model
 so'raladi, Tikuvchi va Tortuvchidagidek. Narx tartibi: modelning shu kasb narxi → kasbning umumiy narxi → modelning
-umumiy narxi. Narx yozilmagan bo'lsa ham ish saqlanadi va egasiga eslatma chiqadi. Hisobotda modelsiz ishlar
-«Modelsiz» bo'lib ko'rinadi.
+umumiy (zagatovka) narxi — oxirgisi faqat tikuvchiga (nomida «tikuv», «tikish» yoki «zagatovka» bor kasb) va kasbsiz
+ishga. Kroychi, brsovkachi va boshqalarga o'z narxi yozilmagan bo'lsa ish narxsiz saqlanadi va egasiga eslatma chiqadi
+(«💡 Kroychi narxi yozilmagan»), narx qo'yilgach shu narx bilan hisoblanadi; ishchi ilovasida ham kroychiga faqat
+kroy narxlari ko'rinadi. Avval kroychi ishiga zagatovka narxi bilan yozilgan yozuvlar bir marta avtomatik tuzatilgan.
+Hisobotda modelsiz ishlar «Modelsiz» bo'lib ko'rinadi.
 
 **⚡ Darhol saqlash:** ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, soni yoki summasi aytildi)
 bot «To'g'rimi?» deb so'ramay darhol saqlaydi va nima saqlanganini ko'rsatadi — xato bo'lsa, kartadagi «✏️ Tahrirlash»

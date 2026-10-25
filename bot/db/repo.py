@@ -11,6 +11,7 @@ from decimal import Decimal
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from bot.db.models import (
     CLIENT_OWES,
@@ -421,7 +422,9 @@ async def unit_price(
     session: AsyncSession, model: ItemModel | None, job_id: int | None
 ) -> tuple[Decimal | None, str | None]:
     """Bir dona uchun ish haqi: modelning shu kasb narxi, u bo'lmasa — kasbning o'z narxi, u ham bo'lmasa —
-    modelning umumiy narxi. Model aytilmagan (kroy, brsovka) — kasbning o'z narxi."""
+    modelning umumiy (zagatovka) narxi, faqat tikuvchiga. Model aytilmagan (kroy, brsovka) — kasbning o'z narxi."""
+    from bot.jobs import takes_model_price  # aylanma importdan qochish uchun
+
     if model is not None and job_id:
         row = await session.get(ModelPrice, (model.id, job_id))
         if row is not None:
@@ -429,7 +432,7 @@ async def unit_price(
     job = await session.get(Job, job_id) if job_id else None
     if job is not None and job.price is not None:
         return job.price, job.currency
-    if model is None or model.price is None:
+    if model is None or model.price is None or not takes_model_price(job):
         return None, None
     return model.price, model.currency
 
@@ -582,14 +585,29 @@ async def reprice_entry(
     entry.unit_price, entry.price_currency = await unit_price(session, model, job_id)
 
 
+async def sewing_job_ids(session: AsyncSession, owner_id: int) -> list[int]:
+    """Modelning umumiy (zagatovka) narxi olinadigan kasblar — tikuvchi (o'chirilganlari ham)."""
+    from bot.jobs import is_sewing  # aylanma importdan qochish uchun
+
+    jobs = await session.execute(select(Job.id, Job.name).where(Job.owner_id == owner_id))
+    return [job_id for job_id, name in jobs if is_sewing(name)]
+
+
+# Tikuvchi kasbi (_work_rows_query da sewing_job_ids bilan): modelning umumiy narxi faqat unga va kasbsiz ishga
+_SEWING_JOB = aliased(Job, name="sewing_job")
+_TAKES_MODEL_PRICE = or_(WorkEntry.job_id.is_(None), _SEWING_JOB.id.is_not(None))
 # Narx yozuvda saqlanmagan bo'lsa (yozilgan paytda narx yo'q edi) — hozirgi narx: modelning kasb narxi, kasbning
-# o'z narxi, modelning umumiy narxi
-_REPORT_PRICE = func.coalesce(WorkEntry.unit_price, ModelPrice.price, Job.price, ItemModel.price)
-_REPORT_CURRENCY = func.coalesce(WorkEntry.price_currency, ModelPrice.currency, Job.currency, ItemModel.currency)
+# o'z narxi, modelning umumiy (zagatovka) narxi — faqat tikuvchiga
+_REPORT_PRICE = func.coalesce(
+    WorkEntry.unit_price, ModelPrice.price, Job.price, case((_TAKES_MODEL_PRICE, ItemModel.price))
+)
+_REPORT_CURRENCY = func.coalesce(
+    WorkEntry.price_currency, ModelPrice.currency, Job.currency, case((_TAKES_MODEL_PRICE, ItemModel.currency))
+)
 
 
-def _work_rows_query(*columns):
-    """Model aytilmagan ish (kroy, brsovka) ham kiradi — model nomi bo'sh."""
+def _work_rows_query(*columns, sewing: list[int]):
+    """Model aytilmagan ish (kroy, brsovka) ham kiradi — model nomi bo'sh. sewing — sewing_job_ids."""
     return (
         select(*columns)
         .select_from(WorkEntry)
@@ -599,6 +617,7 @@ def _work_rows_query(*columns):
         .outerjoin(
             ModelPrice, (ModelPrice.model_id == WorkEntry.model_id) & (ModelPrice.job_id == WorkEntry.job_id)
         )
+        .outerjoin(_SEWING_JOB, (_SEWING_JOB.id == WorkEntry.job_id) & _SEWING_JOB.id.in_(sewing))
     )
 
 
@@ -626,6 +645,7 @@ async def work_report(
             func.sum(WorkEntry.quantity * _REPORT_PRICE),
             _REPORT_CURRENCY,
             Job.name,
+            sewing=await sewing_job_ids(session, owner_id),
         )
         .where(
             WorkEntry.owner_id == owner_id,
@@ -674,6 +694,7 @@ async def work_stat_rows(
             func.sum(WorkEntry.quantity * _REPORT_PRICE),
             _REPORT_CURRENCY,
             Job.name,
+            sewing=await sewing_job_ids(session, owner_id),
         )
         .where(
             WorkEntry.owner_id == owner_id,
@@ -938,7 +959,12 @@ async def worker_balances(
             b.start[p.currency] = _dec(p.amount)
 
     work_q = (
-        _work_rows_query(WorkEntry.worker_id, _REPORT_CURRENCY, func.sum(WorkEntry.quantity * _REPORT_PRICE))
+        _work_rows_query(
+            WorkEntry.worker_id,
+            _REPORT_CURRENCY,
+            func.sum(WorkEntry.quantity * _REPORT_PRICE),
+            sewing=await sewing_job_ids(session, owner_id),
+        )
         .where(
             WorkEntry.owner_id == owner_id,
             WorkEntry.deleted_at.is_(None),
@@ -1032,7 +1058,9 @@ def _ledger_key(row: LedgerRow) -> tuple:
 
 def work_pay(entry: WorkEntry, prices: dict[int, dict[int, ModelPrice]]) -> tuple[Decimal | None, str | None]:
     """Yozuvning ish haqi — hisobotdagidek: yozilgan narx, bo'lmasa modelning kasb narxi, kasbning o'z narxi,
-    modelning umumiy narxi."""
+    modelning umumiy (zagatovka) narxi — faqat tikuvchiga."""
+    from bot.jobs import takes_model_price  # aylanma importdan qochish uchun
+
     price, currency = entry.unit_price, entry.price_currency
     if price is None:
         row = prices.get(entry.model_id, {}).get(entry.job_id) if entry.model_id and entry.job_id else None
@@ -1040,7 +1068,7 @@ def work_pay(entry: WorkEntry, prices: dict[int, dict[int, ModelPrice]]) -> tupl
             price, currency = row.price, row.currency
         elif entry.job is not None and entry.job.price is not None:
             price, currency = entry.job.price, entry.job.currency
-        elif entry.model is not None:
+        elif entry.model is not None and takes_model_price(entry.job):
             price, currency = entry.model.price, entry.model.currency
     if price is None or not currency:
         return None, None

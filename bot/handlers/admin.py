@@ -790,12 +790,17 @@ async def _job_prices_card(session: AsyncSession, job, target: int | None) -> tu
         kb.button(text=f"{mark}{m.name}", callback_data=kbs.JobPriceCb(action="model", job_id=job.id, model_id=m.id))
     kb.button(text=f"↩️ {job.name}", callback_data=kbs.JobCb(action="open", job_id=job.id))
     kb.adjust(*_rows(len(shown), 2), 1)
-    fallback = f"umumiy narx ({_job_price(job)})" if job.price is not None else "modelning umumiy narxi"
+    if job.price is not None:
+        fallback = f"umumiy narx ({_job_price(job)}) olinadi"
+    elif jobs_mod.takes_model_price(job):
+        fallback = "modelning umumiy (zagatovka) narxi olinadi"
+    else:
+        fallback = "narx yozilmagan: ish narxsiz saqlanadi va eslatma chiqadi (zagatovka narxi faqat tikuvchiga)"
     text = f"🏷 <b>{escape(job.name)}</b> — modellar bo'yicha narx (bir dona)\n\n"
     text += ("\n".join(rows) if rows else "Hali model yo'q — «🧵 Modellar»da qo'shing.")
     if len(items) > len(shown):
         text += f"\n… yana {len(items) - len(shown)} ta model — ilovada"
-    text += f"\n\n«—» — {fallback} olinadi."
+    text += f"\n\n«—» — {fallback}."
     if target is not None:
         name = next((m.name for m, _ in shown if m.id == target), "")
         text += (
@@ -1106,7 +1111,8 @@ async def _price_card(session: AsyncSession, model: ItemModel, target: int | Non
     if target is None:
         text += (
             "Kasbni bosing yoki narxlarni yozing: <i>«brsovka 2000»</i>, <i>«kroy 1500, tikuv 5000»</i>.\n"
-            "Faqat son yozsangiz — umumiy narx (kasbining narxi yozilmagan ishlarga olinadi)."
+            "Faqat son yozsangiz — umumiy (zagatovka) narx: faqat tikuvchiga olinadi, kroychi va boshqalarga — "
+            "o'z narxi."
         )
     else:
         name = "Umumiy narx" if target == 0 else next((j.name for j in jobs if j.id == target), "Kasb")

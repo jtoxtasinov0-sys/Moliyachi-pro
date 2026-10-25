@@ -85,8 +85,28 @@ def _add_new_columns(conn: Connection) -> None:
                 log.info("Ustun qo'shildi: %s.%s", table, name)
 
 
-# Bir marta bajariladigan ma'lumot o'zgarishlari: nomi -> SQL. Bajarilgani data_migrations ga yoziladi va qayta
-# bajarilmaydi (keyin qo'lda o'zgartirilgan yozuvlar buzilmaydi)
+def _drop_model_fallback_prices(conn: Connection) -> int:
+    """Kroychi va boshqa kasblarga (tikuvchidan boshqa) modelning umumiy (zagatovka) narxi bilan yozilgan ishlar:
+    yozilgan narx olib tashlanadi — hisobotda modelning shu kasb narxi yoki kasbning o'z narxi olinadi, ular ham
+    bo'lmasa ish narxsiz qoladi (egasi narx qo'ygach hisoblanadi). Qaytadi: nechta yozuv."""
+    from bot.jobs import is_sewing  # aylanma importdan qochish uchun
+
+    rows = conn.execute(text(
+        "SELECT w.id, j.name FROM work_entries w "
+        "JOIN jobs j ON j.id = w.job_id "
+        "JOIN item_models m ON m.id = w.model_id "
+        "LEFT JOIN model_prices p ON p.model_id = w.model_id AND p.job_id = w.job_id "
+        "WHERE w.deleted_at IS NULL AND w.unit_price = m.price AND w.price_currency = m.currency "
+        "AND (j.price IS NULL OR j.price <> w.unit_price) AND (p.price IS NULL OR p.price <> w.unit_price)"
+    ))
+    ids = [{"id": entry_id} for entry_id, name in rows if not is_sewing(name)]
+    if ids:
+        conn.execute(text("UPDATE work_entries SET unit_price = NULL, price_currency = NULL WHERE id = :id"), ids)
+    return len(ids)
+
+
+# Bir marta bajariladigan ma'lumot o'zgarishlari: nomi -> SQL yoki funksiya (nechta yozuv o'zgargani qaytadi).
+# Bajarilgani data_migrations ga yoziladi va qayta bajarilmaydi (keyin qo'lda o'zgartirilgan yozuvlar buzilmaydi)
 _DATA_MIGRATIONS = {
     # Qarzga olish belgisidan oldin yozilgan xom ashyo: ta'minotchisi va narxi bor xarid — unga qarz (umumiy
     # qarzlarga qo'shiladi), kimdan olingani yozilmagani — oddiy xarajat. Xatosi ilovada yoki botda «💳» bilan tuzatiladi
@@ -94,6 +114,8 @@ _DATA_MIGRATIONS = {
         "UPDATE material_entries SET on_credit = TRUE WHERE on_credit = FALSE AND deleted_at IS NULL "
         "AND amount IS NOT NULL AND supplier IS NOT NULL AND supplier <> ''"
     ),
+    # Zagatovka narxi faqat tikuvchiga: kroychi ishiga modelning umumiy narxi bilan yozilganlari tuzatiladi
+    "model_price_only_sewing": _drop_model_fallback_prices,
 }
 
 
@@ -102,7 +124,7 @@ def _run_data_migrations(conn: Connection) -> None:
     for name, sql in _DATA_MIGRATIONS.items():
         if name in done:
             continue
-        count = conn.execute(text(sql)).rowcount
+        count = sql(conn) if callable(sql) else conn.execute(text(sql)).rowcount
         conn.execute(text("INSERT INTO data_migrations (name) VALUES (:name)"), {"name": name})
         log.info("Ma'lumot yangilandi: %s (%s ta yozuv)", name, count)
 

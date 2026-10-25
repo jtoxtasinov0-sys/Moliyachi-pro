@@ -14,7 +14,8 @@ job_q — xabarda aytilgan kasb («brsovka»). Aytilmasa va job_auto bo'lsa — 
 model_free — model aytilmasa so'ralmaydi, kasbning o'z narxi bilan saqlanadi: kasbda «Modelsiz ham bo'ladi» (kroy,
 brsovka) va modellarga shu kasb narxi qo'yilmagan, yoki model_none — «✂️ Modelsiz» tugmasi bosilgan. Modellarga
 kasb narxi qo'yilgan bo'lsa — model narxi bilan variant bo'lib so'raladi.
-Narx (price) — model va kasb bo'yicha: modelning kasb narxi, kasbning o'z narxi, modelning umumiy narxi.
+Narx (price) — model va kasb bo'yicha: modelning kasb narxi, kasbning o'z narxi, modelning umumiy (zagatovka)
+narxi — faqat tikuvchiga (jobs.takes_model_price); kroychi va boshqalarga o'z narxi yozilmagan bo'lsa — narxsiz.
 date — qatorning o'z sanasi (yozishma skrinshotida har xil kunlar), None — umumiy sana.
 Ishchi bilan pul (avans, ish haqi, qaytarilgan pul, hisob holati) — shu qoralamada "pays" (ish bo'lmasa ham):
 {
@@ -949,11 +950,13 @@ def _render(draft: dict, owner: bool = True) -> str:
         model = escape(ln["model_name"] or (f"{ln['model_q']}?" if ln["model_q"] else "?"))
         qty = f"{ln['quantity']} ta" if ln["quantity"] else "? ta"
         job = ln["job_name"] or (f"{ln['job_q']}?" if ln["job_q"] else None)
-        if ln["model_id"] is None and not ln["model_q"] and ln.get("model_free") and job:
+        free = ln["model_id"] is None and not ln["model_q"] and ln.get("model_free") and job
+        if free:
             # Model so'ralmaydigan ish: «Kroychi — 50 ta × 2 000 so'm»
             model, job = escape(job), None
-            if not ln["price"] and ln["job_name"] not in no_price:
-                no_price.append(ln["job_name"])
+        # Kasb narxi yozilmagan (kroychiga modelning zagatovka narxi olinmaydi)
+        if not ln["price"] and ln["job_name"] and (free or ln["model_id"]) and ln["job_name"] not in no_price:
+            no_price.append(ln["job_name"])
         if job:
             qty += f" · {escape(job)}"
         row = f"• {model} — {qty}"
@@ -1307,7 +1310,7 @@ def _render_price(draft: dict) -> str:
         rows.append(row)
     parts.append("\n".join(rows))
     if any(not p["job_q"] for p in draft["prices"]):
-        parts.append("ℹ️ Umumiy narx — kasbining narxi yozilmagan ishlarga olinadi.")
+        parts.append("ℹ️ Umumiy (zagatovka) narx — faqat tikuvchiga. Kroychi va boshqa kasblarga — o'z narxi.")
     if any(p["model_id"] is None and not p["model_q"] and p["job_q"] for p in draft["prices"]):
         parts.append("ℹ️ Kasbning o'z narxi — hamma modellarga (modelga shu kasb narxi qo'yilmagan bo'lsa).")
     return "\n\n".join(parts)
