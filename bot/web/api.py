@@ -1431,7 +1431,10 @@ async def material_credit(request: web.Request, session: AsyncSession, user: Use
 
 # --- Ta'minotchilar: xom ashyo kimdan olinadi ---------------------------------
 
-async def _supplier_json(request: web.Request, sp: Supplier, stats: dict[int, repo.SupplierStats]) -> dict:
+async def _supplier_json(
+    request: web.Request, sp: Supplier, stats: dict[int, repo.SupplierStats], debts: dict[str, dict[str, Decimal]]
+) -> dict:
+    """debt — u bilan qarz (umumiy «Qarzlar»dagi qatori): musbat — u qarzdor, manfiy — siz unga qarzdorsiz."""
     # Havola doimiy: ulangandan keyin ham ko'rinadi — ta'minotchi undan istalgan vaqt qayta kiradi
     link = None
     if sp.is_active and sp.invite_token:
@@ -1448,11 +1451,17 @@ async def _supplier_json(request: web.Request, sp: Supplier, stats: dict[int, re
         "month_count": st.month_count,
         "total": _money(st.total),
         "count": st.count,
+        "debt": _money(debts.get(repo.person_key(sp.name), {})),
     }
 
 
 async def _supplier_stats(session: AsyncSession, owner_id: int) -> dict[int, repo.SupplierStats]:
     return await repo.supplier_stats(session, owner_id, today().replace(day=1))
+
+
+async def _one_supplier_json(request: web.Request, session: AsyncSession, supplier: Supplier) -> dict:
+    stats = await _supplier_stats(session, supplier.owner_id)
+    return await _supplier_json(request, supplier, stats, await repo.supplier_debt_balances(session, supplier.owner_id))
 
 
 async def _get_supplier(request: web.Request, session: AsyncSession, user: User) -> Supplier:
@@ -1466,8 +1475,9 @@ async def _get_supplier(request: web.Request, session: AsyncSession, user: User)
 @endpoint(owner_only=True)
 async def suppliers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     stats = await _supplier_stats(session, user.id)
+    debts = await repo.supplier_debt_balances(session, user.id)
     suppliers_ = await _with_tokens(session, await repo.list_suppliers(session, user.id, False))
-    items = [await _supplier_json(request, sp, stats) for sp in suppliers_]
+    items = [await _supplier_json(request, sp, stats, debts) for sp in suppliers_]
     items.sort(key=lambda sp: (not sp["is_active"], -sp["month_count"], -sp["count"], sp["name"].lower()))
     return web.json_response({"items": items})
 
@@ -1482,7 +1492,7 @@ async def add_supplier(request: web.Request, session: AsyncSession, user: User) 
     if await repo.get_supplier_by_name(session, user.id, name):
         raise ApiError(400, "Bunday ta'minotchi bor")
     supplier = await repo.create_supplier(session, user.id, name)
-    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
+    return web.json_response(await _one_supplier_json(request, session, supplier))
 
 
 @routes.post(r"/api/suppliers/{id:\d+}/toggle")
@@ -1492,7 +1502,7 @@ async def toggle_supplier(request: web.Request, session: AsyncSession, user: Use
     supplier.is_active = not supplier.is_active
     await _with_tokens(session, [supplier])
     await session.flush()
-    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
+    return web.json_response(await _one_supplier_json(request, session, supplier))
 
 
 @routes.post(r"/api/suppliers/{id:\d+}/invite")
@@ -1503,7 +1513,7 @@ async def reinvite_supplier(request: web.Request, session: AsyncSession, user: U
         raise ApiError(400, "Avval ta'minotchini faollashtiring")
     # Havola doimiy: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)
     await repo.invite_token(session, supplier)
-    return web.json_response(await _supplier_json(request, supplier, await _supplier_stats(session, user.id)))
+    return web.json_response(await _one_supplier_json(request, session, supplier))
 
 
 # --- Ishchi bilan hisob-kitob: avans, ish haqi, qaytarilgan pul, qoldiq ------------
@@ -1709,6 +1719,47 @@ async def reset_worker(request: web.Request, session: AsyncSession, user: User) 
             "count": count,
             "removed": _money(removed.balance),
             "worker": await _one_worker_json(request, session, worker),
+        }
+    )
+
+
+@routes.post(r"/api/clients/{id:\d+}/reset")
+@endpoint(owner_only=True)
+async def reset_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Mijoz oynasidagi tugma: shu mijozning hamma oldi-berdisi o'chadi, qoldig'i 0 — umumiy «Qarzlar»dan ham
+    ayriladi. Yozuvlar «🗑 O'chirilganlar»da turadi (bittalab qaytarsa bo'ladi). Ulangan mijozga xabar boradi.
+    removed — o'chgan qoldiq (musbat — mijoz qarzi edi, manfiy — oldindan to'lagani)."""
+    from bot.handlers.money import client_reset_message  # aylanma importdan qochish uchun
+
+    client = await repo.get_client(session, user.id, int(request.match_info["id"]))
+    if client is None:
+        raise ApiError(404, "Mijoz topilmadi")
+    removed = await repo.client_balance(session, user.id, client.id)
+    count = await repo.reset_entries(session, user.id, RESET_TABLES["clients"], client_id=client.id)
+    if count and (notice := client_reset_message(user, client)):
+        _notify(request, *notice)
+    return web.json_response({"ok": True, "count": count, "removed": _money(removed)})
+
+
+@routes.post(r"/api/suppliers/{id:\d+}/reset")
+@endpoint(owner_only=True)
+async def reset_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Ta'minotchi oynasidagi tugma: undan olingan hamma xom ashyo va u bilan qarz yozuvlari o'chadi, qarz 0 —
+    umumiy «Qarzlar»dan ham ayriladi. Ta'minotchining o'zi qoladi. removed — o'chgan qarz (manfiy — sizning
+    qarzingiz edi, musbat — uning qarzi)."""
+    from bot.handlers.money import supplier_reset_message  # aylanma importdan qochish uchun
+
+    supplier = await _get_supplier(request, session, user)
+    removed = (await repo.supplier_debt_balances(session, user.id)).get(repo.person_key(supplier.name), {})
+    count = await repo.reset_supplier(session, user.id, supplier)
+    if count and (notice := supplier_reset_message(user, supplier)):
+        _notify(request, *notice)
+    return web.json_response(
+        {
+            "ok": True,
+            "count": count,
+            "removed": _money(removed),
+            "supplier": await _one_supplier_json(request, session, supplier),
         }
     )
 

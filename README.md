@@ -6,6 +6,13 @@ Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini 
 berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
 «Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
+**🎤 Mikrofon ruxsati — bir marta:** ilovada birinchi ovozli xabardan oldin «🎤 Mikrofonga ruxsat» oynasi chiqadi va
+qaysi tugmani bosish kerakligi aytiladi: brauzerda — «Saytga kirganda» (yoki «Har doim»), «Faqat shu safar» emas;
+shunda telefon keyin hech qachon so'ramaydi. Berilgan ruxsat shu qurilmada eslab qolinadi, mikrofon ilova ochiq
+turganda qayta so'ralmaydi. Brauzer baribir qayta so'rasa (avval «Faqat shu safar» tanlangan) — bu bir marta yana
+aytiladi. Telegram ichida ruxsatni Telegramning o'zi so'raydi va eslab qolmaydi (ilova har ochilganda birinchi
+ovozda bir marta) — umuman so'ramasligi uchun ilovani brauzerda oching (`/web`) va «Ekranga qo'shish» qiling.
+
 **🏷 Kasblar va narxlar:** har bir ishchiga kasb beriladi — Kroychi (materialni kesadi), Brsovkachi (kesilganini
 tikishga tayyorlab shiladi), Tikuvchi, Tortuvchi (padoshni yopishtiradi), Pardozchi (sotuvga tayyorlaydi) yoki egasi
 qo'lda qo'shgan boshqa kasb («👷 Ishchilar → 🏷 Kasblar», ilovada «Jamoa»). Har bir modelga kasb bo'yicha bir dona
@@ -154,7 +161,14 @@ hisobini 0 qilish» (hamma xaridlar, qarzga olinganlarining qarzi ham), «Hamyon
 daromad yozuvlari; «Qarzlar» qoladi). Bitta ishchi uchun — ishchi oynasida, «🧾 Hisob-kitob» kartasi pastida
 «🧹 Hisobini 0 qilish»: faqat shu ishchining ish va pul yozuvlari o'chadi, qoldig'i 0 bo'ladi va umumiy «Qarzlar»
 jamidan ham ayriladi (haqqi bo'lsa — «sizning qarzingiz»dan, avans olgan bo'lsa — «sizga qarzlar»dan; so'rovda va
-xabarda qancha ayrilishi ko'rinadi). Ilova ikki marta so'raydi, ikkalasida ham «OK» bosilsa — 0 qilinadi.
+xabarda qancha ayrilishi ko'rinadi). Bitta mijoz uchun — mijoz oynasida, oldi-berdi ro'yxati pastida
+«🧹 Hisobini 0 qilish»: shu mijozning hamma oldi-berdisi (mol, to'lov, qaytgan mol, qarz) o'chadi, qoldig'i 0
+bo'ladi va «Qarzlar»dan ham ayriladi; o'chganlari «🗑 O'chirilganlar»da turadi (↩️ bilan qaytadi), ulangan mijozga
+xabar boradi. «⚠️ «Qarzlar»da ham bor» qismi (mijoz hisobiga qo'shilmagan qarz) o'zgarmaydi. Bitta ta'minotchi
+uchun — ta'minotchi oynasida (yoki «Qarzlar»da uning ismini bosganda): undan olingan hamma xom ashyo (qarzga
+olinganlari ham) va u bilan qarz yozuvlari o'chadi, qarz 0 bo'ladi, ulangan ta'minotchiga xabar boradi. Ta'minotchi
+oynasida u bilan qarz ham ko'rinadi («💳 Qarz — siz qarzdorsiz: …»). Ilova ikki marta so'raydi, ikkalasida ham
+«OK» bosilsa — 0 qilinadi.
 Mijozlar, ishchilar, kasblar, modellar va ta'minotchilar (havolalari bilan) qoladi; yozuvlar bazada o'chirilgan
 belgisi bilan saqlanadi, ilovada qaytarib bo'lmaydi.
 

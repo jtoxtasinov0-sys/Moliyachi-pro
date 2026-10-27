@@ -522,16 +522,20 @@ async def reset_entries(
     owner_id: int,
     tables: tuple[type[WorkEntry | WorkerPayment | ClientEntry | MaterialEntry | PersonalEntry], ...],
     worker_id: int | None = None,
+    client_id: int | None = None,
 ) -> int:
     """Bo'lim hisobini 0 qilish: kabinetdagi shu jadvallarning hamma yozuvlari o'chiriladi (deleted_at bilan —
     bazada qoladi). Mijoz, ishchi, ta'minotchilarning o'zi saqlanadi. worker_id — faqat shu ishchining ish va pul
-    yozuvlari (ishchi oynasidagi tugma). Qaytadi: nechta yozuv o'chdi."""
+    yozuvlari (ishchi oynasidagi tugma), client_id — faqat shu mijozning oldi-berdisi (mijoz oynasidagi tugma).
+    Qaytadi: nechta yozuv o'chdi."""
     now = _now()
     count = 0
     for table in tables:
         conds = [table.owner_id == owner_id, table.deleted_at.is_(None)]
         if worker_id is not None:
             conds.append(table.worker_id == worker_id)
+        if client_id is not None:
+            conds.append(table.client_id == client_id)
         result = await session.execute(
             update(table)
             .where(*conds)
@@ -2083,3 +2087,41 @@ async def supplier_stats(session: AsyncSession, owner_id: int, month_start: date
                 _add_to(st.month, currency, amount)
             st.month_count += int(count)
     return out
+
+
+async def supplier_debt_balances(session: AsyncSession, owner_id: int) -> dict[str, dict[str, Decimal]]:
+    """person_key -> ta'minotchi bilan qarz (umumiy «Qarzlar»dagi qatori): musbat — u qarzdor, manfiy — men unga
+    qarzdorman. Ta'minotchi oynasida qarz va «Hisobini 0 qilish» uchun."""
+    return {b.key: {c: v for c, v in b.balance.items() if v} for b in await debt_balances(session, owner_id)}
+
+
+async def reset_supplier(session: AsyncSession, owner_id: int, supplier: Supplier) -> int:
+    """Ta'minotchi oynasidagi «Hisobini 0 qilish»: undan olingan hamma xom ashyo (qarzga olinganlari ham) va shu
+    ismli qarz yozuvlari («Aslcharmga 10 million berdim») o'chadi — deleted_at bilan, bazada qoladi. U bilan qarz
+    0 bo'ladi va umumiy «Qarzlar»dan ham ayriladi. Ta'minotchining o'zi va havolasi qoladi. Ro'yxatga qo'shilmagan
+    xarid ham olinadi, agar ismi shu ta'minotchiniki bo'lsa (qarzlarda u bilan bitta qatorda turadi).
+    Qaytadi: nechta yozuv o'chdi."""
+    key = person_key(supplier.name)
+    materials = await session.scalars(
+        select(MaterialEntry).where(
+            MaterialEntry.owner_id == owner_id,
+            MaterialEntry.deleted_at.is_(None),
+            or_(
+                MaterialEntry.supplier_id == supplier.id,
+                and_(MaterialEntry.supplier_id.is_(None), MaterialEntry.supplier.is_not(None)),
+            ),
+        )
+    )
+    items: list[MaterialEntry | DebtEntry] = [
+        e for e in materials if e.supplier_id == supplier.id or person_key(e.supplier) == key
+    ]
+    items += await session.scalars(
+        select(DebtEntry).where(
+            DebtEntry.owner_id == owner_id, DebtEntry.deleted_at.is_(None), DebtEntry.person_key == key
+        )
+    )
+    now = _now()
+    for e in items:
+        e.deleted_at = now
+    await session.flush()
+    return len(items)

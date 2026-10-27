@@ -21,6 +21,7 @@ from bot.db.models import (
     PersonalEntry,
     PersonalKind,
     PriceUnit,
+    Supplier,
     User,
 )
 from bot.drafts import CLIENT_KIND_LABELS, CLIENT_SIDE_LABELS, debt_line, material_line, qty_text
@@ -197,6 +198,22 @@ async def client_restored_message(
         + client_side_balance(balance)
     )
     return client.tg_id, text
+
+
+def client_reset_message(owner: User, client: Client) -> tuple[int, str] | None:
+    """Egasi mijoz hisobini 0 qildi — ulangan mijozga xabar: (chat, matn)."""
+    if not client.is_active or not client.tg_id:
+        return None
+    text = f"🧹 <b>{escape(owner.name)}</b> siz bilan hisobni 0 qildi — oldingi oldi-berdi o'chirildi."
+    return client.tg_id, text + "\n\n✅ Hisob yopilgan"
+
+
+def supplier_reset_message(owner: User, supplier: Supplier) -> tuple[int, str] | None:
+    """Egasi ta'minotchi bilan hisobni 0 qildi — ulangan ta'minotchiga xabar: (chat, matn)."""
+    if not supplier.is_active or not supplier.tg_id:
+        return None
+    text = f"🧹 <b>{escape(owner.name)}</b> siz bilan hisobni 0 qildi — oldingi yozuvlar o'chirildi."
+    return supplier.tg_id, text
 
 
 def signed_totals(totals: dict[str, Decimal]) -> str:

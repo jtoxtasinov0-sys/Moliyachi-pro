@@ -1341,9 +1341,14 @@ async function personSheet(key) {
       <div><b>${p.count} ta</b><small>yozuv</small></div>
     </div>
     <div id="personHistory">${SKELETONS}</div>
-    ${p.type === "material" && p.id ? `<div id="personInvite"></div>` : ""}
+    ${p.type === "material" && p.id ? `<button class="danger reset-one" id="pReset">🧹 Hisobini 0 qilish</button><div id="personInvite"></div>` : ""}
   `);
   if ($("personInvite")) supplierInvite(p.id, $("personInvite"));
+  // Ro'yxatdagi ta'minotchi: hisobi shu yerdan ham 0 qilinadi (ta'minotchi oynasidagidek)
+  if ($("pReset")) $("pReset").onclick = () => {
+    const sup = (state.materials.suppliers || []).find((x) => x.id === p.id);
+    resetSupplier(sup || { id: p.id, name: p.name, debt: p.balance }, $("pReset"), closeSheet);
+  };
   try {
     const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
     $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
@@ -1505,10 +1510,12 @@ async function clientSheet(id) {
     </div>
     <div id="clientOutside"></div>
     <div id="clientHistory">${SKELETONS}</div>
+    <button class="danger reset-one" id="clReset">🧹 Hisobini 0 qilish</button>
     ${invite}
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
   `);
   $("clEdit").onclick = () => clientEditSheet(c);
+  $("clReset").onclick = () => resetClient(c, $("clReset"));
   bindInvite(c, `${c.name}, biz bilan oldi-berdingizni ko'rib turish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`, async () => {
     const upd = await api(`/api/clients/${c.id}/invite`, { method: "POST" });
     state.clients.byId[c.id] = { ...c, invite_link: upd.invite_link };
@@ -1583,6 +1590,25 @@ async function mergeClientDebts(c, person) {
     toast(res.count ? `Qo'shildi: ${res.count} ta yozuv` : "Qo'shiladigan qarz qolmagan");
     await reopenClient(c.id);
   } catch (e) { fail(e); }
+}
+
+// Mijoz oynasida «Hisobini 0 qilish»: shu mijozning hamma oldi-berdisi o'chadi, qoldig'i umumiy «Qarzlar»dan ham
+// ayriladi. Ikki marta so'raladi — «Mijozlar hisobini 0 qilish»dagidek. O'chganlari «🗑 O'chirilganlar»da qoladi
+async function resetClient(c, btn) {
+  const minus = debtMinus(c.balance);
+  haptic("warning");
+  if (!(await confirmBox(`${c.name} hisobi 0 qilinsinmi? U bilan hamma oldi-berdi (mol, to'lov, qaytgan mol, qarz) o'chadi, qoldig'i 0 bo'ladi.${minus ? ` Umumiy «Qarzlar»dan ham ayriladi: ${minus}.` : ""} Mijozning o'zi va havolasi qoladi.`))) return;
+  if (!(await confirmBox(`Rostdan ham? ${c.name} hisobi butunlay 0 bo'ladi.${c.linked ? " Mijozga ham xabar boradi." : ""} O'chgan yozuvlar «🗑 O'chirilganlar»da turadi.`))) return;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/clients/${c.id}/reset`, { method: "POST" });
+    const gone = debtMinus(res.removed);
+    toast(res.count ? `${c.name} hisobi 0 qilindi${gone ? ` · ${gone}` : ""}` : `${c.name} hisobi allaqachon 0`);
+    await reopenClient(c.id);
+  } catch (e) {
+    fail(e);
+    btn.disabled = false;
+  }
 }
 
 async function restoreClientEntry(c, entryId) {
@@ -1777,6 +1803,7 @@ async function supplierSheet(s) {
   const status = !s.is_active ? "⛔ O'chirilgan — undan olinganda xabar bormaydi."
     : s.linked ? "✅ Botga ulangan — undan xom ashyo olganingizda xabar oladi."
     : "🔗 Havolani yuboring — u bosganda botga ulanadi va undan olinganda xabar oladi.";
+  const debt = balanceInfo({ balance: s.debt });
   openSheet(`
     <h3>${esc(s.name)}</h3>
     <p class="muted small">${status}</p>
@@ -1784,10 +1811,13 @@ async function supplierSheet(s) {
       <div><b>${esc(moneyList(s.month) || "—")}</b><small>shu oy · ${s.month_count} ta xarid</small></div>
       <div><b>${esc(moneyList(s.total) || "—")}</b><small>hammasi · ${s.count} ta xarid</small></div>
     </div>
+    ${moneyList(s.debt) ? `<div class="link-box sup-debt">💳 Qarz — ${debt.label}: <b class="amt ${debt.cls}">${esc(debt.text)}</b></div>` : ""}
     <div id="supplierHistory">${SKELETONS}</div>
+    <button class="danger reset-one" id="sReset">🧹 Hisobini 0 qilish</button>
     ${invite}
     <button class="${s.is_active ? "danger" : "secondary"}" id="sToggle">${s.is_active ? "⛔ O'chirish (xabar bormaydi)" : "✅ Qayta faollashtirish"}</button>
   `);
+  $("sReset").onclick = () => resetSupplier(s, $("sReset"), (upd) => supplierSheet(upd));
   bindInvite(s, supplierShareText(s), async () => {
     const upd = await api(`/api/suppliers/${s.id}/invite`, { method: "POST" });
     replaceSupplier(upd);
@@ -1812,6 +1842,29 @@ async function supplierSheet(s) {
       if (btn) deleteMaterial(Number(btn.dataset.delFeed.split(":")[1]), () => closeSheet());
     };
   } catch (e) { fail(e); }
+}
+
+// Ta'minotchi oynasida «Hisobini 0 qilish»: undan olingan hamma xom ashyo va u bilan qarz yozuvlari o'chadi, qarzi
+// umumiy «Qarzlar»dan ham ayriladi. Ikki marta so'raladi. after(yangilangan ta'minotchi) — oyna qayta ochiladi
+async function resetSupplier(s, btn, after) {
+  const minus = debtMinus(s.debt);
+  haptic("warning");
+  if (!(await confirmBox(`${s.name} hisobi 0 qilinsinmi? Undan olingan hamma xom ashyo (qarzga olinganlari ham) va u bilan qarz yozuvlari o'chadi, qarz 0 bo'ladi.${minus ? ` Umumiy «Qarzlar»dan ham ayriladi: ${minus}.` : ""} Ta'minotchining o'zi va havolasi qoladi.`))) return;
+  if (!(await confirmBox(`Rostdan ham? ${s.name} hisobi butunlay 0 bo'ladi — o'chgan yozuvlarni qaytarib bo'lmaydi.${s.linked ? " Ta'minotchiga ham xabar boradi." : ""}`))) return;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/suppliers/${s.id}/reset`, { method: "POST" });
+    const gone = debtMinus(res.removed);
+    toast(res.count ? `${s.name} hisobi 0 qilindi${gone ? ` · ${gone}` : ""}` : `${s.name} hisobi allaqachon 0`);
+    if (state.materials.suppliers) replaceSupplier(res.supplier);
+    // Xom ashyo bo'limi, umumiy «Qarzlar» va bosh sahifadagi kartalar ham yangilansin
+    if (state.view === "wallet" && state.wallet.tab === "debts") await loadDebts();
+    else refreshView();
+    after(res.supplier);
+  } catch (e) {
+    fail(e);
+    btn.disabled = false;
+  }
 }
 
 function addSupplierSheet() {
@@ -2017,19 +2070,22 @@ function replaceWorker(upd) {
   renderWorkers();
 }
 
-// Ishchi qoldig'i umumiy «Qarzlar»da: musbat — sizning qarzingiz, manfiy (avans) — sizga qarz.
-// 0 qilinganda shu summalar jamidan ayriladi: «sizning qarzingiz −200 000 so'm»
-function workerDebtMinus(amounts) {
+// Umumiy «Qarzlar»dagi qoldiq (musbat — sizga qarz, manfiy — sizning qarzingiz) 0 qilinganda jamidan
+// ayriladigan summalar: «sizning qarzingiz −200 000 so'm, sizga qarzlar −50 000 so'm»
+function debtMinus(amounts) {
   const mine = {}, theirs = {};
   for (const [c, v] of Object.entries(amounts || {})) {
-    if (v > 0) mine[c] = v;
-    else if (v < 0) theirs[c] = -v;
+    if (v < 0) mine[c] = -v;
+    else if (v > 0) theirs[c] = v;
   }
   const parts = [];
   if (moneyList(mine)) parts.push(`sizning qarzingiz −${moneyList(mine)}`);
   if (moneyList(theirs)) parts.push(`sizga qarzlar −${moneyList(theirs)}`);
   return parts.join(", ");
 }
+
+// Ishchi qoldig'i teskari: musbat (haqqi) — sizning qarzingiz, manfiy (avans) — sizga qarz
+const workerDebtMinus = (amounts) => debtMinus(Object.fromEntries(Object.entries(amounts || {}).map(([c, v]) => [c, -v])));
 
 // Ishchi oynasida «Hisobini 0 qilish»: shu ishchining hamma ish va pul yozuvlari o'chadi, qoldig'i umumiy
 // «Qarzlar»dan ham ayriladi. Ikki marta so'raladi — «Ishchilar hisobini 0 qilish»dagidek
@@ -2635,14 +2691,87 @@ const VOICE_BITRATE = 32000;
 // keyin yopilsa, Telegram ichidagi brauzer (ayniqsa iPhone'da) har gal qaytadan ruxsat so'raydi.
 let micStream = null;
 
-async function getMic() {
+function micLive() {
   const tracks = micStream ? micStream.getAudioTracks() : [];
-  if (tracks.length && tracks.every((t) => t.readyState === "live")) {
-    tracks.forEach((t) => { t.enabled = true; });
+  return tracks.length > 0 && tracks.every((t) => t.readyState === "live");
+}
+
+async function getMic() {
+  if (micLive()) {
+    micStream.getAudioTracks().forEach((t) => { t.enabled = true; });
     return micStream;
   }
   micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   return micStream;
+}
+
+// Ruxsat bir marta so'raladi va shu qurilmada eslab qolinadi: "1" — berilgan, "2" — brauzer unutgani (avval
+// «Faqat shu safar» tanlangani) bir marta aytilgan. Telefon so'raganda «Faqat shu safar» bosilsa, brauzer har
+// kirganda qayta so'raydi — shuning uchun birinchi marta qaysi tugmani bosish kerakligi tushuntiriladi
+const MIC_KEY = "moliyachi_mic";
+function micSeen() {
+  try { return localStorage.getItem(MIC_KEY) || ""; } catch (_) { return ""; }
+}
+function rememberMic(value) {
+  try { localStorage.setItem(MIC_KEY, value); } catch (_) { /* xotira yopiq */ }
+}
+
+// Brauzer ruxsatni eslab qolganmi: "granted" | "prompt" | "denied", bilib bo'lmasa — "" (Firefox, eski Safari)
+async function micPermission() {
+  if (micLive()) return "granted";
+  try {
+    return (await navigator.permissions.query({ name: "microphone" })).state;
+  } catch (_) { return ""; }
+}
+
+// Tushuntirish kerakmi: birinchi marta yoki brauzer avval berilgan ruxsatni unutgan bo'lsa (bir marta).
+// Telegram ruxsatni o'zi eslab qolmaydi — u yerda faqat birinchi marta
+async function micIntroNeeded() {
+  const perm = await micPermission();
+  if (perm === "granted") return "";
+  const seen = micSeen();
+  if (!seen) return "first";
+  return seen === "1" && perm === "prompt" && !inTelegram ? "again" : "";
+}
+
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+// Ruxsat so'ralishidan oldin: nima uchun kerakligi va qaysi tugmani bosish. back — yozish oynasiga qaytish
+function micIntroSheet(kind, back) {
+  const how = inTelegram
+    ? "Telegram «Moliyachi mikrofondan foydalansinmi?» deb so'raydi — <b>«Ruxsat berish»</b>ni bosing. Telefon ham so'rasa — <b>«Ilovadan foydalanilganda»</b>ni tanlang, «Faqat shu safar»ni emas."
+    : isIOS
+      ? "Telefon so'raganda <b>«Ruxsat berish»</b>ni bosing. iPhone har safar so'ramasligi uchun: Sozlamalar → Safari → Mikrofon → <b>«Ruxsat berish»</b>."
+      : "Telefon so'raganda <b>«Saytga kirganda»</b> (yoki «Har doim») ni tanlang — <b>«Faqat shu safar»ni emas</b>. Shunda keyin hech qachon so'ramaydi.";
+  const note = inTelegram
+    ? `<p class="muted small">Telegram bu ruxsatni eslab qolmaydi: ilova har ochilganda birinchi ovozli xabarda bir marta so'raydi, ilova ochiq turganda — qayta so'ramaydi. Umuman so'ramasligi uchun ilovani brauzerda oching: botga /web yozing va «Ekranga qo'shish» qiling.</p>`
+    : "";
+  openSheet(`
+    <h3>🎤 Mikrofonga ruxsat</h3>
+    <div class="mic-intro">
+      <p>${kind === "again"
+        ? "Telefon mikrofon ruxsatini qayta so'rayapti — oldin «Faqat shu safar» tanlangan bo'lsa kerak."
+        : "Ovozli xabar yozish uchun mikrofon kerak. Ruxsat bir marta beriladi."}</p>
+      <p>${how}</p>
+    </div>
+    ${note}
+    <button class="primary" id="micAllow">🎤 Ruxsat berish</button>
+  `);
+  $("micAllow").onclick = async () => {
+    $("micAllow").disabled = true;
+    try {
+      await getMic();
+    } catch (_) {
+      $("micAllow").disabled = false;
+      toast("Mikrofonga ruxsat berilmadi. Matn bilan yozing yoki klaviaturadagi 🎤 ni ishlating.", true);
+      return;
+    }
+    pauseMic();
+    rememberMic(kind === "again" ? "2" : "1");
+    if (back) composeSheet();
+    else closeSheet();
+    toast("🎤 Tayyor — endi tugmani bosib turib gapiring");
+  };
 }
 
 // Yozmayotganda ovoz olinmaydi, lekin ruxsat saqlanib qoladi
@@ -2664,11 +2793,19 @@ async function startRecording() {
   }
   compose.starting = true;
   compose.abort = false;
+  const intro = await micIntroNeeded();
+  if (intro) {
+    compose.starting = false;
+    releaseHold();
+    micIntroSheet(intro, Boolean($("cOut")) && !$("sheet").hidden);
+    return;
+  }
   verticalSwipes(false);
   setRecUI(true);
   let stream;
   try {
     stream = await getMic();
+    if (!micSeen()) rememberMic("1");
   } catch (_) {
     compose.starting = false;
     setRecUI(false);
