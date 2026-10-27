@@ -159,7 +159,8 @@ class ClientCb(CallbackData, prefix="cl"):
     """Egasi: mijozlar ro'yxati va mijoz kartasi."""
 
     # list | open | add | link | relink | toggle | merge<id> / mergey<id> («Qarzlar»dagi shu qarz yozuvi odamini
-    # mijoz hisobiga qo'shish: so'rash / qo'shish)
+    # mijoz hisobiga qo'shish: so'rash / qo'shish) | zero<id> / zeroy<id> (o'sha qarzni 0 qilish) |
+    # reset / resety (mijoz bilan hisob hamma joyda 0)
     action: str
     client_id: int = 0
 

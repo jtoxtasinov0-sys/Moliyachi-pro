@@ -354,6 +354,7 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .mini-restore { width: 34px; height: 34px; border-radius: 10px; background: var(--green-soft); flex: none; font-size: 14px; }
 .cl-out-row { margin-top: 8px; }
 .cl-merge { width: 100%; margin-top: 6px; height: auto; min-height: 40px; padding: 8px 10px; line-height: 1.3; }
+.cl-merge.no { background: #fff; }
 .cl-deleted { margin: 10px 0 4px; }
 .cl-deleted summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 2px; }
 .cl-deleted .mini-entry { opacity: .75; }

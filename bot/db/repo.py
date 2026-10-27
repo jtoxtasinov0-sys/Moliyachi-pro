@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import and_, case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -2177,19 +2177,25 @@ async def reset_supplier(session: AsyncSession, owner_id: int, supplier: Supplie
     0 bo'ladi va umumiy «Qarzlar»dan ham ayriladi. Ta'minotchining o'zi va havolasi qoladi. Ro'yxatga qo'shilmagan
     xarid ham olinadi, agar ismi shu ta'minotchiniki bo'lsa (qarzlarda u bilan bitta qatorda turadi).
     Qaytadi: nechta yozuv o'chdi."""
-    key = person_key(supplier.name)
+    return await reset_person(session, owner_id, person_key(supplier.name), supplier.id)
+
+
+async def reset_person(session: AsyncSession, owner_id: int, key: str, supplier_id: int | None = None) -> int:
+    """«Qarzlar»dagi odam (person_key) bilan hisob 0: u bilan qarz yozuvlari va undan olingan xom ashyo (ro'yxatga
+    qo'shilmagan, ismi shu odamniki) o'chadi — deleted_at bilan, bazada qoladi. supplier_id — ro'yxatdagi
+    ta'minotchi: undan olingan hamma xom ashyo ham. Qaytadi: nechta yozuv o'chdi."""
     materials = await session.scalars(
         select(MaterialEntry).where(
             MaterialEntry.owner_id == owner_id,
             MaterialEntry.deleted_at.is_(None),
             or_(
-                MaterialEntry.supplier_id == supplier.id,
+                MaterialEntry.supplier_id == supplier_id if supplier_id else false(),
                 and_(MaterialEntry.supplier_id.is_(None), MaterialEntry.supplier.is_not(None)),
             ),
         )
     )
     items: list[MaterialEntry | DebtEntry] = [
-        e for e in materials if e.supplier_id == supplier.id or person_key(e.supplier) == key
+        e for e in materials if (supplier_id and e.supplier_id == supplier_id) or person_key(e.supplier) == key
     ]
     items += await session.scalars(
         select(DebtEntry).where(
@@ -2201,3 +2207,15 @@ async def reset_supplier(session: AsyncSession, owner_id: int, supplier: Supplie
         e.deleted_at = now
     await session.flush()
     return len(items)
+
+
+async def reset_client_everywhere(session: AsyncSession, owner_id: int, client: Client) -> tuple[int, int]:
+    """Mijoz oynasidagi «Hisobini 0 qilish»: mijozning hamma oldi-berdisi va «Qarzlar»da uning ismi bilan qolib
+    ketgan qarzlari (client_outside_debts — u menga qarzdor bo'lsa ham, men unga bo'lsam ham) o'chadi: u bilan hisob
+    hamma joyda 0. Qaytadi: (mijoz yozuvlari, «Qarzlar» yozuvlari) — nechtadan o'chdi."""
+    outside = [b.key for b in await client_outside_debts(session, owner_id, client)]
+    count = await reset_entries(session, owner_id, (ClientEntry,), client_id=client.id)
+    debts = 0
+    for key in outside:
+        debts += await reset_person(session, owner_id, key)
+    return count, debts

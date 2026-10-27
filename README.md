@@ -173,19 +173,23 @@ Egada: ishxona (ishchilar, ish turlari, kunlar bo'yicha, har bir ishchining qold
 daromad-xarajat, mijozlar, xom ashyo va umumiy qarzlar; ishchida — o'zi topshirgan ishlar, olgan pullari va qoldig'i.
 
 **🧹 Hisobni 0 qilish:** ilovada har bir bo'lim pastida alohida tugma — «Mijozlar hisobini 0 qilish» (hamma
-oldi-berdi, qarzlar 0), «Ishchilar hisobini 0 qilish» (hamma ish va pul yozuvlari, qoldiqlar 0), «Xom ashyo
-hisobini 0 qilish» (hamma xaridlar, qarzga olinganlarining qarzi ham), «Hamyon → Xarajatlar»da «Xarajatlar hisobini 0 qilish» (hamma xarajat va
-daromad yozuvlari; «Qarzlar» qoladi). Bitta ishchi uchun — ishchi oynasida, «🧾 Hisob-kitob» kartasi pastida
-«🧹 Hisobini 0 qilish»: faqat shu ishchining ish va pul yozuvlari o'chadi, qoldig'i 0 bo'ladi va umumiy «Qarzlar»
-jamidan ham ayriladi (haqqi bo'lsa — «sizning qarzingiz»dan, avans olgan bo'lsa — «sizga qarzlar»dan; so'rovda va
-xabarda qancha ayrilishi ko'rinadi). Bitta mijoz uchun — mijoz oynasida, oldi-berdi ro'yxati pastida
-«🧹 Hisobini 0 qilish»: shu mijozning hamma oldi-berdisi (mol, to'lov, qaytgan mol, qarz) o'chadi, qoldig'i 0
-bo'ladi va «Qarzlar»dan ham ayriladi; o'chganlari «🗑 O'chirilganlar»da turadi (↩️ bilan qaytadi), ulangan mijozga
-xabar boradi. «⚠️ «Qarzlar»da ham bor» qismi (mijoz hisobiga qo'shilmagan qarz) o'zgarmaydi. Bitta ta'minotchi
-uchun — ta'minotchi oynasida (yoki «Qarzlar»da uning ismini bosganda): undan olingan hamma xom ashyo (qarzga
-olinganlari ham) va u bilan qarz yozuvlari o'chadi, qarz 0 bo'ladi, ulangan ta'minotchiga xabar boradi. Ta'minotchi
-oynasida u bilan qarz ham ko'rinadi («💳 Qarz — siz qarzdorsiz: …»). Ilova ikki marta so'raydi, ikkalasida ham
-«OK» bosilsa — 0 qilinadi.
+oldi-berdi, qarzlar 0), «Ishchilar hisobini 0 qilish» (hamma ish va pul yozuvlari, qoldiqlar 0), «Xom ashyo hisobini
+0 qilish» (hamma xaridlar, qarzga olinganlarining qarzi ham), «Hamyon → Xarajatlar»da «Xarajatlar hisobini 0 qilish»
+(hamma xarajat va daromad yozuvlari; «Qarzlar» qoladi). Bitta ishchi uchun — ishchi oynasida, «🧾 Hisob-kitob»
+kartasi pastida «🧹 Hisobini 0 qilish»: faqat shu ishchining ish va pul yozuvlari o'chadi, qoldig'i 0 bo'ladi va
+umumiy «Qarzlar» jamidan ham ayriladi (haqqi bo'lsa — «sizning qarzingiz»dan, avans olgan bo'lsa — «sizga
+qarzlar»dan; so'rovda va xabarda qancha ayrilishi ko'rinadi). Bitta mijoz uchun — mijoz oynasida (botda ham — mijoz
+kartasida), oldi-berdi ro'yxati pastida «🧹 Hisobini 0 qilish»: u bilan hisob hamma joyda 0 bo'ladi — mijozning hamma
+oldi-berdisi (mol, to'lov, qaytgan mol, qarz) va «Qarzlar»da uning ismi bilan qolib ketgan qarzi («⚠️ «Qarzlar»da
+ham bor», u sizga qarzdor bo'lsa ham, siz unga qarzdor bo'lsangiz ham) o'chadi, qoldig'i 0 bo'ladi va umumiy
+«Qarzlar»dan ham ayriladi (so'rovda nima o'chishi ko'rsatiladi); o'chgan oldi-berdisi «🗑 O'chirilganlar»da turadi
+(↩️ bilan qaytadi), ulangan mijozga xabar boradi. Faqat «Qarzlar»dagi qismini 0 qilish — «⚠️ «Qarzlar»da ham bor»
+ostidagi «🧹 Bu qarzni 0 qilish» (mijoz hisobi o'zgarmaydi). «Mijozlar hisobini 0 qilish» ham mijozlarning
+«Qarzlar»dagi qarzlarini o'chiradi. «Qarzlar»dagi istalgan odam uchun — uning ismini bosing → «🧹 Hisobini 0 qilish»:
+u bilan qarz yozuvlari (qarzga olingan xom ashyosi ham) o'chadi. Bitta ta'minotchi uchun — ta'minotchi oynasida
+(yoki «Qarzlar»da uning ismini bosganda): undan olingan hamma xom ashyo (qarzga olinganlari ham) va u bilan qarz
+yozuvlari o'chadi, qarz 0 bo'ladi, ulangan ta'minotchiga xabar boradi. Ta'minotchi oynasida u bilan qarz ham
+ko'rinadi («💳 Qarz — siz qarzdorsiz: …»). Ilova ikki marta so'raydi, ikkalasida ham «OK» bosilsa — 0 qilinadi.
 Mijozlar, ishchilar, kasblar, modellar va ta'minotchilar (havolalari bilan) qoladi; yozuvlar bazada o'chirilgan
 belgisi bilan saqlanadi, ilovada qaytarib bo'lmaydi.
 
