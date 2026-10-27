@@ -129,6 +129,7 @@ def _put(event: Event) -> None:
 # --- Kim? -------------------------------------------------------------------
 
 ROLE_OWNER = "ega"
+ROLE_MANAGER = "ish boshqaruvchi"
 ROLE_WORKER = "ishchi"
 ROLE_GUEST = "ro'yxatda yo'q"
 
@@ -165,7 +166,7 @@ def local(dt: datetime) -> datetime:
 
 def role_of(user: User | None, tg_id: int) -> str:
     if user is not None:
-        return ROLE_OWNER if user.is_owner else ROLE_WORKER
+        return ROLE_OWNER if user.is_owner else ROLE_MANAGER if user.is_manager else ROLE_WORKER
     return ROLE_OWNER if tg_id in settings.owner_ids else ROLE_GUEST
 
 

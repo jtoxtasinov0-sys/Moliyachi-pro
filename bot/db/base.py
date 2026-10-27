@@ -55,6 +55,7 @@ _NEW_COLUMNS = {
     },
     "users": {
         "job_id": "INTEGER",
+        "is_manager": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "work_entries": {
         "job_id": "INTEGER",

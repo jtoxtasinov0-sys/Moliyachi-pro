@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,16 +21,19 @@ from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
 from bot.db.models import (
+    Client,
     ClientEntry,
     DebtEntry,
     EntryStatus,
     ItemModel,
     Job,
+    ManagerRequest,
     MaterialEntry,
     ModelPrice,
     PayKind,
     PersonalEntry,
     PersonalKind,
+    RequestStatus,
     Supplier,
     User,
     WorkEntry,
@@ -38,7 +41,7 @@ from bot.db.models import (
 )
 from bot.monitor import report_error, track_api
 from bot.services import llm, stt
-from bot.services.utils import today
+from bot.services.utils import fmt_money, today
 from bot.web.auth import (
     WEB_TOKEN_DAYS,
     make_file_token,
@@ -62,6 +65,7 @@ Handler = Callable[[web.Request, AsyncSession, User], Awaitable[web.StreamRespon
 class ApiError(web.HTTPException):
     def __init__(self, status: int, message: str):
         self.status_code = status
+        self.message = message
         super().__init__(text=web.json_response({"error": message}).text, content_type="application/json")
 
 
@@ -69,17 +73,35 @@ def _forbidden() -> ApiError:
     return ApiError(403, "Ruxsat yo'q")
 
 
-def endpoint(owner_only: bool = False):
+# Ish boshqaruvchi uchun (endpoint manager=...): VIEW — egasidek ko'radi (funksiya javobdan ishchilarning puli va
+# egasining pullarini o'zi olib tashlaydi); tavsif funksiyasi (Describe) — o'zgartirish darhol bajarilmaydi, egasining
+# tasdig'iga boradi, tasdiqlansa shu funksiya egasi nomidan bajariladi (run_op). Qolganlari boshqaruvchiga yopiq.
+VIEW = "view"
+# (sessiya, boshqaruvchi, match_info, so'rov tanasi) -> egasiga ko'rsatiladigan tavsif; noto'g'ri bo'lsa — ApiError.
+# Tanani to'ldirishi mumkin: toggle — qaysi holatga (tasdiqlanguncha egasi o'zi almashtirgan bo'lsa, teskarisi bo'lmasin)
+Describe = Callable[[AsyncSession, User, dict, dict], Awaitable[str]]
+_OPS: dict[str, tuple[Handler, Describe]] = {}
+
+
+def endpoint(owner_only: bool = False, manager: str | Describe | None = None):
     """Sessiya ochadi, foydalanuvchini aniqlaydi, oxirida commit qiladi."""
 
     def wrap(fn: Handler):
+        ask = callable(manager)
+        if ask:
+            _OPS[fn.__name__] = (fn, manager)
+
         async def inner(request: web.Request) -> web.StreamResponse:
             async with session_factory() as session:
                 user = await _auth(request, session)
-                if owner_only and not user.is_owner:
+                queue = ask and user.is_manager
+                if owner_only and not user.is_owner and not queue and not (manager == VIEW and user.is_manager):
                     raise _forbidden()
                 try:
-                    response = await fn(request, session, user)
+                    if queue:
+                        response = await _ask_owner(request, session, user, fn.__name__)
+                    else:
+                        response = await fn(request, session, user)
                 except web.HTTPException:
                     raise
                 except Exception as e:
@@ -136,12 +158,12 @@ async def _json(request: web.Request) -> dict:
 _background: set[asyncio.Task] = set()
 
 
-def _notify(request: web.Request, chat_id: int, text: str) -> None:
+def _notify(request: web.Request, chat_id: int, text: str, markup: ReplyKeyboardMarkup | None = None) -> None:
     """Telegram xabarini fonda yuboradi — ilova javobni kutib qolmasin."""
 
     async def send() -> None:
         try:
-            await request.app["bot"].send_message(chat_id, text)
+            await request.app["bot"].send_message(chat_id, text, reply_markup=markup)
         except Exception:
             log.warning("Xabar yuborilmadi (chat %s)", chat_id, exc_info=True)
 
@@ -152,6 +174,76 @@ def _notify(request: web.Request, chat_id: int, text: str) -> None:
 
 def _num(value: Decimal | None) -> float | None:
     return float(value) if value is not None else None
+
+
+def _iso(dt: datetime | None) -> str | None:
+    """Vaqt belgisi — UTC bilan (SQLite vaqt mintaqasini saqlamaydi, u yerda hammasi UTC)."""
+    if dt is None:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+
+
+# --- Ish boshqaruvchi: o'zgartirish — egasining tasdig'iga --------------------------
+
+async def _ask_owner(request: web.Request, session: AsyncSession, manager: User, op: str) -> web.Response:
+    from bot import approvals  # aylanma importdan qochish uchun
+
+    body = await _json(request) if request.can_read_body else {}
+    req = await approvals.ask(session, request.app["bot"], manager, op, dict(request.match_info), body)
+    return web.json_response({"queued": True, "request": _request_json(req, manager)}, status=202)
+
+
+async def describe_op(session: AsyncSession, manager: User, op: str, match: dict, body: dict) -> str:
+    if op not in _OPS:
+        raise _forbidden()
+    return await _OPS[op][1](session, manager, match, body)
+
+
+class _Replay:
+    """Tasdiqlangan so'rov — ilovadagi so'rov o'rnida: amal egasi nomidan qayta bajariladi."""
+
+    def __init__(self, bot: Bot, match: dict, body: dict | None):
+        self.app = {"bot": bot}
+        self.match_info = match
+        self.query: dict = {}
+        self.can_read_body = body is not None
+        self._body = body
+
+    async def json(self) -> dict | None:
+        return self._body
+
+
+async def run_op(session: AsyncSession, bot: Bot, owner: User, payload: dict) -> None:
+    """Boshqaruvchi so'ragan amal — egasi tasdiqlagach, egasi nomidan. Bajarib bo'lmasa — ApiError."""
+    if payload.get("op") not in _OPS:
+        raise ApiError(400, "Bu amal endi yo'q")
+    fn, _ = _OPS[payload["op"]]
+    await fn(_Replay(bot, payload.get("match") or {}, payload.get("body")), session, owner)
+
+
+def _int_id(match: dict) -> int:
+    try:
+        return int(match["id"])
+    except (KeyError, TypeError, ValueError):
+        raise ApiError(400, "Noto'g'ri so'rov")
+
+
+def _changes(title: str, changes: list[str]) -> str:
+    """So'rov tavsifi: nima o'zgaradi. O'zgarish bo'lmasa — so'rov yuborilmaydi."""
+    if not changes:
+        raise ApiError(400, "O'zgarish yo'q")
+    return title + "\n" + "\n".join(f"• {c}" for c in changes)
+
+
+def _price_text(price: tuple[Decimal, str] | None) -> str:
+    return fmt_money(price[0], price[1]) if price else "—"
+
+
+def _price_change(label: str, old: tuple[Decimal, str] | None, new: tuple[Decimal, str] | None) -> list[str]:
+    """«A-12: 1 500 so'm → 2 000 so'm» — narx o'zgarsa (bo'lmasa bo'sh)."""
+    if old == new:
+        return []
+    return [f"{label}: {_price_text(old)} → <b>{_price_text(new)}</b>"]
 
 
 def _money(totals: dict[str, Decimal]) -> dict[str, float]:
@@ -260,7 +352,7 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
         raise ApiError(400, "Noto'g'ri davr")
     t = today()
     b = _period_bounds(period, t)
-    worker_id = None if user.is_owner else user.id
+    worker_id = None if user.manages else user.id
     acc = user.account_id
 
     chart_start, chart_end, bucket = b["chart"]
@@ -287,10 +379,13 @@ async def dashboard(request: web.Request, session: AsyncSession, user: User) -> 
         "by_model": _group(cur, "model_name"),
         "pending": await repo.count_pending(session, acc, worker_id),
     }
-    if user.is_owner:
+    if user.manages:
         data["by_worker"] = _group(cur, "worker_id")
         data["by_job"] = _group(cur, "job_name")
         data["has_team"] = await repo.has_work(session, acc)
+        # Ish boshqaruvchining so'rovlari: egasiga — tasdiq kutayotgani, boshqaruvchiga — o'ziniki
+        data["requests"] = await repo.count_requests(session, acc, None if user.is_owner else user.id)
+    if user.is_owner:
         data["pending_pay"] = await repo.count_pending_payments(session, acc)
     return web.json_response(data)
 
@@ -372,6 +467,8 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "name": user.name,
             "role": user.role,
             "is_owner": user.is_owner,
+            # Ish boshqaruvchi: egasidek ko'radi va boshqaradi (o'zgartirishlari egasi tasdiqlagach bajariladi)
+            "is_manager": user.is_manager,
             "job": _job_ref(job),
             "bot_username": bot_me.username,
             "currencies": await repo.enabled_currencies(session, user.account_id),
@@ -520,7 +617,7 @@ def _entry_json(e: WorkEntry) -> dict:
 
 async def _entry_for(request: web.Request, session: AsyncSession, user: User) -> WorkEntry:
     entry = await repo.get_work_entry(session, user.account_id, int(request.match_info["id"]))
-    if entry is None or not (user.is_owner or entry.worker_id == user.id):
+    if entry is None or not (user.manages or entry.worker_id == user.id):
         raise ApiError(404, "Yozuv topilmadi")
     return entry
 
@@ -532,7 +629,7 @@ async def entries(request: web.Request, session: AsyncSession, user: User) -> we
     status = q.get("status") or None
     if status not in (None, EntryStatus.PENDING, EntryStatus.APPROVED, EntryStatus.REJECTED):
         raise ApiError(400, "Noto'g'ri holat")
-    worker_id = user.id if not user.is_owner else (int(q["worker_id"]) if q.get("worker_id") else None)
+    worker_id = user.id if not user.manages else (int(q["worker_id"]) if q.get("worker_id") else None)
     limit = min(int(q.get("limit", 30)), 100)
     offset = max(int(q.get("offset", 0)), 0)
     rows = await repo.list_work_entries(
@@ -555,8 +652,17 @@ async def review(request: web.Request, session: AsyncSession, user: User) -> web
     return web.json_response(_entry_json(entry))
 
 
+async def _ask_delete_entry(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.entries import entry_text
+
+    entry = await repo.get_work_entry(session, manager.account_id, _int_id(match))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    return f"🗑 <b>Ish yozuvini o'chirish</b>\n\n{entry_text(entry)}"
+
+
 @routes.delete(r"/api/entries/{id:\d+}")
-@endpoint()
+@endpoint(manager=_ask_delete_entry)
 async def delete_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     from bot.handlers.entries import entry_text
 
@@ -577,8 +683,9 @@ async def _worker_json(
     w: User,
     stats: dict[int, dict],
     jobs: dict[int, Job],
-    balances: dict[int, repo.WorkerBalance],
+    balances: dict[int, repo.WorkerBalance] | None,
 ) -> dict:
+    """balances=None — ish boshqaruvchiga: ishchilarning qoldig'i (haqqi) ko'rsatilmaydi."""
     # Havola doimiy: ulangandan keyin ham ko'rinadi — ishchi undan istalgan vaqt qayta kiradi
     link = None
     if w.is_active and w.invite_token:
@@ -590,11 +697,12 @@ async def _worker_json(
         "name": w.name,
         "job": _job_ref(jobs.get(w.job_id)),
         "is_active": w.is_active,
+        "is_manager": w.is_manager,
         "linked": w.tg_id is not None,
         "invite_link": link,
         "month_qty": s["qty"],
         "month_pay": s["pay"],
-        "balance": _balance_json(balances.get(w.id)),
+        "balance": _balance_json(balances.get(w.id)) if balances is not None else None,
     }
 
 
@@ -606,11 +714,12 @@ async def _with_tokens(session: AsyncSession, items: list) -> list:
     return items
 
 
-async def _one_worker_json(request: web.Request, session: AsyncSession, worker: User) -> dict:
+async def _one_worker_json(request: web.Request, session: AsyncSession, worker: User, money: bool = True) -> dict:
+    """money=False — ish boshqaruvchiga: qoldig'isiz."""
     await _with_tokens(session, [worker])
     owner_id = worker.owner_id
     stats = await _month_stats(session, owner_id)
-    balances = await repo.worker_balances(session, owner_id, [worker.id])
+    balances = await repo.worker_balances(session, owner_id, [worker.id]) if money else None
     return await _worker_json(request, worker, stats, await _jobs_by_id(session, owner_id), balances)
 
 
@@ -638,19 +747,41 @@ async def _job_arg(session: AsyncSession, owner_id: int, value) -> int | None:
 
 
 @routes.get("/api/workers")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def workers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    stats = await _month_stats(session, user.id)
-    jobs = await _jobs_by_id(session, user.id)
-    workers_ = await _with_tokens(session, await repo.list_workers(session, user.id, active_only=False))
-    balances = await repo.worker_balances(session, user.id)
+    acc = user.account_id
+    stats = await _month_stats(session, acc)
+    jobs = await _jobs_by_id(session, acc)
+    workers_ = await _with_tokens(session, await repo.list_workers(session, acc, active_only=False))
+    balances = await repo.worker_balances(session, acc) if user.is_owner else None
     items = [await _worker_json(request, w, stats, jobs, balances) for w in workers_]
     items.sort(key=lambda w: (not w["is_active"], -w["month_qty"], w["name"].lower()))
-    return web.json_response({"items": items, "jobs": await _jobs_list(session, user.id)})
+    return web.json_response({"items": items, "jobs": await _jobs_list(session, acc)})
+
+
+async def _worker_of(session: AsyncSession, owner_id: int, match: dict) -> User:
+    worker = await repo.get_worker(session, owner_id, _int_id(match))
+    if worker is None:
+        raise ApiError(404, "Ishchi topilmadi")
+    return worker
+
+
+def _worker_name(data: dict) -> str:
+    name = str(data.get("name") or "").strip()[:100]
+    if not name:
+        raise ApiError(400, "Ism bo'sh bo'lmasin")
+    return name
+
+
+async def _ask_add_worker(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    name = _worker_name(data)
+    job = await repo.get_job(session, acc, await _job_arg(session, acc, data.get("job_id")))
+    return f"👷 <b>Yangi ishchi</b>: {escape(name)}" + (f" · 🏷 {escape(job.name)}" if job else "")
 
 
 @routes.post("/api/workers")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_add_worker)
 async def add_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     data = await _json(request)
     name = str(data.get("name") or "").strip()[:100]
@@ -662,45 +793,88 @@ async def add_worker(request: web.Request, session: AsyncSession, user: User) ->
 
 
 async def _get_worker(request: web.Request, session: AsyncSession, user: User) -> User:
-    worker = await repo.get_worker(session, user.id, int(request.match_info["id"]))
-    if worker is None:
-        raise ApiError(404, "Ishchi topilmadi")
-    return worker
+    return await _worker_of(session, user.account_id, request.match_info)
+
+
+async def _ask_update_worker(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    worker = await _worker_of(session, acc, match)
+    changes = []
+    if "name" in data and (name := _worker_name(data)) != worker.name:
+        changes.append(f"ismi → <b>{escape(name)}</b>")
+    if "job_id" in data and (job_id := await _job_arg(session, acc, data["job_id"])) != worker.job_id:
+        jobs = await _jobs_by_id(session, acc)
+        old, new = jobs.get(worker.job_id), jobs.get(job_id)
+        changes.append(
+            f"kasbi: {escape(old.name) if old else 'kasbsiz'} → <b>{escape(new.name) if new else 'kasbsiz'}</b>"
+        )
+    return _changes(f"👷 <b>Ishchi {escape(worker.name)}</b>", changes)
 
 
 @routes.patch(r"/api/workers/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_update_worker)
 async def update_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     worker = await _get_worker(request, session, user)
     data = await _json(request)
     if "name" in data:
-        name = str(data["name"] or "").strip()[:100]
-        if not name:
-            raise ApiError(400, "Ism bo'sh bo'lmasin")
-        worker.name = name
+        worker.name = _worker_name(data)
     if "job_id" in data:
         worker.job_id = await _job_arg(session, user.id, data["job_id"])
     await session.flush()
     return web.json_response(await _one_worker_json(request, session, worker))
 
 
+def _target_active(data: dict | None, current: bool, what: str) -> bool:
+    """{is_active} — qaysi holatga (boshqaruvchi so'ragani), bo'lmasa — teskarisiga. Allaqachon shunday — xato."""
+    active = bool(data["is_active"]) if data and "is_active" in data else not current
+    if active == current:
+        raise ApiError(400, f"{what} allaqachon {'faol' if active else 'o‘chirilgan'}")
+    return active
+
+
+async def _ask_toggle_worker(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    worker = await _worker_of(session, manager.account_id, match)
+    body["is_active"] = _target_active(body, worker.is_active, "Ishchi")
+    if not body["is_active"]:
+        return f"⛔ <b>Ishchini o'chirish</b>: {escape(worker.name)} — botdan foydalana olmaydi"
+    return f"✅ <b>Ishchini qayta faollashtirish</b>: {escape(worker.name)}"
+
+
 @routes.post(r"/api/workers/{id:\d+}/toggle")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_toggle_worker)
 async def toggle_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     worker = await _get_worker(request, session, user)
-    worker.is_active = not worker.is_active
+    data = await _json(request) if request.can_read_body else None
+    worker.is_active = _target_active(data, worker.is_active, "Ishchi")
     await session.flush()
     return web.json_response(await _one_worker_json(request, session, worker))
 
 
 @routes.post(r"/api/workers/{id:\d+}/invite")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def reinvite_worker(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     worker = await _get_worker(request, session, user)
     if not worker.is_active:
         raise ApiError(400, "Avval ishchini faollashtiring")
     # Havola doimiy: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)
     await repo.invite_token(session, worker)
+    return web.json_response(await _one_worker_json(request, session, worker, money=user.is_owner))
+
+
+@routes.post(r"/api/workers/{id:\d+}/manager")
+@endpoint(owner_only=True)
+async def set_worker_manager(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{is_manager} — ishchi ish boshqaruvchi bo'ladi (yoki yana oddiy ishchi); unga yangi menyu bilan xabar boradi."""
+    from bot import approvals  # aylanma importdan qochish uchun
+
+    worker = await _get_worker(request, session, user)
+    on = bool((await _json(request)).get("is_manager"))
+    if on and not worker.is_active:
+        raise ApiError(400, "Avval ishchini faollashtiring")
+    if on != worker.is_manager:
+        await repo.set_manager(session, worker, on)
+        if worker.tg_id and worker.is_active:
+            _notify(request, worker.tg_id, approvals.role_notice(worker, user), kbs.main_menu(worker))
     return web.json_response(await _one_worker_json(request, session, worker))
 
 
@@ -733,21 +907,41 @@ def _job_name(data: dict) -> str:
     return name
 
 
-async def _get_job(request: web.Request, session: AsyncSession, user: User) -> Job:
-    job = await repo.get_job(session, user.id, int(request.match_info["id"]))
+async def _job_of(session: AsyncSession, owner_id: int, match: dict) -> Job:
+    job = await repo.get_job(session, owner_id, _int_id(match))
     if job is None:
         raise ApiError(404, "Kasb topilmadi")
     return job
 
 
+async def _get_job(request: web.Request, session: AsyncSession, user: User) -> Job:
+    return await _job_of(session, user.account_id, request.match_info)
+
+
+async def _currency_arg(session: AsyncSession, owner_id: int, value) -> str:
+    """So'rovdagi valyuta, aytilmasa — asosiy valyuta."""
+    currency = value or (await repo.enabled_currencies(session, owner_id))[0]
+    if currency not in repo.ALL_CURRENCIES:
+        raise ApiError(400, "Valyuta noto'g'ri")
+    return currency
+
+
 @routes.get("/api/jobs")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def jobs(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    return await _jobs_response(session, user.id)
+    return await _jobs_response(session, user.account_id)
+
+
+async def _ask_add_job(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    name = _job_name(body or {})
+    existing = await repo.get_job_by_name(session, manager.account_id, name)
+    if existing is not None and existing.is_active:
+        raise ApiError(400, "Bunday kasb bor")
+    return f"🏷 <b>Yangi kasb</b>: {escape(name)}"
 
 
 @routes.post("/api/jobs")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_add_job)
 async def add_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     name = _job_name(await _json(request))
     existing = await repo.get_job_by_name(session, user.id, name)
@@ -757,8 +951,41 @@ async def add_job(request: web.Request, session: AsyncSession, user: User) -> we
     return await _jobs_response(session, user.id)
 
 
+async def _ask_update_job(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    job = await _job_of(session, acc, match)
+    changes = []
+    if "name" in data and (name := _job_name(data)) != job.name:
+        other = await repo.get_job_by_name(session, acc, name)
+        if other is not None and other.id != job.id and other.is_active:
+            raise ApiError(400, "Bunday kasb bor")
+        changes.append(f"nomi → <b>{escape(name)}</b>")
+    currency = await _currency_arg(session, acc, data.get("currency"))
+    if "price" in data:
+        price = _parse_price(data["price"])
+        old = (job.price, job.currency) if job.price is not None else None
+        changes += _price_change("narxi (hamma modellar)", old, (price, currency) if price else None)
+    if "model_prices" in data:
+        prices = data["model_prices"]
+        if not isinstance(prices, dict):
+            raise ApiError(400, "Narxlar noto'g'ri")
+        models = {m.id: m for m in await repo.list_models(session, acc, active_only=False)}
+        current = await repo.model_prices(session, list(models))
+        for key, value in prices.items():
+            model = models.get(int(key)) if str(key).isdigit() else None
+            if model is None:
+                raise ApiError(400, "Model noto'g'ri")
+            row = current.get(model.id, {}).get(job.id)
+            price = _parse_price(value)
+            new = (price, currency) if price else None
+            changes += _price_change(escape(model.name), (row.price, row.currency) if row else None, new)
+    if "model_free" in data and bool(data["model_free"]) != job.model_free:
+        changes.append(f"✂️ modelsiz ham bo'ladi: <b>{'ha' if data['model_free'] else 'yo‘q'}</b>")
+    return _changes(f"🏷 <b>Kasb {escape(job.name)}</b> (bir dona narxi)", changes)
+
+
 @routes.patch(r"/api/jobs/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_update_job)
 async def update_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """{name, price, currency, model_free, model_prices} — berilganlari o'zgaradi. price — kasbning o'z narxi (hamma
     modellar uchun), null — olib tashlanadi; model_free — modelsiz ham bo'ladi (kroy, brsovka); model_prices —
@@ -767,9 +994,7 @@ async def update_job(request: web.Request, session: AsyncSession, user: User) ->
     data = await _json(request)
     if "name" in data and not await repo.rename_job(session, job, _job_name(data)):
         raise ApiError(400, "Bunday kasb bor")
-    currency = data.get("currency") or (await repo.enabled_currencies(session, user.id))[0]
-    if currency not in repo.ALL_CURRENCIES:
-        raise ApiError(400, "Valyuta noto'g'ri")
+    currency = await _currency_arg(session, user.id, data.get("currency"))
     if "price" in data:
         price = _parse_price(data["price"])
         await repo.set_job_price(session, job, price if price else None, currency)
@@ -788,8 +1013,14 @@ async def update_job(request: web.Request, session: AsyncSession, user: User) ->
     return await _jobs_response(session, user.id)
 
 
+async def _ask_delete_job(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    job = await _job_of(session, manager.account_id, match)
+    n = (await repo.job_worker_counts(session, manager.account_id)).get(job.id)
+    return f"🗑 <b>Kasbni o'chirish</b>: {escape(job.name)}" + (f"\n{n} ta ishchi kasbsiz qoladi" if n else "")
+
+
 @routes.delete(r"/api/jobs/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_delete_job)
 async def delete_job(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     await repo.delete_job(session, await _get_job(request, session, user))
     return await _jobs_response(session, user.id)
@@ -852,9 +1083,7 @@ async def _apply_prices(session: AsyncSession, model: ItemModel, data: dict) -> 
 
 async def _apply_model(session: AsyncSession, model: ItemModel, data: dict) -> None:
     if "name" in data:
-        name = str(data["name"] or "").strip()[:100]
-        if not name:
-            raise ApiError(400, "Nom bo'sh bo'lmasin")
+        name = _model_name(data)
         existing = await repo.get_model_by_name(session, model.owner_id, name)
         if existing and existing.id != model.id:
             raise ApiError(400, "Bunday model allaqachon bor")
@@ -876,18 +1105,61 @@ async def _model_prices(session: AsyncSession, model: ItemModel) -> dict[int, Mo
 @routes.get("/api/models")
 @endpoint()
 async def models(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    items = await repo.list_models(session, user.account_id, active_only=not user.is_owner)
+    acc = user.account_id
+    items = await repo.list_models(session, acc, active_only=not user.manages)
     prices = await repo.model_prices(session, [m.id for m in items])
-    if user.is_owner:
+    if user.manages:
         return web.json_response(
-            {"items": [_model_json(m, prices.get(m.id, {})) for m in items], "jobs": await _jobs_list(session, user.id)}
+            {"items": [_model_json(m, prices.get(m.id, {})) for m in items], "jobs": await _jobs_list(session, acc)}
         )
     job = await repo.get_job(session, user.account_id, user.job_id)
     return web.json_response({"items": [_worker_model_json(m, prices.get(m.id, {}), job) for m in items]})
 
 
+def _model_name(data: dict) -> str:
+    name = str(data.get("name") or "").strip()[:100]
+    if not name:
+        raise ApiError(400, "Nom bo'sh bo'lmasin")
+    return name
+
+
+async def _job_price_changes(
+    session: AsyncSession, owner_id: int, data: dict, currency: str, current: dict[int, ModelPrice]
+) -> list[str]:
+    """data["prices"] ({job_id: narx}) — modelning kasb narxlari qanday o'zgaradi (_apply_prices dagidek)."""
+    prices = data.get("prices")
+    if prices is None:
+        return []
+    if not isinstance(prices, dict):
+        raise ApiError(400, "Narxlar noto'g'ri")
+    jobs = await _jobs_by_id(session, owner_id)
+    changes = []
+    for key, value in prices.items():
+        job_id = await _job_arg(session, owner_id, key)
+        if job_id is None:
+            raise ApiError(400, "Kasb noto'g'ri")
+        row = current.get(job_id)
+        price = _parse_price(value)
+        new = (price, currency) if price is not None else None
+        changes += _price_change(escape(jobs[job_id].name), (row.price, row.currency) if row else None, new)
+    return changes
+
+
+async def _ask_add_model(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    name = _model_name(data)
+    if await repo.get_model_by_name(session, acc, name):
+        raise ApiError(400, "Bunday model allaqachon bor")
+    currency = await _currency_arg(session, acc, data.get("currency"))
+    price = _parse_price(data.get("price"))
+    changes = _price_change("umumiy (zagatovka) narxi", None, (price, currency) if price is not None else None)
+    changes += await _job_price_changes(session, acc, data, currency, {})
+    title = f"🧵 <b>Yangi model</b>: {escape(name)}"
+    return _changes(title, changes) if changes else title
+
+
 @routes.post("/api/models")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_add_model)
 async def add_model(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     data = await _json(request)
     currencies = await repo.enabled_currencies(session, user.id)
@@ -900,8 +1172,34 @@ async def add_model(request: web.Request, session: AsyncSession, user: User) -> 
     return web.json_response(_model_json(model, await _model_prices(session, model)))
 
 
+async def _ask_update_model(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    model = await repo.get_model(session, acc, _int_id(match))
+    if model is None:
+        raise ApiError(404, "Model topilmadi")
+    changes = []
+    if "name" in data and (name := _model_name(data)) != model.name:
+        existing = await repo.get_model_by_name(session, acc, name)
+        if existing and existing.id != model.id:
+            raise ApiError(400, "Bunday model allaqachon bor")
+        changes.append(f"nomi → <b>{escape(name)}</b>")
+    currency = model.currency
+    if "currency" in data:
+        currency = await _currency_arg(session, acc, data["currency"])
+    old = (model.price, model.currency) if model.price is not None else None
+    if "price" in data:
+        price = _parse_price(data["price"])
+        changes += _price_change("umumiy (zagatovka) narxi", old, (price, currency) if price is not None else None)
+    elif old and currency != model.currency:
+        changes += _price_change("umumiy (zagatovka) narxi", old, (model.price, currency))
+    changes += await _job_price_changes(session, acc, data, currency, await _model_prices(session, model))
+    if "is_active" in data and bool(data["is_active"]) != model.is_active:
+        changes.append("✅ qayta faol bo'ladi" if data["is_active"] else "⛔ o'chiriladi — yangi yozuvlarda taklif qilinmaydi")
+    return _changes(f"🧵 <b>Model {escape(model.name)}</b> (bir dona narxi)", changes)
+
+
 @routes.patch(r"/api/models/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_update_model)
 async def update_model(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     model = await repo.get_model(session, user.id, int(request.match_info["id"]))
     if model is None:
@@ -1158,14 +1456,14 @@ def _sum_money(items: list[dict[str, Decimal]]) -> dict[str, float]:
 
 
 @routes.get("/api/clients")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def clients(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     period = request.query.get("period", "month")
     if period not in PERIODS:
         raise ApiError(400, "Noto'g'ri davr")
     t = today()
     b = _period_bounds(period, t)
-    stats = await repo.client_stats(session, user.id, b["start"], b["end"])
+    stats = await repo.client_stats(session, user.account_id, b["start"], b["end"])
     await _with_tokens(session, [st.client for st in stats])
     username = (await request.app["bot"].me()).username
     return web.json_response(
@@ -1174,7 +1472,7 @@ async def clients(request: web.Request, session: AsyncSession, user: User) -> we
             "start": b["start"].isoformat(),
             "end": b["end"].isoformat(),
             "today": t.isoformat(),
-            "set_size": await repo.set_size(session, user.id),
+            "set_size": await repo.set_size(session, user.account_id),
             "items": [_client_json(st, username) for st in stats],
             "totals": {
                 "owed": _sum_money([{c: v for c, v in st.balance.items() if v > 0} for st in stats]),
@@ -1194,8 +1492,17 @@ def _client_fields(data: dict) -> tuple[str | None, str | None]:
     return name, phone
 
 
+async def _ask_add_client(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    name, phone = _client_fields(body or {})
+    if not name:
+        raise ApiError(400, "Ismini kiriting")
+    if await repo.get_client_by_name(session, manager.account_id, name):
+        raise ApiError(400, "Bunday mijoz bor")
+    return f"🛍 <b>Yangi mijoz</b>: {escape(name)}" + (f" · 📞 {escape(phone)}" if phone else "")
+
+
 @routes.post("/api/clients")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_add_client)
 async def add_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     name, phone = _client_fields(await _json(request))
     if not name:
@@ -1207,8 +1514,34 @@ async def add_client(request: web.Request, session: AsyncSession, user: User) ->
     return web.json_response(_client_json(repo.ClientStats(client=client), username))
 
 
+async def _client_of(session: AsyncSession, owner_id: int, match: dict) -> Client:
+    client = await repo.get_client(session, owner_id, _int_id(match))
+    if client is None:
+        raise ApiError(404, "Mijoz topilmadi")
+    return client
+
+
+async def _ask_update_client(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    acc, data = manager.account_id, body or {}
+    client = await _client_of(session, acc, match)
+    name, phone = _client_fields(data)
+    changes = []
+    if "name" in data and name != client.name:
+        if not name:
+            raise ApiError(400, "Ismini kiriting")
+        same = await repo.get_client_by_name(session, acc, name)
+        if same is not None and same.id != client.id:
+            raise ApiError(400, "Bunday mijoz bor")
+        changes.append(f"ismi → <b>{escape(name)}</b>")
+    if "phone" in data and phone != client.phone:
+        changes.append(f"telefoni → <b>{escape(phone) if phone else '—'}</b>")
+    if "is_active" in data and bool(data["is_active"]) != client.is_active:
+        changes.append("✅ qayta faol bo'ladi" if data["is_active"] else "⛔ o'chiriladi — xabar bormaydi, botda yoza olmaydi")
+    return _changes(f"🛍 <b>Mijoz {escape(client.name)}</b>", changes)
+
+
 @routes.patch(r"/api/clients/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_update_client)
 async def update_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     client = await repo.get_client(session, user.id, int(request.match_info["id"]))
     if client is None:
@@ -1231,10 +1564,10 @@ async def update_client(request: web.Request, session: AsyncSession, user: User)
 
 
 @routes.post(r"/api/clients/{id:\d+}/invite")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def reinvite_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """Doimiy kirish havolasi: bor bo'lsa — o'sha, almashtirilmaydi (yuborilgan havola eskirmaydi)."""
-    client = await repo.get_client(session, user.id, int(request.match_info["id"]))
+    client = await repo.get_client(session, user.account_id, int(request.match_info["id"]))
     if client is None:
         raise ApiError(404, "Mijoz topilmadi")
     if not client.is_active:
@@ -1245,21 +1578,23 @@ async def reinvite_client(request: web.Request, session: AsyncSession, user: Use
 
 
 @routes.get("/api/clients/entries")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def client_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """Oldi-berdi. Bitta mijoznikida (client_id) birinchi sahifada yana: outside — «Qarzlar»da qolib ketgan, mijoz
-    hisobiga kirmagan qarzlari (also — shu ismli ishchi yoki ta'minotchi); deleted — o'chirilgan yozuvlari (xato
-    o'chgan bo'lsa qaytarish uchun)."""
+    hisobiga kirmagan qarzlari (also — shu ismli ishchi yoki ta'minotchi; ish boshqaruvchiga — yo'q: «Qarzlar»
+    egasiniki); deleted — o'chirilgan yozuvlari (xato o'chgan bo'lsa qaytarish uchun)."""
+    acc = user.account_id
     limit, offset = _paging(request)
     client_id = request.query.get("client_id")
     client_id = int(client_id) if client_id and client_id.isdigit() else None
-    rows = await repo.list_client_entries(session, user.id, client_id=client_id, limit=limit + 1, offset=offset)
+    rows = await repo.list_client_entries(session, acc, client_id=client_id, limit=limit + 1, offset=offset)
     data = {"items": [_client_entry_json(e) for e in rows[:limit]], "has_more": len(rows) > limit}
-    if client_id is not None and offset == 0 and (client := await repo.get_client(session, user.id, client_id)):
-        outside = await repo.client_outside_debts(session, user.id, client)
-        also = await repo.namesakes(session, user.id, [b.person for b in outside])
-        deleted = await repo.deleted_client_entries(session, user.id, client_id)
-        data["outside"] = [{**_debt_balance_json(b), "also": also.get(b.person, [])} for b in outside]
+    if client_id is not None and offset == 0 and (client := await repo.get_client(session, acc, client_id)):
+        if user.is_owner:
+            outside = await repo.client_outside_debts(session, acc, client)
+            also = await repo.namesakes(session, acc, [b.person for b in outside])
+            data["outside"] = [{**_debt_balance_json(b), "also": also.get(b.person, [])} for b in outside]
+        deleted = await repo.deleted_client_entries(session, acc, client_id)
         data["deleted"] = [_client_entry_json(e) for e in deleted]
     return web.json_response(data)
 
@@ -1285,8 +1620,17 @@ async def merge_into_client(request: web.Request, session: AsyncSession, user: U
     )
 
 
+async def _ask_delete_client_entry(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.money import client_text  # aylanma importdan qochish uchun
+
+    entry = await repo.get_client_entry(session, manager.account_id, _int_id(match))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    return f"🗑 <b>Mijoz yozuvini o'chirish</b>\n\n{client_text(entry)}"
+
+
 @routes.delete(r"/api/clients/entries/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_delete_client_entry)
 async def delete_client_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     from bot.handlers.money import client_deleted_message  # aylanma importdan qochish uchun
 
@@ -1299,8 +1643,17 @@ async def delete_client_entry(request: web.Request, session: AsyncSession, user:
     return web.json_response({"ok": True})
 
 
+async def _ask_restore_client_entry(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.money import client_text
+
+    entry = await session.get(ClientEntry, _int_id(match))
+    if entry is None or entry.owner_id != manager.account_id or entry.deleted_at is None:
+        raise ApiError(404, "Yozuv topilmadi yoki allaqachon qaytarilgan")
+    return f"↩️ <b>O'chirilgan yozuvni qaytarish</b> — mijoz qoldig'iga yana kiradi\n\n{client_text(entry)}"
+
+
 @routes.post(r"/api/clients/entries/{id:\d+}/restore")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_restore_client_entry)
 async def restore_client_entry(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """O'chirilgan yozuv qaytadi (qoldiqqa yana kiradi); ulangan mijozga xabar boradi."""
     from bot.handlers.money import client_restored_message  # aylanma importdan qochish uchun
@@ -1356,19 +1709,19 @@ def _material_kinds(rows: list[repo.MaterialStatRow]) -> list[dict]:
 
 
 @routes.get("/api/materials")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def materials(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     period = request.query.get("period", "month")
     if period not in PERIODS:
         raise ApiError(400, "Noto'g'ri davr")
     t = today()
     b = _period_bounds(period, t)
-    rows = await repo.material_stat_rows(session, user.id, b["start"], b["end"])
+    rows = await repo.material_stat_rows(session, user.account_id, b["start"], b["end"])
     total: dict[str, Decimal] = defaultdict(Decimal)
     for r in rows:
         total[r.currency] += r.amount
     # Ta'minotchilar bilan qarz (davrdan qat'i nazar) — umumiy qarzlardagi «Xom ashyo» bo'limi
-    debts_ = await repo.supplier_debts(session, user.id)
+    debts_ = await repo.supplier_debts(session, user.account_id)
     owed_to_me, i_owe = repo.debt_totals(debts_)
     return web.json_response(
         {
@@ -1389,19 +1742,33 @@ async def materials(request: web.Request, session: AsyncSession, user: User) -> 
 
 
 @routes.get("/api/materials/entries")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def material_entries(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     limit, offset = _paging(request)
     supplier_id = request.query.get("supplier_id")
     rows = await repo.list_material_entries(
-        session, user.id, supplier_id=int(supplier_id) if supplier_id and supplier_id.isdigit() else None,
+        session, user.account_id, supplier_id=int(supplier_id) if supplier_id and supplier_id.isdigit() else None,
         limit=limit + 1, offset=offset,
     )
     return web.json_response({"items": [_material_json(e) for e in rows[:limit]], "has_more": len(rows) > limit})
 
 
+async def _material_of(session: AsyncSession, owner_id: int, match: dict) -> MaterialEntry:
+    entry = await repo.get_material_entry(session, owner_id, _int_id(match))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    return entry
+
+
+async def _ask_delete_material(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.money import material_text  # aylanma importdan qochish uchun
+
+    entry = await _material_of(session, manager.account_id, match)
+    return f"🗑 <b>Xom ashyo xaridini o'chirish</b>\n\n{material_text(entry)}"
+
+
 @routes.delete(r"/api/materials/{id:\d+}")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_delete_material)
 async def delete_material(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     from bot.handlers.money import supplier_deleted_message  # aylanma importdan qochish uchun
 
@@ -1414,8 +1781,26 @@ async def delete_material(request: web.Request, session: AsyncSession, user: Use
     return web.json_response({"ok": True})
 
 
+async def _ask_material_credit(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.money import material_text
+
+    entry = await _material_of(session, manager.account_id, match)
+    on_credit = bool((body or {}).get("on_credit"))
+    if on_credit and not repo.material_credit_ok(entry):
+        raise ApiError(400, "Qarzga qo'shish uchun kimdan olingani va narxi yozilgan bo'lishi kerak")
+    if on_credit == entry.on_credit:
+        raise ApiError(400, "O'zgarish yo'q")
+    who = escape(entry.supplier or "")
+    title = (
+        f"💳 <b>Qarzga qo'shish</b> — {who}ga qarz bo'lib «Qarzlar»ga qo'shiladi"
+        if on_credit
+        else f"💵 <b>To'langan deb belgilash</b> — {who} bilan qarzdan chiqariladi"
+    )
+    return f"{title}\n\n{material_text(entry)}"
+
+
 @routes.post(r"/api/materials/{id:\d+}/credit")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_material_credit)
 async def material_credit(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     """{"on_credit": true} — xarid ta'minotchiga qarz (umumiy qarzlarga qo'shiladi), false — to'langan xarid."""
     entry = await repo.get_material_entry(session, user.id, int(request.match_info["id"]))
@@ -1464,49 +1849,74 @@ async def _one_supplier_json(request: web.Request, session: AsyncSession, suppli
     return await _supplier_json(request, supplier, stats, await repo.supplier_debt_balances(session, supplier.owner_id))
 
 
-async def _get_supplier(request: web.Request, session: AsyncSession, user: User) -> Supplier:
-    supplier = await repo.get_supplier(session, user.id, int(request.match_info["id"]))
+async def _supplier_of(session: AsyncSession, owner_id: int, match: dict) -> Supplier:
+    supplier = await repo.get_supplier(session, owner_id, _int_id(match))
     if supplier is None:
         raise ApiError(404, "Ta'minotchi topilmadi")
     return supplier
 
 
+async def _get_supplier(request: web.Request, session: AsyncSession, user: User) -> Supplier:
+    return await _supplier_of(session, user.account_id, request.match_info)
+
+
 @routes.get("/api/suppliers")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def suppliers(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    stats = await _supplier_stats(session, user.id)
-    debts = await repo.supplier_debt_balances(session, user.id)
-    suppliers_ = await _with_tokens(session, await repo.list_suppliers(session, user.id, False))
+    acc = user.account_id
+    stats = await _supplier_stats(session, acc)
+    debts = await repo.supplier_debt_balances(session, acc)
+    suppliers_ = await _with_tokens(session, await repo.list_suppliers(session, acc, False))
     items = [await _supplier_json(request, sp, stats, debts) for sp in suppliers_]
     items.sort(key=lambda sp: (not sp["is_active"], -sp["month_count"], -sp["count"], sp["name"].lower()))
     return web.json_response({"items": items})
 
 
-@routes.post("/api/suppliers")
-@endpoint(owner_only=True)
-async def add_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    data = await _json(request)
+def _supplier_name(data: dict) -> str:
     name = str(data.get("name") or "").strip()[:100]
     if not name:
         raise ApiError(400, "Nomini kiriting")
+    return name
+
+
+async def _ask_add_supplier(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    name = _supplier_name(body or {})
+    if await repo.get_supplier_by_name(session, manager.account_id, name):
+        raise ApiError(400, "Bunday ta'minotchi bor")
+    return f"🏪 <b>Yangi ta'minotchi</b>: {escape(name)}"
+
+
+@routes.post("/api/suppliers")
+@endpoint(owner_only=True, manager=_ask_add_supplier)
+async def add_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    name = _supplier_name(await _json(request))
     if await repo.get_supplier_by_name(session, user.id, name):
         raise ApiError(400, "Bunday ta'minotchi bor")
     supplier = await repo.create_supplier(session, user.id, name)
     return web.json_response(await _one_supplier_json(request, session, supplier))
 
 
+async def _ask_toggle_supplier(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    supplier = await _supplier_of(session, manager.account_id, match)
+    body["is_active"] = _target_active(body, supplier.is_active, "Ta'minotchi")
+    if not body["is_active"]:
+        return f"⛔ <b>Ta'minotchini o'chirish</b>: {escape(supplier.name)} — undan olinganda xabar bormaydi"
+    return f"✅ <b>Ta'minotchini qayta faollashtirish</b>: {escape(supplier.name)}"
+
+
 @routes.post(r"/api/suppliers/{id:\d+}/toggle")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=_ask_toggle_supplier)
 async def toggle_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     supplier = await _get_supplier(request, session, user)
-    supplier.is_active = not supplier.is_active
+    data = await _json(request) if request.can_read_body else None
+    supplier.is_active = _target_active(data, supplier.is_active, "Ta'minotchi")
     await _with_tokens(session, [supplier])
     await session.flush()
     return web.json_response(await _one_supplier_json(request, session, supplier))
 
 
 @routes.post(r"/api/suppliers/{id:\d+}/invite")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def reinvite_supplier(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     supplier = await _get_supplier(request, session, user)
     if not supplier.is_active:
@@ -1642,10 +2052,9 @@ async def add_payment(request: web.Request, session: AsyncSession, user: User) -
         saved = await intake.save(session, request.app["bot"], user, draft)
     except intake.IntakeError as e:
         raise ApiError(400, e.message)
-    pending = not drafts.pay_counted(draft, draft["pays"][0])
-    return web.json_response(
-        {"saved": "\n\n".join([saved.header, *(text for text, _ in saved.cards)]), "pending": pending}
-    )
+    # Ish boshqaruvchi yozgani saqlanmaydi — egasining tasdig'iga boradi (queued)
+    pending = saved.queued or not drafts.pay_counted(draft, draft["pays"][0])
+    return web.json_response({"saved": _saved_html(saved), "pending": pending, "queued": saved.queued})
 
 
 async def _payment_for(request: web.Request, session: AsyncSession, user: User) -> WorkerPayment:
@@ -1671,8 +2080,21 @@ async def review_payment(request: web.Request, session: AsyncSession, user: User
     return web.json_response(_pay_json(entry, user))
 
 
+async def _ask_delete_payment(session: AsyncSession, manager: User, match: dict, body: dict | None) -> str:
+    from bot.handlers.entries import pay_text
+
+    entry = await repo.get_payment(session, manager.account_id, _int_id(match))
+    # Boshqaruvchi faqat o'zi yozgan o'z pul yozuvini (oddiy ishchidek)
+    if entry is None or entry.worker_id != manager.id:
+        raise ApiError(404, "Yozuv topilmadi")
+    if entry.created_by != manager.id:
+        raise ApiError(403, "Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi")
+    owner = await session.get(User, manager.owner_id)
+    return f"🗑 <b>Pul yozuvini o'chirish</b>\n\n{pay_text(entry, owner)}"
+
+
 @routes.delete(r"/api/payments/{id:\d+}")
-@endpoint()
+@endpoint(manager=_ask_delete_payment)
 async def delete_payment(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     from bot.handlers.entries import pay_text
 
@@ -1767,39 +2189,46 @@ async def reset_supplier(request: web.Request, session: AsyncSession, user: User
 # --- Barcha harakatlar: xarajat, daromad, qarz, mijoz, xom ashyo va ish yozuvlari bitta lentada ---
 
 ACTIVITY_KINDS = ("expense", "income", "debt", "client", "material", "work", "pay")
+# Ish boshqaruvchiga: egasining pullari (xarajat, daromad, qarz) va ishchilarning puli ko'rinmaydi
+MANAGER_ACTIVITY = ("client", "material", "work")
 ACTIVITY_MAX = 1000
 
 
 @routes.get("/api/activity")
-@endpoint(owner_only=True)
+@endpoint(owner_only=True, manager=VIEW)
 async def activity(request: web.Request, session: AsyncSession, user: User) -> web.Response:
     limit, offset = _paging(request)
     kind = request.query.get("kind") or None
-    if kind is not None and kind not in ACTIVITY_KINDS:
+    allowed = ACTIVITY_KINDS if user.is_owner else MANAGER_ACTIVITY
+    if kind is not None and kind not in allowed:
         raise ApiError(400, "Noto'g'ri tur")
     if offset > ACTIVITY_MAX:
         return web.json_response({"items": [], "has_more": False})
 
+    def want(*kinds: str) -> bool:
+        return any(k in allowed for k in kinds) and (kind is None or kind in kinds)
+
     # Har jadvaldan kerakli miqdorni olib, sana bo'yicha birlashtiramiz
+    acc = user.account_id
     need = offset + limit + 1
     items: list[tuple[date, float, dict]] = []
-    if kind in (None, "expense", "income"):
-        for e in await repo.list_personal_entries(session, user.id, kind=kind, limit=need):
+    if want("expense", "income"):
+        for e in await repo.list_personal_entries(session, acc, kind=kind, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": e.kind, **_personal_json(e)}))
-    if kind in (None, "debt"):
-        for e in await repo.list_debt_entries(session, user.id, limit=need):
+    if want("debt"):
+        for e in await repo.list_debt_entries(session, acc, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "debt", **_debt_json(e)}))
-    if kind in (None, "client"):
-        for e in await repo.list_client_entries(session, user.id, limit=need):
+    if want("client"):
+        for e in await repo.list_client_entries(session, acc, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "client", **_client_entry_json(e)}))
-    if kind in (None, "material"):
-        for e in await repo.list_material_entries(session, user.id, limit=need):
+    if want("material"):
+        for e in await repo.list_material_entries(session, acc, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "material", **_material_json(e)}))
-    if kind in (None, "work"):
-        for e in await repo.list_work_entries(session, user.id, limit=need):
+    if want("work"):
+        for e in await repo.list_work_entries(session, acc, limit=need):
             items.append((e.work_date, e.created_at.timestamp(), {"type": "work", **_entry_json(e)}))
-    if kind in (None, "pay"):
-        for e in await repo.list_payments(session, user.id, limit=need):
+    if want("pay"):
+        for e in await repo.list_payments(session, acc, limit=need):
             items.append((e.entry_date, e.created_at.timestamp(), {"type": "pay", **_pay_json(e, user)}))
     items.sort(key=lambda x: (x[0], x[1]), reverse=True)
     page = [x[2] for x in items[offset : offset + limit]]
@@ -1862,7 +2291,7 @@ async def _analyze(
         if await intake.autosave(session, user, draft):
             saved = await intake.save_auto(session, request.app["bot"], user, draft)
             _drafts.pop(user.id, None)
-            return await _input_state(session, user, saved=_saved_html(saved), **extra)
+            return await _input_state(session, user, saved=_saved_html(saved), queued=saved.queued, **extra)
     except intake.IntakeError as e:
         if e.drop:
             _drafts.pop(user.id, None)
@@ -1939,7 +2368,7 @@ async def input_image(request: web.Request, session: AsyncSession, user: User) -
         if await intake.autosave(session, user, draft):
             saved = await intake.save(session, request.app["bot"], user, draft)
             _drafts.pop(user.id, None)
-            return await _input_state(session, user, saved=_saved_html(saved))
+            return await _input_state(session, user, saved=_saved_html(saved), queued=saved.queued)
     except intake.IntakeError as e:
         return await _input_state(session, user, notice=e.message)
     _drafts[user.id] = draft
@@ -1982,11 +2411,11 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
             elif action == "save":
                 saved = await intake.save(session, request.app["bot"], user, draft)
                 _drafts.pop(user.id, None)
-                return await _input_state(session, user, saved=_saved_html(saved))
+                return await _input_state(session, user, saved=_saved_html(saved), queued=saved.queued)
         if answered and await intake.autosave(session, user, draft):
             saved = await intake.save_auto(session, request.app["bot"], user, draft)
             _drafts.pop(user.id, None)
-            return await _input_state(session, user, saved=_saved_html(saved))
+            return await _input_state(session, user, saved=_saved_html(saved), queued=saved.queued)
     except (ValueError, TypeError):
         raise ApiError(400, "Noto'g'ri tugma")
     except intake.IntakeError as e:
@@ -1994,3 +2423,70 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
             _drafts.pop(user.id, None)
         return await _input_state(session, user, notice=e.message)
     return await _input_state(session, user)
+
+
+# --- Ish boshqaruvchining so'rovlari: egasi tasdiqlaydi yoki rad etadi ------------------
+
+def _request_json(req: ManagerRequest, viewer: User) -> dict:
+    from bot import approvals  # aylanma importdan qochish uchun
+
+    pending = req.status == RequestStatus.PENDING
+    return {
+        "id": req.id,
+        "manager": {"id": req.manager_id, "name": req.manager.name},
+        "summary": req.summary,
+        "status": req.status,
+        "status_label": approvals.status_label(req, viewer.is_owner),
+        "result": req.result,
+        "created_at": _iso(req.created_at),
+        "reviewed_at": _iso(req.reviewed_at),
+        "can_review": pending and viewer.is_owner,
+        "can_cancel": pending and viewer.id == req.manager_id,
+    }
+
+
+@routes.get("/api/requests")
+@endpoint()
+async def requests_list(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Egasiga — boshqaruvchilarning so'rovlari, boshqaruvchiga — o'ziniki (yangisi birinchi).
+    ?status=pending — faqat tasdiq kutayotganlar."""
+    if not user.manages:
+        raise _forbidden()
+    limit, offset = _paging(request)
+    status = request.query.get("status") or None
+    manager_id = None if user.is_owner else user.id
+    rows = await repo.list_requests(
+        session, user.account_id, manager_id=manager_id, status=status, limit=limit + 1, offset=offset
+    )
+    return web.json_response(
+        {
+            "items": [_request_json(r, user) for r in rows[:limit]],
+            "has_more": len(rows) > limit,
+            "pending": await repo.count_requests(session, user.account_id, manager_id),
+        }
+    )
+
+
+@routes.post(r"/api/requests/{id:\d+}/{action:approve|reject|cancel}")
+@endpoint()
+async def request_action(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """Egasi: approve (egasi nomidan bajariladi) yoki reject. Boshqaruvchi: cancel — o'z so'rovini qaytarib oladi.
+    detail — tasdiqlanganda natija (ishchi, mijozga xabar borgani)."""
+    from bot import approvals
+
+    req = await repo.get_request(session, user.account_id, int(request.match_info["id"]))
+    if req is None or not (user.is_owner or req.manager_id == user.id):
+        raise ApiError(404, "So'rov topilmadi")
+    action = request.match_info["action"]
+    if action not in ({"approve", "reject"} if user.is_owner else {"cancel"}):
+        raise _forbidden()
+    detail = None
+    try:
+        if action == "cancel":
+            await approvals.cancel(session, req)
+        else:
+            detail = await approvals.review(session, request.app["bot"], user, req, action == "approve")
+    except approvals.RequestDone:
+        label = approvals.STATUS_LABELS.get(req.status, req.status)
+        raise ApiError(409, f"Bu so'rov allaqachon ko'rib chiqilgan: {label}")
+    return web.json_response({"request": _request_json(req, user), "detail": detail})

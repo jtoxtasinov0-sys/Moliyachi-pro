@@ -69,10 +69,11 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 🤝 Qarzlar — kim kimga qancha qarz
 💡 Maslahat — topgan pulingizdan xarajatga va jamg'armaga qancha ajratish,
      kunlik limit, moliyaviy saboqlar va shaxsiy maslahat
-⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar
+⏳ Tasdiq kutayotganlar — ishchilar kiritgan yozuvlar va ish boshqaruvchi so'rovlari
 👷 Ishchilar — qo'shish, taklif havolasi, kasbi (kroychi, brsovkachi, tikuvchi,
      tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb), 🧾 hisob-kitobi: ishlari,
-     olgan puli va qoldig'i
+     olgan puli va qoldig'i; 👔 ish boshqaruvchi qilish — u ishchilarning pulidan
+     boshqa hamma narsani boshqaradi, har bir o'zgartirishi siz tasdiqlagach bajariladi
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
 🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
 🏪 Ta'minotchilar — kimdan olinadi va ular bilan qarz: qo'shish va taklif havolasi (ulangan
@@ -101,6 +102,40 @@ Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 🕘 Oxirgi yozuvlar — tahrirlash va o'chirish
 🧾 Hisob-kitob — ishlaringiz, olgan pulingiz va qolgan haqqingiz
 """
+
+MANAGER_HELP = """\
+<b>👔 Siz — ish boshqaruvchi</b>
+
+Ishxonani boshliq o'rnida boshqarasiz. Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi —
+tasdiqlasa bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi) va sizga xabar keladi.
+
+🎙 Ovoz yoki matn bilan yuboring, masalan:
+• <i>Alisher A-12 modeldan 50 ta topshirdi</i> — ishchining ishi
+• <i>A-12 dan 30 ta qildim</i> — o'zingizning ishingiz
+• <i>A-12 modelga brsovka 2000dan</i> — narx
+• <i>Tohirga 10 komplekt maksima berdim, 140 mingdan</i>, <i>Tohir 2 million to'ladi</i> — mijoz
+• <i>20 kg kley oldim</i>, <i>Aslcharmdan 100 list teri oldim</i> — xom ashyo
+• <i>500 ming oldim</i> — o'zingiz olgan pul
+🖼 Daftar rasmini yuborsangiz ham bo'ladi.
+
+📱 Ilovada («📊 Ilova»): ishchilar, kasblar, modellar va narxlar, mijozlar, xom ashyo va ta'minotchilar —
+qo'shish va o'zgartirish ham boshliq tasdig'idan o'tadi.
+
+🔒 Ishchilarning puli (avans, ish haqi, qoldig'i), boshliqning xarajat, daromad va qarzlari — faqat boshliqda.
+
+<b>Menyu</b>
+📊 Hisobot — butun ishxona: ishchilar, modellar, kasblar
+📄 /pdf — o'z hisobotingizni PDF fayl qilib saqlash
+🕘 Oxirgi yozuvlar — tahrirlash va o'chirish (boshliq tasdig'i bilan)
+🧾 Hisob-kitob — o'z ishlaringiz, olgan pulingiz va haqqingiz
+📨 So'rovlarim — nima yuborganingiz va boshliq javobi
+"""
+
+
+def help_for(user: User) -> str:
+    if user.is_owner:
+        return OWNER_HELP
+    return MANAGER_HELP if user.is_manager else WORKER_HELP
 
 
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("sup_")))
@@ -139,7 +174,7 @@ async def start_with_invite(message: Message, command: CommandObject, session: A
         return
     user, previous = linked
     await message.answer(
-        f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{WORKER_HELP}",
+        f"Xush kelibsiz, <b>{escape(user.name)}</b>! Siz ishchi sifatida ulandingiz.\n\n{help_for(user)}",
         reply_markup=kbs.main_menu(user),
     )
     await notify_owner_linked(
@@ -197,8 +232,9 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, user
     await _menu_sent(session, user)
     if user.is_owner and await send_guide(message, session, user):
         return
-    help_text = OWNER_HELP if user.is_owner else WORKER_HELP
-    await message.answer(f"Assalomu alaykum, <b>{escape(user.name)}</b>!\n\n{help_text}", reply_markup=kbs.main_menu(user))
+    await message.answer(
+        f"Assalomu alaykum, <b>{escape(user.name)}</b>!\n\n{help_for(user)}", reply_markup=kbs.main_menu(user)
+    )
 
 
 @router.message(Command("yordam", "help"), Registered())
@@ -206,7 +242,7 @@ async def start(message: Message, state: FSMContext, session: AsyncSession, user
 async def help_cmd(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
     await _menu_sent(session, user)
-    await message.answer(OWNER_HELP if user.is_owner else WORKER_HELP, reply_markup=kbs.main_menu(user))
+    await message.answer(help_for(user), reply_markup=kbs.main_menu(user))
 
 
 @router.message(Command("web", "brauzer"), Registered())

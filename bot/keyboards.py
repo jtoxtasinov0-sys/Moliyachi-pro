@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeybo
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 from bot.config import settings
-from bot.db.models import EntryStatus, User, WorkEntry, WorkerPayment
+from bot.db.models import EntryStatus, ManagerRequest, RequestStatus, User, WorkEntry, WorkerPayment
 from bot.db.repo import SAVINGS_CHOICES
 
 # --- Asosiy menyu -----------------------------------------------------------
@@ -21,11 +21,12 @@ BTN_MODELS = "🧵 Modellar"
 BTN_MATERIALS = "🧱 Xom ashyo"
 BTN_SUPPLIERS = "🏪 Ta'minotchilar"
 BTN_SETTINGS = "⚙️ Sozlamalar"
+BTN_REQUESTS = "📨 So'rovlarim"
 BTN_HELP = "❓ Yordam"
 
 MENU_TEXTS = {
     BTN_REPORT, BTN_RECENT, BTN_LEDGER, BTN_EXPENSES, BTN_DEBTS, BTN_CLIENTS, BTN_ADVICE, BTN_PENDING, BTN_WORKERS,
-    BTN_MODELS, BTN_MATERIALS, BTN_SUPPLIERS, BTN_SETTINGS, BTN_HELP,
+    BTN_MODELS, BTN_MATERIALS, BTN_SUPPLIERS, BTN_SETTINGS, BTN_REQUESTS, BTN_HELP,
 }
 
 
@@ -40,6 +41,8 @@ def main_menu(user: User) -> ReplyKeyboardMarkup:
     kb.button(text=BTN_RECENT)
     if not user.is_owner:
         kb.button(text=BTN_LEDGER)
+    if user.is_manager:
+        kb.button(text=BTN_REQUESTS)
     if user.is_owner:
         kb.button(text=BTN_CLIENTS)
         kb.button(text=BTN_EXPENSES)
@@ -133,9 +136,18 @@ class SettingsCb(CallbackData, prefix="s"):
 
 # link — doimiy kirish havolasi; relink — eski xabarlardagi «🔄 Yangi havola» tugmasi, endi link bilan bir xil
 class WorkerCb(CallbackData, prefix="wk"):
-    action: str  # list | open | add | link | relink | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger
+    # list | open | add | link | relink | toggle | job (value — kasb, 0 — kasbsiz) | newjob | ledger |
+    # manager (ish boshqaruvchi qilish yoki olib tashlash)
+    action: str
     user_id: int = 0
     value: int = 0
+
+
+class ReqCb(CallbackData, prefix="rq"):
+    """Ish boshqaruvchining so'rovi: egasi — tasdiqlaydi yoki rad etadi, boshqaruvchi — qaytarib oladi."""
+
+    action: str  # approve | reject | cancel
+    req_id: int
 
 
 class SupplierCb(CallbackData, prefix="sp"):
@@ -199,7 +211,7 @@ class ModelCb(CallbackData, prefix="md"):
 
 def add_app_button(kb: InlineKeyboardBuilder, view: str = "") -> None:
     """Pastki qatorga «Ilovani ochish». view — ilova qaysi bo'limda ochilsin (debts, wallet, entries, clients,
-    materials, ledger)."""
+    materials, ledger, requests — ish boshqaruvchi so'rovlari)."""
     url = settings.webapp_url
     if url:
         url += f"?view={view}" if view else ""
@@ -249,6 +261,19 @@ def entry_kb(entry: WorkEntry, viewer: User, app: bool = False) -> InlineKeyboar
     kb.adjust(2)
     if app:
         add_app_button(kb, "entries")
+    return kb.as_markup()
+
+
+def request_kb(req: ManagerRequest, viewer: User) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    if req.status == RequestStatus.PENDING:
+        if viewer.is_owner:
+            kb.button(text="✅ Tasdiqlash", callback_data=ReqCb(action="approve", req_id=req.id))
+            kb.button(text="🚫 Rad etish", callback_data=ReqCb(action="reject", req_id=req.id))
+        elif viewer.id == req.manager_id:
+            kb.button(text="↩️ So'rovni qaytarib olish", callback_data=ReqCb(action="cancel", req_id=req.id))
+    kb.adjust(2)
+    add_app_button(kb, "requests")
     return kb.as_markup()
 
 

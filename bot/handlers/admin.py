@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts
+from bot import approvals, drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
@@ -112,7 +112,7 @@ async def _workers_view(session: AsyncSession, owner_id: int) -> tuple[str, Inli
     for w in workers:
         job = jobs.get(w.job_id)
         what = escape(job) if job else "kasbi tanlanmagan"
-        line = f"• <b>{escape(w.name)}</b> — {what} · {_status(w)}"
+        line = f"• <b>{escape(w.name)}</b>{' 👔' if w.is_manager else ''} — {what} · {_status(w)}"
         if (b := balances.get(w.id)) and b.balance:
             line += f"\n   🧾 qoldiq: {drafts.fmt_signed(b.balance)}"
         lines.append(line)
@@ -156,6 +156,10 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     kb.button(text="🧾 Hisob-kitob", callback_data=kbs.WorkerCb(action="ledger", user_id=worker.id))
     if worker.is_active:
         kb.button(text="🔗 Kirish havolasi", callback_data=kbs.WorkerCb(action="link", user_id=worker.id))
+        kb.button(
+            text="👔 Boshqaruvchilikdan olish" if worker.is_manager else "👔 Ish boshqaruvchi qilish",
+            callback_data=kbs.WorkerCb(action="manager", user_id=worker.id),
+        )
     kb.button(
         text="⛔ O‘chirish (botdan foydalana olmaydi)" if worker.is_active else "✅ Qayta faollashtirish",
         callback_data=kbs.WorkerCb(action="toggle", user_id=worker.id),
@@ -164,13 +168,20 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     kb.adjust(*_rows(len(jobs) + 2, 2), 1)
     job = f"<b>{escape(current.name)}</b>" if current else "tanlanmagan"
     b = await repo.worker_balance(session, worker.owner_id, worker.id)
+    manager = "👔 <b>Ish boshqaruvchi</b> — har bir o'zgartirishi sizning tasdig'ingizdan o'tadi\n"
     text = (
         f"👷 <b>{escape(worker.name)}</b>\n\n"
         f"🏷 Kasbi: {job}\n"
         f"Holati: {_status(worker)}\n"
+        f"{manager if worker.is_manager else ''}"
         f"{drafts.balance_text(b.balance, worker.name)}\n\n"
         "Kasbini tanlang. Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi."
     )
+    if worker.is_active and not worker.is_manager:
+        text += (
+            "\n\n👔 «Ish boshqaruvchi qilish» — u ishchilar ishi, modellar, narxlar, mijozlar va xom ashyoni "
+            "boshqaradi (ishchilarning pulidan tashqari), har bir o'zgartirishi sizning tasdig'ingizdan o'tadi."
+        )
     if not tracked(b):
         text += (
             "\n\n💡 Qoldiq — hamma ishlari summasi (pul yozilmagan). Avval hisobni boshlang: "
@@ -269,6 +280,30 @@ async def worker_toggle(call: CallbackQuery, callback_data: kbs.WorkerCb, sessio
     text, kb = await _worker_card(session, worker)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer("Faollashtirildi" if worker.is_active else "O'chirildi — endi botdan foydalana olmaydi")
+
+
+@router.callback_query(kbs.WorkerCb.filter(F.action == "manager"))
+async def worker_manager(
+    call: CallbackQuery, callback_data: kbs.WorkerCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    """Ishchini ish boshqaruvchi qilish yoki yana oddiy ishchi qilish — unga yangi menyu bilan xabar boradi."""
+    worker = await _get_worker(call, session, user, callback_data.user_id)
+    if worker is None:
+        return
+    if not worker.is_active and not worker.is_manager:
+        await call.answer("Avval ishchini qayta faollashtiring.", show_alert=True)
+        return
+    await repo.set_manager(session, worker, not worker.is_manager)
+    text, kb = await _worker_card(session, worker)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer(
+        f"👔 {worker.name} — ish boshqaruvchi. Har bir o'zgartirishi sizga tasdiqqa keladi."
+        if worker.is_manager
+        else f"{worker.name} — endi oddiy ishchi.",
+        show_alert=True,
+    )
+    if worker.tg_id and worker.is_active:
+        await notify_user(bot, worker.tg_id, approvals.role_notice(worker, user), kbs.main_menu(worker))
 
 
 @router.callback_query(kbs.WorkerCb.filter(F.action == "job"))
