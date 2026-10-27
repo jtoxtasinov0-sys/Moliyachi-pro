@@ -20,6 +20,7 @@ from bot.handlers.money import (
     client_balance_text,
     client_ledger_blocks,
     client_outside_block,
+    client_reset_message,
     merge_client_debts,
     signed_totals,
     supplier_debts_block,
@@ -567,6 +568,12 @@ async def _client_card(bot: Bot, session: AsyncSession, client: Client) -> tuple
             text=f"➕ {b.person} — mijoz hisobiga qo'shish",
             callback_data=kbs.ClientCb(action=f"merge{debt.id}", client_id=client.id),
         )
+        kb.button(
+            text=f"🧹 {b.person} — «Qarzlar»dagi qarzini 0 qilish",
+            callback_data=kbs.ClientCb(action=f"zero{debt.id}", client_id=client.id),
+        )
+    if balance or outside or blocks:
+        kb.button(text="🧹 Hisobini 0 qilish (hamma joyda)", callback_data=kbs.ClientCb(action="reset", client_id=client.id))
     if client.is_active:
         kb.button(text="🔗 Kirish havolasi", callback_data=kbs.ClientCb(action="link", client_id=client.id))
     kb.button(
@@ -713,6 +720,64 @@ async def client_merge(
     text, kb = await _client_card(bot, session, client)
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer(f"Qo'shildi: {signed_totals(merged.added)}", show_alert=True)
+
+
+@router.callback_query(kbs.ClientCb.filter(F.action.startswith("zero") | F.action.startswith("reset")))
+async def client_zero(
+    call: CallbackQuery, callback_data: kbs.ClientCb, bot: Bot, session: AsyncSession, user: User
+) -> None:
+    """«🧹 0 qilish», avval so'raladi (…y — tasdiqlandi). reset — mijoz bilan hisob hamma joyda 0: hamma
+    oldi-berdisi va «Qarzlar»da qolib ketgan qarzi (u qarzdor bo'lsa ham, siz unga bo'lsangiz ham). zero<qarz yozuvi
+    id> — faqat «Qarzlar»dagi shu odamning qarzi, mijoz hisobi o'zgarmaydi."""
+    client = await _get_client(call, session, user, callback_data.client_id)
+    if client is None:
+        return
+    action = callback_data.action
+    whole = action.startswith("reset")
+    confirmed = action.startswith("resety" if whole else "zeroy")
+    outside = await repo.client_outside_debts(session, user.id, client)
+    if whole:
+        removed = [await repo.client_balance(session, user.id, client.id), *(b.balance for b in outside)]
+        total: dict[str, Decimal] = defaultdict(Decimal)
+        for part in removed:
+            for currency, value in part.items():
+                total[currency] += value
+        question = (
+            f"{client.name} hisobi hamma joyda 0 qilinsinmi? Oldi-berdisi"
+            + (" va «Qarzlar»dagi qarzi" if outside else "")
+            + f" o'chadi (qoldiq {signed_totals(dict(total))})."
+        )
+        yes = "resety"
+    else:
+        entry_id = action.removeprefix("zeroy" if confirmed else "zero")
+        debt = await repo.get_debt_entry(session, user.id, int(entry_id)) if entry_id.isdigit() else None
+        row = next((b for b in outside if debt is not None and b.key == debt.person_key), None)
+        if row is None:
+            text, kb = await _client_card(bot, session, client)
+            await call.message.edit_text(text, reply_markup=kb)
+            await call.answer("«Qarzlar»da 0 qilinadigan qarz qolmagan.", show_alert=True)
+            return
+        question = f"«Qarzlar»dagi «{row.person}» qarzi ({signed_totals(row.balance)}) 0 qilinsinmi? Qarz yozuvlari o'chadi."
+        yes = f"zeroy{entry_id}"
+    if not confirmed:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🧹 Ha, 0 qilinsin", callback_data=kbs.ClientCb(action=yes, client_id=client.id))
+        kb.button(text="↩️ Yo'q", callback_data=kbs.ClientCb(action="open", client_id=client.id))
+        kb.adjust(1)
+        await call.message.edit_reply_markup(reply_markup=kb.as_markup())
+        await call.answer(question[:200], show_alert=True)  # Telegram ogohlantirishi 200 belgigacha
+        return
+    if whole:
+        count, _ = await repo.reset_client_everywhere(session, user.id, client)
+        if count and (notice := client_reset_message(user, client)):
+            await notify_user(bot, *notice)
+        done = f"{client.name} hisobi 0 qilindi"
+    else:
+        await repo.reset_person(session, user.id, row.key)
+        done = f"«{row.person}» qarzi 0 qilindi"
+    text, kb = await _client_card(bot, session, client)
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer(done, show_alert=True)
 
 
 @router.callback_query(kbs.ClientCb.filter(F.action == "toggle"))

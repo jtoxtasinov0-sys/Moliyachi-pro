@@ -1381,8 +1381,10 @@ async function personSheet(key) {
       <div><b>${p.count} ta</b><small>yozuv</small></div>
     </div>
     <div id="personHistory">${SKELETONS}</div>
-    ${p.type === "material" && p.id ? `<button class="danger reset-one" id="pReset">🧹 Hisobini 0 qilish</button><div id="personInvite"></div>` : ""}
+    ${p.type === "material" && p.id ? `<button class="danger reset-one" id="pReset">🧹 Hisobini 0 qilish</button><div id="personInvite"></div>`
+      : p.settled ? "" : `<button class="danger reset-one" id="pResetPerson">🧹 Hisobini 0 qilish</button>`}
   `);
+  if ($("pResetPerson")) $("pResetPerson").onclick = () => resetPerson(p, () => { closeSheet(); if (state.view !== "wallet") refreshView(); });
   if ($("personInvite")) supplierInvite(p.id, $("personInvite"));
   // Ro'yxatdagi ta'minotchi: hisobi shu yerdan ham 0 qilinadi (ta'minotchi oynasidagidek)
   if ($("pReset")) $("pReset").onclick = () => {
@@ -1555,7 +1557,9 @@ async function clientSheet(id) {
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
   `);
   $("clEdit").onclick = () => clientEditSheet(c);
-  $("clReset").onclick = () => resetClient(c, $("clReset"));
+  // «Qarzlar»da qolib ketgan qarzi — «Hisobini 0 qilish» uni ham o'chiradi (so'rovda ko'rsatiladi)
+  let outside = [];
+  $("clReset").onclick = () => resetClient(c, $("clReset"), outside);
   bindInvite(c, `${c.name}, biz bilan oldi-berdingizni ko'rib turish uchun Moliyachi botiga kiring (keyin ham shu havola bilan qayta kirasiz):`, async () => {
     const upd = await api(`/api/clients/${c.id}/invite`, { method: "POST" });
     state.clients.byId[c.id] = { ...c, invite_link: upd.invite_link };
@@ -1564,6 +1568,7 @@ async function clientSheet(id) {
   try {
     const data = await api(`/api/clients/entries?client_id=${id}&limit=100`);
     if (!$("clientHistory")) return;
+    outside = data.outside || [];
     $("clientOutside").innerHTML = clientOutsideHtml(c, data.outside);
     const deleted = data.deleted || [];
     $("clientHistory").innerHTML = (data.items.map((e) => feedRow({ type: "client", ...e }, { date: true, del: true, noWho: true })).join("")
@@ -1583,7 +1588,9 @@ async function clientSheet(id) {
     const outsideBox = $("clOutside");
     if (outsideBox) outsideBox.onclick = (ev) => {
       const btn = ev.target.closest("[data-merge]");
-      if (btn) mergeClientDebts(c, data.outside[Number(btn.dataset.merge)]);
+      if (btn) return mergeClientDebts(c, data.outside[Number(btn.dataset.merge)]);
+      const zero = ev.target.closest("[data-zero]");
+      if (zero) resetPerson(data.outside[Number(zero.dataset.zero)], () => reopenClient(c.id));
     };
   } catch (e) { fail(e); }
 }
@@ -1597,7 +1604,8 @@ function clientOutsideHtml(c, outside) {
     const also = (p.also || []).length
       ? `<br>❗ Shu ismda ${esc(p.also.join(", "))} ham bor — o'sha emasligini tekshiring` : "";
     return `<div class="cl-out-row">• <b>${esc(p.name)}</b> — ${b.label}: <b>${esc(b.text)}</b>${also}
-      <button class="act ok cl-merge" data-merge="${i}">➕ ${esc(p.name)} — ${esc(c.name)} hisobiga qo'shish</button></div>`;
+      <button class="act ok cl-merge" data-merge="${i}">➕ ${esc(p.name)} — ${esc(c.name)} hisobiga qo'shish</button>
+      <button class="act no cl-merge" data-zero="${i}">🧹 Bu qarzni 0 qilish</button></div>`;
   }).join("");
   const many = outside.length > 1 || outside.some((p) => (p.also || []).length)
     ? " Bu o'sha odammi — har birini o'zingiz tekshirib qo'shing." : "";
@@ -1634,14 +1642,19 @@ async function mergeClientDebts(c, person) {
 
 // Mijoz oynasida «Hisobini 0 qilish»: shu mijozning hamma oldi-berdisi o'chadi, qoldig'i umumiy «Qarzlar»dan ham
 // ayriladi. Ikki marta so'raladi — «Mijozlar hisobini 0 qilish»dagidek. O'chganlari «🗑 O'chirilganlar»da qoladi
-async function resetClient(c, btn) {
-  const minus = debtMinus(c.balance);
+async function resetClient(c, btn, outside = []) {
+  // Hamma joyda 0: mijoz qoldig'i va «Qarzlar»da qolib ketgan qarzi (u qarzdor bo'lsa ham, siz unga bo'lsangiz ham)
+  const minus = debtMinus(sumBalances([c.balance, ...outside.map((p) => p.balance)]));
+  const extra = outside.length
+    ? ` «Qarzlar»dagi qarzi ham o'chadi: ${outside.map((p) => { const b = balanceInfo(p); return `${p.name} — ${b.label} ${b.text}`; }).join("; ")}.`
+    : "";
   haptic("warning");
-  if (!(await confirmBox(`${c.name} hisobi 0 qilinsinmi? U bilan hamma oldi-berdi (mol, to'lov, qaytgan mol, qarz) o'chadi, qoldig'i 0 bo'ladi.${minus ? ` Umumiy «Qarzlar»dan ham ayriladi: ${minus}.` : ""} Mijozning o'zi va havolasi qoladi.`))) return;
-  if (!(await confirmBox(`Rostdan ham? ${c.name} hisobi butunlay 0 bo'ladi.${c.linked ? " Mijozga ham xabar boradi." : ""} O'chgan yozuvlar «🗑 O'chirilganlar»da turadi.`))) return;
+  if (!(await confirmBox(`${c.name} hisobi hamma joyda 0 qilinsinmi? U bilan hamma oldi-berdi (mol, to'lov, qaytgan mol, qarz) o'chadi, qoldig'i 0 bo'ladi.${extra}${minus ? ` Umumiy «Qarzlar»dan ham ayriladi: ${minus}.` : ""} Mijozning o'zi va havolasi qoladi.`))) return;
+  if (!(await confirmBox(`Rostdan ham? ${c.name} hisobi butunlay 0 bo'ladi.${c.linked ? " Mijozga ham xabar boradi." : ""} O'chgan oldi-berdi «🗑 O'chirilganlar»da turadi.`))) return;
   btn.disabled = true;
   try {
     const res = await api(`/api/clients/${c.id}/reset`, { method: "POST" });
+    state.wallet.debts = null; // umumiy «Qarzlar» ham o'zgardi
     const gone = debtMinus(res.removed);
     toast(res.count ? `${c.name} hisobi 0 qilindi${gone ? ` · ${gone}` : ""}` : `${c.name} hisobi allaqachon 0`);
     await reopenClient(c.id);
@@ -1649,6 +1662,23 @@ async function resetClient(c, btn) {
     fail(e);
     btn.disabled = false;
   }
+}
+
+// «Qarzlar»dagi odam bilan hisob 0: u bilan qarz yozuvlari (va undan olingan, ro'yxatga qo'shilmagan xom ashyo)
+// o'chadi — u qarzdor bo'lsa ham, siz unga bo'lsangiz ham. Ikki marta so'raladi. after() — oyna yangilanadi
+async function resetPerson(p, after) {
+  const b = balanceInfo(p);
+  const minus = debtMinus(p.balance);
+  haptic("warning");
+  if (!(await confirmBox(`«${p.name}» bilan hisob 0 qilinsinmi? ${b.label === "yopilgan" ? "" : `Hozir: ${b.label} ${b.text}. `}U bilan qarz yozuvlari o'chadi${p.materials ? ", qarzga olingan xom ashyosi ham" : ""}.${minus ? ` Umumiy «Qarzlar»dan ayriladi: ${minus}.` : ""}`))) return;
+  if (!(await confirmBox(`Rostdan ham? «${p.name}» bilan hisob butunlay 0 bo'ladi — o'chgan yozuvlarni qaytarib bo'lmaydi.`))) return;
+  try {
+    const res = await api("/api/debts/reset", { method: "POST", body: { key: p.key } });
+    toast(res.count ? `«${p.name}» bilan hisob 0 qilindi` : `«${p.name}» bilan hisob allaqachon 0`);
+    state.wallet.debts = null;
+    if (state.view === "wallet" && state.wallet.tab === "debts") await loadDebts();
+    if (after) after();
+  } catch (e) { fail(e); }
 }
 
 async function restoreClientEntry(c, entryId) {
@@ -3078,7 +3108,7 @@ function refreshView() {
 const RESET = {
   clients: {
     name: "Mijozlar",
-    ask: "Mijozlar hisobi 0 qilinsinmi? Mijozlar bilan hamma oldi-berdi (mol, to'lov, qaytgan mol) o'chadi, qarzlar 0 bo'ladi. Mijozlar ro'yxati qoladi.",
+    ask: "Mijozlar hisobi 0 qilinsinmi? Mijozlar bilan hamma oldi-berdi (mol, to'lov, qaytgan mol) va «Qarzlar»da ularning ismi bilan qolgan qarzlar o'chadi, qarzlar 0 bo'ladi. Mijozlar ro'yxati qoladi.",
   },
   workers: {
     name: "Ishchilar",

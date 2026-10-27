@@ -2122,8 +2122,15 @@ RESET_TABLES = {
 @routes.post(r"/api/reset/{section:clients|workers|materials|personal}")
 @endpoint(owner_only=True)
 async def reset_section(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Ilova ikki marta so'ragach: bo'limning hamma yozuvlari o'chadi, odamlar (mijoz, ishchi, ta'minotchi) qoladi."""
-    count = await repo.reset_entries(session, user.id, RESET_TABLES[request.match_info["section"]])
+    """Ilova ikki marta so'ragach: bo'limning hamma yozuvlari o'chadi, odamlar (mijoz, ishchi, ta'minotchi) qoladi.
+    Mijozlarda — «Qarzlar»da ularning ismi bilan qolib ketgan qarzlari ham (mijozlar bilan hisob hamma joyda 0)."""
+    section = request.match_info["section"]
+    count = 0
+    if section == "clients":
+        for client in await repo.list_clients(session, user.id, active_only=False):
+            for b in await repo.client_outside_debts(session, user.id, client):
+                count += await repo.reset_person(session, user.id, b.key)
+    count += await repo.reset_entries(session, user.id, RESET_TABLES[section])
     return web.json_response({"ok": True, "count": count})
 
 
@@ -2148,19 +2155,47 @@ async def reset_worker(request: web.Request, session: AsyncSession, user: User) 
 @routes.post(r"/api/clients/{id:\d+}/reset")
 @endpoint(owner_only=True)
 async def reset_client(request: web.Request, session: AsyncSession, user: User) -> web.Response:
-    """Mijoz oynasidagi tugma: shu mijozning hamma oldi-berdisi o'chadi, qoldig'i 0 — umumiy «Qarzlar»dan ham
-    ayriladi. Yozuvlar «🗑 O'chirilganlar»da turadi (bittalab qaytarsa bo'ladi). Ulangan mijozga xabar boradi.
-    removed — o'chgan qoldiq (musbat — mijoz qarzi edi, manfiy — oldindan to'lagani)."""
+    """Mijoz oynasidagi tugma: u bilan hisob hamma joyda 0 — mijozning hamma oldi-berdisi va «Qarzlar»da uning ismi
+    bilan qolib ketgan qarzlari («⚠️ «Qarzlar»da ham bor») o'chadi, umumiy «Qarzlar»dan ham ayriladi. Mijoz
+    yozuvlari «🗑 O'chirilganlar»da turadi (bittalab qaytarsa bo'ladi). Ulangan mijozga xabar boradi.
+    removed — o'chgan qoldiq (musbat — mijoz qarzi edi, manfiy — oldindan to'lagani yoki siz unga qarzdor edingiz);
+    outside — «Qarzlar»dan nechta yozuv o'chdi."""
     from bot.handlers.money import client_reset_message  # aylanma importdan qochish uchun
 
     client = await repo.get_client(session, user.id, int(request.match_info["id"]))
     if client is None:
         raise ApiError(404, "Mijoz topilmadi")
-    removed = await repo.client_balance(session, user.id, client.id)
-    count = await repo.reset_entries(session, user.id, RESET_TABLES["clients"], client_id=client.id)
+    removed = [await repo.client_balance(session, user.id, client.id)]
+    removed += [b.balance for b in await repo.client_outside_debts(session, user.id, client)]
+    count, outside = await repo.reset_client_everywhere(session, user.id, client)
     if count and (notice := client_reset_message(user, client)):
         _notify(request, *notice)
-    return web.json_response({"ok": True, "count": count, "removed": _money(removed)})
+    return web.json_response(
+        {"ok": True, "count": count + outside, "outside": outside, "removed": _sum_money(removed)}
+    )
+
+
+@routes.post("/api/debts/reset")
+@endpoint(owner_only=True)
+async def reset_person(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{key} — «Qarzlar»dagi odam bilan hisob 0: u bilan qarz yozuvlari va undan olingan (ro'yxatga qo'shilmagan) xom
+    ashyo o'chadi. Ro'yxatdagi ta'minotchi bo'lsa — undan olingan hamma xom ashyo ham, unga xabar boradi.
+    removed — o'chgan qarz (musbat — u qarzdor edi, manfiy — siz unga qarzdor edingiz)."""
+    from bot.handlers.money import supplier_reset_message  # aylanma importdan qochish uchun
+
+    key = str((await _json(request)).get("key") or "")
+    row = next((b for b in await repo.debt_balances(session, user.id) if b.key == key), None)
+    if row is None:
+        raise ApiError(404, "Qarz topilmadi")
+    supplier = next(
+        (s for s in await repo.list_suppliers(session, user.id, active_only=False) if repo.person_key(s.name) == key),
+        None,
+    )
+    count = await repo.reset_person(session, user.id, key, supplier.id if supplier else None)
+    if count and supplier and (notice := supplier_reset_message(user, supplier)):
+        _notify(request, *notice)
+    removed = _money({c: v for c, v in row.balance.items() if v})
+    return web.json_response({"ok": True, "count": count, "removed": removed})
 
 
 @routes.post(r"/api/suppliers/{id:\d+}/reset")
