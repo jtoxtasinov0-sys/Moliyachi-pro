@@ -486,7 +486,7 @@ async def known_names(session: AsyncSession, user: User) -> dict[str, list[str]]
         "models": [m.name for m in await repo.list_models(session, acc)],
         "jobs": [j.name for j in await repo.list_jobs(session, acc)],
     }
-    if user.is_owner:
+    if user.manages:
         known["workers"] = [w.name for w in await repo.list_workers(session, acc)]
         known["categories"] = await repo.personal_categories(session, acc)
         known["people"] = [name for _, name in await repo.debt_people(session, acc)][:60]
@@ -563,7 +563,7 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
 
     pays = draft.setdefault("pays", [])
     for item in [*draft["lines"], *pays]:
-        if not user.is_owner:
+        if not user.manages:
             item["worker_id"], item["worker_name"] = user.id, user.name
         elif item["worker_id"] is None and item["worker_q"]:
             res = matcher.match(item["worker_q"], [(w.id, w.name) for w in workers], worker_aliases)
@@ -574,6 +574,11 @@ async def resolve(session: AsyncSession, draft: dict, user: User) -> None:
     named = {(i["worker_id"], i["worker_name"]) for i in [*draft["lines"], *pays] if i["worker_id"]}
     if len(named) == 1:
         share_worker(draft, *named.pop())
+    if user.is_manager:
+        # Boshqaruvchi pulni faqat o'zi uchun yozadi («500 ming oldim»): ismi aytilmagan pul — o'ziniki
+        for p in pays:
+            if p["worker_id"] is None and not p["worker_q"]:
+                p["worker_id"], p["worker_name"] = user.id, user.name
 
     for line in draft["lines"]:
         if line["model_id"] is None and line["model_q"]:
@@ -675,8 +680,10 @@ async def _pay_balances(session: AsyncSession, draft: dict, user: User) -> None:
         str(w): {c: str(v) for c, v in balances[w].balance.items()} if w in balances else {} for w in ids
     }
     draft["by_owner"] = user.is_owner
-    draft["auto_ok"] = user.is_owner or not await repo.require_approval(session, acc)
-    draft["pay_ok"] = user.is_owner or not await repo.require_pay_approval(session, acc)
+    # Boshqaruvchi yozgani — har doim egasi tasdiqlagach
+    worker = not user.manages
+    draft["auto_ok"] = user.is_owner or (worker and not await repo.require_approval(session, acc))
+    draft["pay_ok"] = user.is_owner or (worker and not await repo.require_pay_approval(session, acc))
     project_balances(draft)
 
 
@@ -1332,15 +1339,16 @@ async def _present_price(session: AsyncSession, draft: dict, user: User) -> tupl
             options = [(o[0], o[1]) for o in matcher.match(p["model_q"], items, aliases).options] or items[:20]
             return (
                 text + f"\n\n❓ «{escape(p['model_q'])}» — qaysi model?",
-                kbs.resolve_kb("pmodel", i, options, p["model_q"]),
+                kbs.resolve_kb("pmodel", i, options, p["model_q"] if user.is_owner else None),
             )
         if not items:
             return text + "\n\n❓ Qaysi model? Nomini yozing yoki ayting.", kbs.cancel_only_kb()
         return text + "\n\n❓ Qaysi model? Tanlang yoki nomini ayting.", kbs.resolve_kb("pmodel", i, items[:20], None)
     if kind == "pjob":
+        options = await _job_options(session, acc, p["job_q"])
         return (
             text + f"\n\n❓ «{escape(p['job_q'])}» — qaysi kasb?",
-            kbs.resolve_kb("pjob", i, await _job_options(session, acc, p["job_q"]), p["job_q"]),
+            kbs.resolve_kb("pjob", i, options, p["job_q"] if user.is_owner else None),
         )
     who = escape(p["model_name"] or "")
     job = escape(p["job_name"] or "umumiy narx")
@@ -1498,8 +1506,38 @@ def present_for_client(draft: dict, owners: list[tuple[int, str]]) -> tuple[str,
     return text + "\n\n❓ Qancha to'ladingiz? Summani yozing yoki ayting.", kbs.my_client_cancel_kb()
 
 
+def render(draft: dict) -> str:
+    """Qoralama — egasining ko'zi bilan, savol va tugmalarsiz: boshqaruvchi so'rovida egasiga ko'rsatiladi."""
+    if draft["section"] == "material":
+        return _render_material(draft)
+    if draft["section"] == "price":
+        return _render_price(draft)
+    if draft["section"] == "client":
+        return _render_client(draft)
+    if draft["section"] == "money":
+        return _render_money(draft)
+    return _render(draft)
+
+
+SEND_TEXT = "📨 Boshliqqa yuborish"
+
+
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
-    """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi."""
+    """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi. Boshqaruvchida
+    «✅ Saqlash» o'rnida «📨 Boshliqqa yuborish» — saqlanmaydi, egasining tasdig'iga boradi."""
+    text, kb = await _present(session, draft, user)
+    if user.is_manager:
+        save = kbs.DraftCb(action="save").pack()
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [b.model_copy(update={"text": SEND_TEXT}) if b.callback_data == save else b for b in row]
+                for row in kb.inline_keyboard
+            ]
+        )
+    return text, kb
+
+
+async def _present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     if draft["section"] == "material":
         return await _present_material(session, draft, user)
     if draft["section"] == "price":

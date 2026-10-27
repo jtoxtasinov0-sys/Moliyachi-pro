@@ -24,10 +24,12 @@ from bot.db.models import (
     EntryStatus,
     ItemModel,
     Job,
+    ManagerRequest,
     MaterialEntry,
     ModelPrice,
     PayKind,
     PersonalEntry,
+    RequestStatus,
     Role,
     Setting,
     Supplier,
@@ -166,6 +168,7 @@ async def ensure_owner(session: AsyncSession, tg_id: int, name: str) -> User:
     elif user.role != Role.OWNER:
         user.role = Role.OWNER
         user.owner_id = None
+        user.is_manager = False
     return user
 
 
@@ -240,6 +243,79 @@ async def list_workers(session: AsyncSession, owner_id: int, active_only: bool =
     if active_only:
         q = q.where(User.is_active.is_(True))
     return list(await session.scalars(q))
+
+
+async def set_manager(session: AsyncSession, worker: User, on: bool) -> None:
+    """Ishchi — ish boshqaruvchi (on) yoki yana oddiy ishchi. Kutayotgan so'rovlari qoladi: egasi ko'rib chiqadi."""
+    worker.is_manager = on
+    await session.flush()
+
+
+# --- Ish boshqaruvchining so'rovlari ------------------------------------------
+
+async def create_request(
+    session: AsyncSession, *, manager: User, kind: str, payload: str, summary: str
+) -> ManagerRequest:
+    req = ManagerRequest(
+        owner_id=manager.owner_id, manager_id=manager.id, kind=kind, payload=payload, summary=summary,
+        status=RequestStatus.PENDING, created_at=_now(),
+    )
+    session.add(req)
+    await session.flush()
+    await session.refresh(req, ["manager"])
+    return req
+
+
+async def get_request(session: AsyncSession, owner_id: int, request_id: int) -> ManagerRequest | None:
+    req = await session.get(ManagerRequest, request_id)
+    return req if req is not None and req.owner_id == owner_id else None
+
+
+async def list_requests(
+    session: AsyncSession,
+    owner_id: int,
+    *,
+    manager_id: int | None = None,
+    status: str | None = None,
+    limit: int = 30,
+    offset: int = 0,
+) -> list[ManagerRequest]:
+    """Yangisi birinchi. manager_id — faqat shu boshqaruvchiniki."""
+    q = (
+        select(ManagerRequest)
+        .where(ManagerRequest.owner_id == owner_id)
+        .order_by(ManagerRequest.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if manager_id is not None:
+        q = q.where(ManagerRequest.manager_id == manager_id)
+    if status:
+        q = q.where(ManagerRequest.status == status)
+    return list(await session.scalars(q))
+
+
+async def count_requests(session: AsyncSession, owner_id: int, manager_id: int | None = None) -> int:
+    """Tasdiq kutayotgan so'rovlar."""
+    q = select(func.count(ManagerRequest.id)).where(
+        ManagerRequest.owner_id == owner_id, ManagerRequest.status == RequestStatus.PENDING
+    )
+    if manager_id is not None:
+        q = q.where(ManagerRequest.manager_id == manager_id)
+    return int(await session.scalar(q) or 0)
+
+
+async def claim_request(session: AsyncSession, req: ManagerRequest, status: str) -> bool:
+    """Kutayotgan so'rov holatini almashtiradi (tasdiqlandi, rad etildi, bekor qilindi). False — so'rov
+    allaqachon ko'rib chiqilgan: ikki marta bosilsa yoki ikki joyda birdan bosilsa ham bir marta bajariladi."""
+    result = await session.execute(
+        update(ManagerRequest)
+        .where(ManagerRequest.id == req.id, ManagerRequest.status == RequestStatus.PENDING)
+        .values(status=status, reviewed_at=_now())
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(req, ["status", "reviewed_at"])
+    return bool(result.rowcount)
 
 
 # --- Modellar ---------------------------------------------------------------

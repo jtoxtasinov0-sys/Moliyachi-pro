@@ -36,6 +36,10 @@ const SKELETONS = '<div class="skeleton"></div><div class="skeleton"></div>';
 // --- Yordamchilar -----------------------------------------------------------
 
 const $ = (id) => document.getElementById(id);
+// Egasi yoki ish boshqaruvchi: ishxonani egasidek ko'radi. Boshqaruvchining o'zgartirishi egasi tasdiqlagach bajariladi
+const manages = () => Boolean(state.me && (state.me.is_owner || state.me.is_manager));
+const isManager = () => Boolean(state.me && state.me.is_manager);
+const QUEUED_TEXT = "📨 Boshliq tasdig'iga yuborildi — tasdiqlasa bajariladi";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function fmtNum(n) {
@@ -169,12 +173,26 @@ async function api(path, opts = {}) {
     err.status = res.status;
     throw err;
   }
+  // Ish boshqaruvchi: o'zgartirish bajarilmadi — egasining tasdig'iga yuborildi
+  if (res.status === 202 && data && data.queued) {
+    const err = new Error(QUEUED_TEXT);
+    err.queued = data.request;
+    throw err;
+  }
   return data;
 }
 
 function fail(err) {
+  if (err.queued) return queued();
   console.error(err);
   toast(err.message || "Xatolik yuz berdi", true);
+}
+
+// So'rov egasiga yuborildi: oyna yopiladi, «📨 So'rovlarim» soni yangilanadi
+function queued() {
+  closeSheet();
+  toast(QUEUED_TEXT);
+  loadRequestCount();
 }
 
 // --- Navigatsiya -------------------------------------------------------------
@@ -182,7 +200,7 @@ function fail(err) {
 function show(view) {
   state.view = view;
   // Egada «Modellar» va «Xom ashyo» — «Jamoa» bo'limining ichida
-  const navView = (view === "models" || view === "materials") && state.me && state.me.is_owner ? "workers" : view;
+  const navView = (view === "models" || view === "materials") && manages() ? "workers" : view;
   document.querySelectorAll(".view").forEach((el) => (el.hidden = el.id !== `view-${view}`));
   document.querySelectorAll("#nav > button").forEach((b) => b.classList.toggle("on", b.dataset.view === navView));
   window.scrollTo({ top: 0 });
@@ -285,9 +303,12 @@ function drawDonut(key, canvasId, legendId, items, fmtValue, fmtLegend) {
 // --- Asosiy (dashboard) ------------------------------------------------------
 
 async function loadDashboard() {
-  if (state.me.is_owner) loadHomeMoney();
-  else if (ledger.el === $("homeLedger")) loadLedger(false);
-  else openLedger($("homeLedger"), null);
+  if (manages()) loadHomeMoney();
+  // Ishchi va boshqaruvchida — o'z hisob-kitobi
+  if (!state.me.is_owner) {
+    if (ledger.el === $("homeLedger")) loadLedger(false);
+    else openLedger($("homeLedger"), null);
+  }
   try {
     state.dash = await api(`/api/dashboard?period=${state.period}`);
     renderDashboard();
@@ -298,25 +319,29 @@ async function loadDashboard() {
 
 async function loadHomeMoney() {
   const h = state.home;
-  if (!h.personal) {
+  // Boshqaruvchida egasining pullari (daromad, xarajat, qarzlar) yo'q — mijozlar, xom ashyo va harakatlar
+  const owner = state.me.is_owner;
+  if (!h.loaded) {
     $("mDebtList").innerHTML = SKELETONS;
     $("mFeed").innerHTML = SKELETONS;
   }
   try {
     const [personal, debts, feed, clients, materials] = await Promise.all([
-      api(`/api/personal?period=${state.period}`),
-      api("/api/debts"),
+      owner ? api(`/api/personal?period=${state.period}`) : null,
+      owner ? api("/api/debts") : null,
       api("/api/activity?limit=8"),
       api(`/api/clients?period=${state.period}`),
       api(`/api/materials?period=${state.period}`),
     ]);
+    h.loaded = true;
     h.personal = personal;
     h.feed = feed.items;
-    state.wallet.debts = debts;
+    if (owner) state.wallet.debts = debts;
     state.clients.home = clients;
     rememberClients(clients);
     state.materials.home = materials;
-    renderHomeMoney();
+    if (owner) renderHomeMoney();
+    else renderHomeFeed();
     renderHomeClients();
     renderHomeMaterials();
   } catch (e) { fail(e); }
@@ -355,9 +380,12 @@ function renderHomeDebts() {
 
 function renderHomeFeed() {
   const items = state.home.feed;
+  const hint = state.me.is_owner
+    ? "Botga ovozli yoki matnli xabar yuboring: «bozorga 50 ming won», «oylik tushdi 3 million», «Valiga 50 dollar qarz berdim»."
+    : "🎤 bilan ayting: «Robiya A-12 dan 50 ta topshirdi», «Tohirga 10 komplekt berdim», «20 kg kley oldim».";
   $("mFeed").innerHTML = items.length
     ? items.map((e) => feedRow(e, { date: true })).join("")
-    : `<p class="muted">Hali yozuv yo'q. Botga ovozli yoki matnli xabar yuboring: «bozorga 50 ming won», «oylik tushdi 3 million», «Valiga 50 dollar qarz berdim».</p>`;
+    : `<p class="muted">Hali yozuv yo'q. ${hint}</p>`;
 }
 
 // Bitta harakat qatori: xarajat, daromad, qarz yoki ish yozuvi
@@ -466,7 +494,7 @@ async function toggleMaterialCredit(btn) {
 
 function renderDashboard() {
   const d = state.dash;
-  const isOwner = state.me.is_owner;
+  const isOwner = manages(); // boshqaruvchi ham ishxonani egasidek ko'radi
   const cur = mainCurrency(d.totals.pay);
   const amount = d.totals.pay[cur] || 0;
 
@@ -496,10 +524,11 @@ function renderDashboard() {
   // Egada ishchi ham, ish yozuvi ham bo'lmasa — ishxona hisoboti kerak emas
   $("workSection").hidden = isOwner && !d.has_team;
 
-  // Tasdiq kutayotganlar: ish yozuvlari va ishchilar yozgan pul
+  // Tasdiq kutayotganlar: ish yozuvlari va ishchilar yozgan pul (ularni egasi tasdiqlaydi)
   const pendingAll = d.pending + (d.pending_pay || 0);
-  $("pendingCard").hidden = !(isOwner && pendingAll > 0);
+  $("pendingCard").hidden = !(state.me.is_owner && pendingAll > 0);
   $("pendingCount").textContent = pendingAll;
+  setRequestCard(d.requests || 0);
 
   renderTrend();
   renderModels();
@@ -556,7 +585,7 @@ const jobIcon = (name) => (JOB_ICONS.find(([k]) => name.toLowerCase().startsWith
 
 function renderJobStats() {
   const items = (state.dash.by_job || []).filter((j) => j.name);
-  $("jobsStatCard").hidden = !state.me.is_owner || !items.length;
+  $("jobsStatCard").hidden = !manages() || !items.length;
   if (!items.length) return;
   const max = Math.max(1, ...items.map((j) => j.qty));
   $("jobRank").innerHTML = items.map((j) => `
@@ -616,11 +645,11 @@ function renderEntries() {
 }
 
 function entryCard(e) {
-  const isOwner = state.me.is_owner;
+  const isOwner = manages(); // ishchi ismi ko'rinadi
   const total = e.total != null ? money(e.total, e.currency) : "";
   const unit = e.unit_price != null ? money(e.unit_price, e.currency) : "";
   let actions = "";
-  if (isOwner && e.status === "pending") {
+  if (state.me.is_owner && e.status === "pending") {
     actions += `<button class="act ok" data-act="approve" data-id="${e.id}">✓ Tasdiqlash</button><button class="act no" data-act="reject" data-id="${e.id}">Rad etish</button>`;
   }
   actions += `<button class="act del" data-act="delete" data-id="${e.id}" aria-label="O'chirish">🗑</button>`;
@@ -686,7 +715,7 @@ async function deleteFeedItem(type, id) {
 }
 
 async function fillWorkerFilter() {
-  if (!state.me.is_owner) return;
+  if (!manages()) return;
   try {
     if (!state.workers.length) state.workers = (await api("/api/workers")).items;
     const sel = $("workerFilter");
@@ -933,7 +962,8 @@ async function quickPay(act) {
   ledger.busy = true;
   try {
     const res = await api("/api/payments", { method: "POST", body });
-    toast(res.pending ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
+    toast(res.queued ? QUEUED_TEXT : res.pending ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
+    if (res.queued) loadRequestCount();
     input.value = "";
     await afterLedgerChange();
   } catch (e) { fail(e); } finally { ledger.busy = false; }
@@ -1003,7 +1033,8 @@ async function ledgerDraftRequest(path, body, label) {
     if (ledger.el !== el) return; // oyna yopilgan
     if (res.saved) {
       setLedgerDraft(null);
-      toast(res.saved.includes("tasdig'ini kutmoqda") ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
+      toast(res.queued ? QUEUED_TEXT : res.saved.includes("tasdig'ini kutmoqda") ? "Saqlandi · ⏳ tasdiq kutmoqda" : "Saqlandi");
+      if (res.queued) loadRequestCount();
       ledger.busy = false;
       // Ishchida: ish yozuvlari bosh sahifadagi raqamlarni ham o'zgartiradi
       if (state.me.is_owner) await afterLedgerChange();
@@ -1246,12 +1277,21 @@ function debtMiniRow(p, withSource) {
 function debtAttr(p) {
   if (p.type === "worker") return `data-worker="${p.id}"`;
   if (p.type === "client") return `data-client="${p.id}"`;
-  return `data-person="${esc(p.key)}"`;
+  return `data-person="${esc(p.key)}"` + (p.type === "material" && p.id ? ` data-sup="${p.id}"` : "");
 }
 
 async function openDebtRow(ev) {
   const b = ev.target.closest("[data-person], [data-worker], [data-client]");
   if (!b) return;
+  if ("person" in b.dataset && !state.me.is_owner) {
+    // Boshqaruvchida qarz tarixi yo'q («Qarzlar» egasiniki) — ro'yxatdagi ta'minotchi oynasi ochiladi
+    if (!b.dataset.sup) return;
+    try {
+      if (!(state.materials.suppliers || []).length) state.materials.suppliers = (await api("/api/suppliers")).items;
+    } catch (e) { return fail(e); }
+    const s = state.materials.suppliers.find((x) => x.id === Number(b.dataset.sup));
+    return s && supplierSheet(s);
+  }
   if ("person" in b.dataset) return personSheet(b.dataset.person);
   try {
     if (b.dataset.worker) {
@@ -1510,7 +1550,7 @@ async function clientSheet(id) {
     </div>
     <div id="clientOutside"></div>
     <div id="clientHistory">${SKELETONS}</div>
-    <button class="danger reset-one" id="clReset">🧹 Hisobini 0 qilish</button>
+    <button class="danger reset-one" id="clReset" ${state.me.is_owner ? "" : "hidden"}>🧹 Hisobini 0 qilish</button>
     ${invite}
     <button class="secondary" id="clEdit">✏️ Ism va telefon</button>
   `);
@@ -1813,7 +1853,7 @@ async function supplierSheet(s) {
     </div>
     ${moneyList(s.debt) ? `<div class="link-box sup-debt">💳 Qarz — ${debt.label}: <b class="amt ${debt.cls}">${esc(debt.text)}</b></div>` : ""}
     <div id="supplierHistory">${SKELETONS}</div>
-    <button class="danger reset-one" id="sReset">🧹 Hisobini 0 qilish</button>
+    <button class="danger reset-one" id="sReset" ${state.me.is_owner ? "" : "hidden"}>🧹 Hisobini 0 qilish</button>
     ${invite}
     <button class="${s.is_active ? "danger" : "secondary"}" id="sToggle">${s.is_active ? "⛔ O'chirish (xabar bormaydi)" : "✅ Qayta faollashtirish"}</button>
   `);
@@ -1915,10 +1955,11 @@ function renderWorkers() {
       : w.linked ? '<span class="tag ok">Ulangan</span>' : '<span class="tag wait">Havola kutilmoqda</span>';
     const job = w.job ? `<span class="tag job">${esc(w.job.name)}</span>` : '<span class="tag none">Kasbi tanlanmagan</span>';
     const bal = w.balance && moneyList(w.balance.amounts) ? balanceTag(w.balance.amounts) : "";
+    const boss = w.is_manager ? '<span class="tag job">👔 Boshqaruvchi</span>' : "";
     return `
       <button class="row-card${w.is_active ? "" : " off"}" data-worker="${w.id}">
         <div class="avatar">${esc(initials(w.name))}</div>
-        <div class="info"><b>${esc(w.name)}</b>${job}${tag}${bal}</div>
+        <div class="info"><b>${esc(w.name)}</b>${boss}${job}${tag}${bal}</div>
         <div class="side">${fmtNum(w.month_qty)} ta<small>${esc(moneyList(w.month_pay) || "shu oy")}</small></div>
       </button>`;
   }).join("");
@@ -2008,15 +2049,23 @@ function bindInvite(item, shareText, load) {
 
 function workerSheet(w) {
   const invite = inviteHtml(w, "Ishchi");
+  const owner = state.me.is_owner;
+  // Boshqaruvchiga ishchining hisob-kitobi (puli, qoldig'i) ko'rinmaydi
+  const ledgerBox = owner ? `
+    <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div>
+      <button class="danger" id="wReset">🧹 Hisobini 0 qilish</button>
+    </div>` : "";
+  const managerRow = owner && (w.is_active || w.is_manager) ? `
+    <label class="switch-row"><div>👔 Ish boshqaruvchi<small>Ishchilar ishi, kasblar, modellar va narxlar, mijozlar, xom ashyo va ta'minotchilarni boshqaradi — ishchilarning puli (avans, ish haqi, qoldig'i), sizning xarajat va qarzlaringizdan tashqari. Har bir o'zgartirishi siz tasdiqlagach bajariladi.</small></div>
+      <span class="switch"><input type="checkbox" id="wManager" ${w.is_manager ? "checked" : ""}><i></i></span></label>` : "";
   openSheet(`
-    <h3>${esc(w.name)}</h3>
+    <h3>${esc(w.name)}${w.is_manager ? " · 👔" : ""}</h3>
     <div class="stat-pair">
       <div><b>${fmtNum(w.month_qty)} ta</b><small>shu oy topshirgan</small></div>
       <div><b>${esc(moneyList(w.month_pay) || "—")}</b><small>shu oy ish haqi</small></div>
     </div>
-    <div class="lg-box"><div class="lg-title">🧾 Hisob-kitob</div><div id="sheetLedger"></div>
-      <button class="danger" id="wReset">🧹 Hisobini 0 qilish</button>
-    </div>
+    ${ledgerBox}
+    ${managerRow}
     <div class="field"><label>🏷 Kasbi</label>
       ${jobPicker("wJobs", w.job && w.job.id)}
       <span class="field-hint">Ish topshirganda kasb aytilmasa — shu kasbning narxi olinadi.</span>
@@ -2025,7 +2074,23 @@ function workerSheet(w) {
     <button class="${w.is_active ? "danger" : "secondary"}" id="wToggle">${w.is_active ? "⛔ O'chirish (botdan foydalana olmaydi)" : "✅ Qayta faollashtirish"}</button>
     <button class="secondary" id="wEntries">🗂 Yozuvlarini ko'rish</button>
   `);
-  openLedger($("sheetLedger"), w.id);
+  if (owner) openLedger($("sheetLedger"), w.id);
+  if ($("wManager")) $("wManager").onchange = async (ev) => {
+    const on = ev.target.checked;
+    if (on && !(await confirmBox(`${w.name} ish boshqaruvchi bo'lsinmi? U ishchilarning pulidan boshqa hamma narsani boshqaradi, har bir o'zgartirishi sizga tasdiqqa keladi.`))) {
+      ev.target.checked = false;
+      return;
+    }
+    try {
+      const upd = await api(`/api/workers/${w.id}/manager`, { method: "POST", body: { is_manager: on } });
+      replaceWorker(upd);
+      workerSheet(upd);
+      toast(on ? `👔 ${w.name} — ish boshqaruvchi` : `${w.name} — oddiy ishchi`);
+    } catch (e) {
+      fail(e);
+      ev.target.checked = !on;
+    }
+  };
   const setJob = async (jobId) => {
     try {
       const upd = await api(`/api/workers/${w.id}`, { method: "PATCH", body: { job_id: jobId } });
@@ -2040,7 +2105,7 @@ function workerSheet(w) {
     if (b.dataset.job === "new") jobSheet(null, (job) => setJob(job.id));
     else setJob(b.dataset.job ? Number(b.dataset.job) : null);
   };
-  $("wReset").onclick = () => resetWorker(w, $("wReset"));
+  if ($("wReset")) $("wReset").onclick = () => resetWorker(w, $("wReset"));
   bindInvite(w, `${w.name}, Moliyachi botiga kirish uchun havolani bosing (keyin ham shu havola bilan qayta kirasiz):`, async () => {
     const upd = await api(`/api/workers/${w.id}/invite`, { method: "POST" });
     replaceWorker(upd);
@@ -2249,7 +2314,7 @@ function jobPrices(m) {
 
 function renderModelList() {
   const items = state.models;
-  const owner = state.me.is_owner;
+  const owner = manages();
   if (!items.length) {
     $("modelList").innerHTML = `<div class="empty"><span class="big">🧵</span>Hali model yo'q${owner ? ".<br>«+ Qo'shish» tugmasini bosing." : ""}</div>`;
     return;
@@ -2331,7 +2396,8 @@ function tgHtml(html) {
 // voice — yozilgan ovoz, images — tanlangan yoki tashlangan rasmlar
 function composeSheet(voice, images) {
   const owner = state.me.is_owner;
-  const example = owner ? "Masalan: bozorga 50 ming won" : "Masalan: A-12 dan 50 ta topshirdim";
+  const example = owner ? "Masalan: bozorga 50 ming won"
+    : isManager() ? "Masalan: Robiya A-12 dan 50 ta topshirdi" : "Masalan: A-12 dan 50 ta topshirdim";
   openSheet(`
     <h3>Yangi yozuv</h3>
     <div id="cOut"></div>
@@ -2346,7 +2412,9 @@ function composeSheet(voice, images) {
     </div>
     <p class="muted small compose-hint">${owner
       ? "Xarajat, daromad, qarz, xom ashyo yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «10 millionlik teri oldim, nomi Shirin gul».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
-      : "Model va sonini ayting: «kecha B-5 dan 30 ta». Boshqa ish qilgan bo'lsangiz — ish turini ham: «A-12 dan 40 ta brsovka».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
+      : isManager()
+        ? "Ishchining ishi, mijoz, xom ashyo yoki narx: «Robiya A-12 dan 50 ta topshirdi», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «20 kg kley oldim», «A-12 modelga brsovka 2000dan».<br>📨 Yozganingiz boshliq tasdig'iga boradi — tasdiqlasa hisobga kiradi."
+        : "Model va sonini ayting: «kecha B-5 dan 30 ta». Boshqa ish qilgan bo'lsangiz — ish turini ham: «A-12 dan 40 ta brsovka».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
   input.oninput = () => {
@@ -2443,6 +2511,96 @@ function pickImageSheet() {
   `);
   $("pCam").onclick = () => { haptic(); $("camInput").click(); };
   $("pGal").onclick = () => { haptic(); $("galInput").click(); };
+}
+
+// --- Ish boshqaruvchining so'rovlari ------------------------------------------
+// Boshqaruvchi nima qilsa — egasining tasdig'iga boradi. Egasida — tasdiqlash / rad etish,
+// boshqaruvchida — «📨 So'rovlarim»: nima yuborgani va javobi, kutayotganini qaytarib olish
+
+function setRequestCard(count) {
+  const owner = state.me.is_owner;
+  // Egasida — faqat tasdiq kutayotgan so'rov bo'lsa, boshqaruvchida — doim
+  $("requestsCard").hidden = !(isManager() || (owner && count > 0));
+  $("requestsText").innerHTML = owner
+    ? `<b>${count}</b> ta so'rov tasdiq kutmoqda<small>👔 Ish boshqaruvchi so'radi — ko'rish va tasdiqlash</small>`
+    : count
+      ? `📨 So'rovlarim · <b>${count}</b> tasi tasdiq kutmoqda<small>Boshliq tasdiqlasa — bajariladi</small>`
+      : "📨 So'rovlarim<small>Yuborganlaringiz va boshliq javobi</small>";
+}
+
+async function loadRequestCount() {
+  if (!manages()) return;
+  try {
+    const data = await api("/api/requests?status=pending&limit=1");
+    setRequestCard(data.pending);
+  } catch (_) { /* keyingi yangilanishda */ }
+}
+
+const REQ_STATUS = { pending: "pending", approved: "approved", rejected: "rejected", failed: "failed", cancelled: "cancelled" };
+
+function requestCard(r) {
+  const owner = state.me.is_owner;
+  let acts = "";
+  if (r.can_review) {
+    acts = `<button class="act ok" data-req="approve" data-id="${r.id}">✓ Tasdiqlash</button>`
+      + `<button class="act no" data-req="reject" data-id="${r.id}">Rad etish</button>`;
+  } else if (r.can_cancel) {
+    acts = `<button class="act" data-req="cancel" data-id="${r.id}">↩️ Qaytarib olish</button>`;
+  }
+  const who = owner ? `👔 ${esc(r.manager.name)} · ` : "";
+  return `
+    <div class="entry req-card">
+      <div class="req-head"><span class="status ${REQ_STATUS[r.status] || ""}">${esc(r.status_label)}</span><small>${who}${esc(timeLabel(r.created_at))}</small></div>
+      <div class="draft-box">${tgHtml(r.summary)}</div>
+      ${r.result ? `<p class="muted small req-result">${tgHtml(r.result)}</p>` : ""}
+      ${acts ? `<div class="entry-actions">${acts}</div>` : ""}
+    </div>`;
+}
+
+async function requestsSheet(status = "pending") {
+  const owner = state.me.is_owner;
+  haptic();
+  openSheet(`
+    <h3>📨 ${owner ? "Ish boshqaruvchi so'rovlari" : "So'rovlarim"}</h3>
+    <p class="muted small">${owner
+      ? "Tasdiqlasangiz — sizning nomingizdan bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi). Rad etsangiz — hech narsa o'zgarmaydi."
+      : "Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi: tasdiqlasa — bajariladi, sizga botda xabar keladi."}</p>
+    <div class="chips wrap" id="reqChips">
+      <button data-st="pending" class="${status === "pending" ? "on" : ""}">⏳ Kutayotgan</button>
+      <button data-st="" class="${status ? "" : "on"}">Hammasi</button>
+    </div>
+    <div id="reqNote"></div>
+    <div id="reqList">${SKELETONS}</div>
+  `);
+  $("reqChips").onclick = (ev) => {
+    const b = ev.target.closest("[data-st]");
+    if (b && b.dataset.st !== status) requestsSheet(b.dataset.st);
+  };
+  $("reqList").onclick = async (ev) => {
+    const b = ev.target.closest("[data-req]");
+    if (!b) return;
+    const act = b.dataset.req;
+    if (act === "cancel" && !(await confirmBox("So'rov qaytarib olinsinmi? Boshliqqa endi bormaydi."))) return;
+    $("reqList").querySelectorAll("[data-req]").forEach((x) => (x.disabled = true));
+    try {
+      const res = await api(`/api/requests/${b.dataset.id}/${act}`, { method: "POST" });
+      const st = res.request.status;
+      toast({ approved: "Tasdiqlandi — bajarildi", rejected: "Rad etildi", failed: "⚠️ Bajarib bo'lmadi", cancelled: "Qaytarib olindi" }[st] || "Bajarildi", st === "failed");
+      await requestsSheet(status);
+      if (res.detail && $("reqNote")) $("reqNote").innerHTML = `<div class="c-note saved">${tgHtml(res.detail)}</div>`;
+      refreshView();
+    } catch (e) {
+      fail(e);
+      requestsSheet(status);
+    }
+  };
+  try {
+    const data = await api(`/api/requests?limit=50${status ? `&status=${status}` : ""}`);
+    if (!$("reqList")) return;
+    setRequestCard(data.pending);
+    $("reqList").innerHTML = data.items.map(requestCard).join("")
+      || `<div class="empty"><span class="big">📨</span>${status ? "Tasdiq kutayotgan so'rov yo'q" : "Hali so'rov yo'q"}</div>`;
+  } catch (e) { fail(e); }
 }
 
 // --- PDF hisobot -------------------------------------------------------------
@@ -2570,8 +2728,9 @@ function renderCompose(res) {
   if (res.notice) html += `<div class="c-note">${tgHtml(res.notice)}</div>`;
   if (res.saved) {
     html += `<div class="c-note saved">${tgHtml(res.saved)}</div>`;
-    toast("Saqlandi");
-    refreshView();
+    toast(res.queued ? QUEUED_TEXT : "Saqlandi");
+    if (res.queued) loadRequestCount();
+    else refreshView();
   }
   if (res.draft) {
     html += `<div class="draft-box">${tgHtml(res.draft.html)}</div>${draftButtons(res.draft.buttons)}`;
@@ -3239,7 +3398,7 @@ function syncChips() {
   document.querySelectorAll("#typeChips button").forEach((b) => b.classList.toggle("on", b.dataset.type === en.type));
   document.querySelectorAll("#statusChips button").forEach((b) => b.classList.toggle("on", b.dataset.status === en.status));
   $("statusChips").hidden = !isWork;
-  $("workerFilter").hidden = !isWork || !state.me.is_owner || state.workers.length === 0;
+  $("workerFilter").hidden = !isWork || !manages() || state.workers.length === 0;
 }
 
 // --- Boshlash ----------------------------------------------------------------
@@ -3263,6 +3422,7 @@ function bind() {
     haptic();
     renderTrend();
   };
+  $("requestsCard").onclick = () => requestsSheet();
   $("pendingCard").onclick = () => {
     // Ish yozuvlari kutayotgan bo'lsa — ular, aks holda ishchilar yozgan pul
     const work = !state.dash || state.dash.pending > 0;
@@ -3391,7 +3551,7 @@ function bind() {
   };
 
   $("modelList").onclick = (ev) => {
-    if (!state.me.is_owner) return;
+    if (!manages()) return;
     const b = ev.target.closest("[data-model]");
     if (!b) return;
     const m = state.models.find((x) => x.id === Number(b.dataset.model));
@@ -3499,29 +3659,42 @@ async function init() {
     return;
   }
   const me = state.me;
-  $("hello").textContent = `Salom, ${me.name.split(" ")[0]}!`;
+  // boss — egasi yoki ish boshqaruvchi: ishxonani egasidek ko'radi (boshqaruvchiga egasining pullari yopiq)
+  const boss = manages();
+  $("hello").textContent = `Salom, ${me.name.split(" ")[0]}!` + (me.is_manager ? " · 👔 boshqaruvchi" : "");
   loadAvatar();
   $("settingsBtn").hidden = !me.is_owner;
   $("cameraBtn").hidden = false;
   $("pdfBtn").hidden = false;
-  $("addModelBtn").hidden = !me.is_owner;
-  // Egada: Hamyon va Jamoa (ishchilar + modellar). Ishchida: Narxlar va Yordam
+  $("addModelBtn").hidden = !boss;
+  // Egada: Hamyon va Jamoa (ishchilar + modellar). Boshqaruvchida: Yozuvlar va Jamoa. Ishchida: Narxlar va Yordam
   $("navWallet").hidden = !me.is_owner;
   // Egada: Asosiy · Mijozlar · 🎤 · Hamyon · Jamoa («Yozuvlar» — bosh sahifadagi «Hammasi →» orqali)
-  $("navEntries").hidden = me.is_owner;
-  $("navClients").hidden = !me.is_owner;
-  $("navWorkers").hidden = !me.is_owner;
-  $("navModels").hidden = me.is_owner;
-  $("navHelp").hidden = me.is_owner;
-  document.querySelectorAll(".team-seg").forEach((el) => (el.hidden = !me.is_owner));
-  // Egada bosh sahifada — pullar holati, «Yozuvlar»da — barcha turdagi yozuvlar
-  $("moneySection").hidden = !me.is_owner;
+  $("navEntries").hidden = boss;
+  $("navStaffEntries").hidden = !me.is_manager;
+  $("navClients").hidden = !boss;
+  $("navWorkers").hidden = !boss;
+  $("navModels").hidden = boss;
+  $("navHelp").hidden = boss;
+  document.querySelectorAll(".team-seg").forEach((el) => (el.hidden = !boss));
+  // Egada bosh sahifada — pullar holati, «Yozuvlar»da — barcha turdagi yozuvlar. Boshqaruvchida — mijozlar,
+  // xom ashyo va harakatlar (egasining daromad, xarajat va qarzlarisiz) hamda o'z hisob-kitobi
+  $("moneySection").hidden = !boss;
+  $("mHero").hidden = !me.is_owner;
+  $("mDebtsCard").hidden = !me.is_owner;
   $("ledgerCard").hidden = me.is_owner;
-  $("workTitle").hidden = !me.is_owner;
-  $("typeChips").hidden = !me.is_owner;
-  if (!me.is_owner) state.entries.type = "work";
+  $("workTitle").hidden = !boss;
+  $("typeChips").hidden = !boss;
+  if (me.is_manager) {
+    document.querySelectorAll("#typeChips [data-type]").forEach((b) => {
+      b.hidden = ["expense", "income", "debt", "pay"].includes(b.dataset.type);
+    });
+  }
+  // «Hisobni 0 qilish» — faqat egasida
+  document.querySelectorAll("[data-reset]").forEach((b) => (b.hidden = !me.is_owner));
+  if (!boss) state.entries.type = "work";
   syncChips();
-  if (!me.is_owner) {
+  if (!boss) {
     $("modelsTitle").textContent = "Narxlar";
     $("modelsHint").textContent = me.job
       ? `Bir dona uchun ish haqi — kasbingiz (${me.job.name}) bo'yicha`
@@ -3556,14 +3729,18 @@ async function loadAvatar() {
 function startView() {
   const view = new URLSearchParams(location.search).get("view");
   if (view === "entries") return "entries";
-  if (!state.me.is_owner) {
+  if (view === "requests" && manages()) {
+    setTimeout(() => requestsSheet(), 400);
+    return "home";
+  }
+  if (!state.me.is_owner && (view === "ledger" || !manages())) {
     if (view === "ledger") setTimeout(() => $("ledgerCard").scrollIntoView({ behavior: "smooth" }), 600);
     return "home";
   }
   if (view === "ledger") return "workers";
   if (view === "clients") return "clients";
   if (view === "materials") return "materials";
-  if (view === "debts" || view === "wallet") {
+  if ((view === "debts" || view === "wallet") && state.me.is_owner) {
     state.wallet.tab = view === "debts" ? "debts" : "money";
     return "wallet";
   }

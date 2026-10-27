@@ -49,9 +49,16 @@ class IntakeError(Exception):
 
 async def _context(session: AsyncSession, user: User) -> tuple[dict[str, list[str]], str | None, int, str]:
     known = await drafts.known_names(session, user)
-    worker_name = None if user.is_owner else user.name
+    worker_name = None if user.manages else user.name
     set_size = await repo.set_size(session, user.account_id)
-    info = f"Bir komplekt = {set_size} dona (har razmerdan bittadan)." if user.is_owner else ""
+    info = f"Bir komplekt = {set_size} dona (har razmerdan bittadan)." if user.manages else ""
+    if user.is_manager:
+        name = user.name
+        info += (
+            f" Xabarni ish boshqaruvchi {name} yozdi — u ham shu korxona ishchisi. «qildim», «topshirdim» — "
+            f"{name}ning o'z ishi (worker_name \"{name}\"); «500 ming oldim», «avans oldim» — {name} o'zi olgan "
+            f"pul: pay, kind pay, worker_name \"{name}\"; «200 ming qaytardim» — pay, kind return."
+        )
     return known, worker_name, set_size, info
 
 
@@ -137,7 +144,7 @@ async def analyze_images(session: AsyncSession, user: User, images: list[tuple[b
 
 def _understood(user: User, ext: llm.Extraction) -> bool:
     """Xabardan saqlasa bo'ladigan yozuv chiqdimi (egasida — har qanday bo'lim, ishchida — ish yoki pul)."""
-    special = user.is_owner and (
+    special = user.manages and (
         drafts.is_money(ext) or drafts.is_client(ext) or drafts.is_price(ext) or drafts.is_material(ext)
     )
     return special or (ext.section in ("work", "pay") and bool(ext.work or ext.pays))
@@ -150,7 +157,7 @@ async def _reroute_debts(session: AsyncSession, user: User, ext: llm.Extraction)
     undan olingan pul — to'lov, unga berilgani va «haqqim bor» — 💳 qarz. Faqat hamma odamlar bitta turga aniq
     mos kelsa. Shu ismda yana boshqa odam bo'lsa (ta'minotchi, «Qarzlar»dagi odam, ham ishchi ham mijoz) —
     o'tkazilmaydi: qarz qoralamasida qaysi biri ekani so'raladi (drafts.resolve)."""
-    if not user.is_owner or ext.section not in ("personal", "debt") or ext.personal or not ext.debt:
+    if not user.manages or ext.section not in ("personal", "debt") or ext.personal or not ext.debt:
         return
     index = await drafts.people_index(session, user.account_id)
     if not index["worker"][0] and not index["client"][0]:
@@ -212,12 +219,15 @@ async def _build(
     if entry_id is None:
         await _reroute_debts(session, user, ext)
     if not _understood(user, ext):
-        example = (
-            "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «A-12 modeldan 50 ta» "
-            "yoki «Robiyaga 500 ming berdim»"
-            if user.is_owner
-            else "«A-12 modeldan 50 ta topshirdim» yoki «500 ming oldim»"
-        )
+        if user.is_owner:
+            example = (
+                "«bozorga 50 ming won», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «A-12 modeldan 50 ta» "
+                "yoki «Robiyaga 500 ming berdim»"
+            )
+        elif user.is_manager:
+            example = "«Robiya A-12 modeldan 50 ta topshirdi», «Tohirga 10 komplekt maksima berdim» yoki «20 kg kley oldim»"
+        else:
+            example = "«A-12 modeldan 50 ta topshirdim» yoki «500 ming oldim»"
         hint = ext.question or f"Tushunmadim. Masalan: {example}."
         raise IntakeError(f"{said}\n\n🤔 {escape(hint)}")
 
@@ -232,11 +242,35 @@ async def _build(
             line["model_none"] = True
 
     await drafts.resolve(session, new_draft, user)
+    if refusal := manager_refusal(user, new_draft):
+        raise IntakeError(f"{said}\n\n{refusal}")
     if source == "image" and new_draft["section"] == "money":
         await drafts.mark_duplicates(session, new_draft, user.account_id)
         if not new_draft["debt"] and all(p["dup"] for p in new_draft["personal"]):
             raise IntakeError(f"{said}\n\n🔁 Bu rasmdagi yozuvlarning hammasi avval kiritilgan — qayta qo'shilmadi.")
     return new_draft
+
+
+# Ish boshqaruvchiga yopiq: egasining pullari va ishchilarning puli (haqqi)
+MANAGER_NO_MONEY = (
+    "🔒 Xarajat, daromad va qarzlarni faqat boshliq yozadi. Siz ishchilar ishi, mijozlar, xom ashyo va narxlarni "
+    "yozasiz."
+)
+MANAGER_NO_PAY = (
+    "🔒 Ishchilarning puli (avans, ish haqi, hisob-kitob) — faqat boshliqda. O'zingiz olgan pulni yozsangiz bo'ladi: "
+    "«500 ming oldim»."
+)
+
+
+def manager_refusal(user: User, draft: dict) -> str | None:
+    """Boshqaruvchi yozishi mumkin bo'lmagan qoralama — sababi, bo'lmasa None."""
+    if not user.is_manager:
+        return None
+    if draft["section"] == "money":
+        return MANAGER_NO_MONEY
+    if any(p["worker_id"] != user.id for p in draft.get("pays", [])):
+        return MANAGER_NO_PAY
+    return None
 
 
 async def autosave(session: AsyncSession, user: User, draft: dict) -> bool:
@@ -272,7 +306,7 @@ async def choose(session: AsyncSession, user: User, draft: dict, cb: kbs.Resolve
         return False
     line = draft["lines"][cb.line]
 
-    if cb.kind == "worker" and user.is_owner:
+    if cb.kind == "worker" and user.manages:
         await _pick_worker(session, user, draft, line, cb.item_id)
     elif cb.kind == "model" and cb.item_id == drafts.MODEL_NONE:
         # «✂️ Modelsiz» — model so'ralmaydigan kasbda, kasbning o'z narxi bilan
@@ -344,7 +378,7 @@ async def _pick_job(session: AsyncSession, user: User, query: str | None, item_i
 
 
 async def _choose_price(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
-    if cb.kind not in ("pmodel", "pjob") or not user.is_owner or cb.line >= len(draft["prices"]):
+    if cb.kind not in ("pmodel", "pjob") or not user.manages or cb.line >= len(draft["prices"]):
         return False
     item = draft["prices"][cb.line]
     if cb.kind == "pmodel":
@@ -374,7 +408,7 @@ def _choose_debt_who(draft: dict, cb: kbs.ResolveCb) -> bool:
 
 
 async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
-    if cb.kind != "client" or not user.is_owner or cb.line >= len(draft["client"]):
+    if cb.kind != "client" or not user.manages or cb.line >= len(draft["client"]):
         return False
     item = draft["client"][cb.line]
     if cb.item_id == 0:
@@ -393,7 +427,7 @@ async def _choose_client(session: AsyncSession, user: User, draft: dict, cb: kbs
 
 async def _choose_supplier(session: AsyncSession, user: User, draft: dict, cb: kbs.ResolveCb) -> bool:
     """Ta'minotchi tugmasi; item_id=0 — ro'yxatda yo'q: aytilgancha yoziladi, xabar bormaydi."""
-    if cb.kind != "supplier" or not user.is_owner or cb.line >= len(draft["materials"]):
+    if cb.kind != "supplier" or not user.manages or cb.line >= len(draft["materials"]):
         return False
     item = draft["materials"][cb.line]
     if cb.item_id == 0:
@@ -481,6 +515,8 @@ class Saved:
     header: str
     # Har bir saqlangan yozuv kartochkasi va uning tugmalari
     cards: list[tuple[str, InlineKeyboardMarkup]] = field(default_factory=list)
+    # Boshqaruvchi yozdi: saqlanmadi, egasining tasdig'iga yuborildi
+    queued: bool = False
 
 
 async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Saved:
@@ -490,6 +526,13 @@ async def save(session: AsyncSession, bot: Bot, user: User, draft: dict) -> Save
 
     if drafts.next_missing(draft) is not None:
         raise IntakeError("Avval yetishmagan ma'lumotni to'ldiring.")
+    if user.is_manager:
+        from bot import approvals  # aylanma importdan qochish uchun
+
+        return await approvals.submit_draft(session, bot, user, draft)
+    # Ishchi faqat o'zini yozadi (boshqaruvchilikdan olingach eski qoralama qolgan bo'lsa ham)
+    if not user.is_owner and any(i["worker_id"] != user.id for i in [*draft.get("lines", []), *draft.get("pays", [])]):
+        raise IntakeError("⚠️ Bu qoralama eskirgan. Qaytadan yozing.", drop=True)
     if draft["section"] in ("money", "client", "price", "material"):
         if not user.is_owner:
             raise IntakeError("Ruxsat yo'q.", drop=True)

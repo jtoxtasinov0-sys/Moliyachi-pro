@@ -1,5 +1,5 @@
 """Kundalik eslatma: har kuni belgilangan soatda egaga «bugungi pulingizni kiriting» xabari. Ishchi yozgan pul
-(«500 ming oldim») tasdiqlanmay qolgan bo'lsa — har kuni ertalab «tasdiqlanmagan pul bor» xabari.
+(«500 ming oldim») yoki ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — har kuni ertalab eslatma.
 
 Server (Render bepul tarifi) 15 daqiqa so'rovsiz qolsa uxlaydi va eslatma vaqti o'tib ketadi. Shuning uchun
 serverda bot har 10 daqiqada o'z manziliga /health so'rovini yuborib, o'zini uyg'oq ushlab turadi.
@@ -20,7 +20,7 @@ from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
-from bot.db.models import EntryStatus, WorkerPayment
+from bot.db.models import EntryStatus, RequestStatus, WorkerPayment
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +74,10 @@ def _pending_pays_text(pending: list[WorkerPayment]) -> str:
 
 
 async def send_pending_pays(bot: Bot) -> None:
-    """Ishchi yozgan pul tasdiqlanmay qolgan bo'lsa — egaga kuniga bir marta eslatma va har bir yozuv
-    tasdiqlash tugmalari bilan (eskisi birinchi)."""
-    from bot.handlers.entries import pay_text  # aylanma importdan qochish uchun
+    """Ishchi yozgan pul yoki ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — egaga kuniga bir marta
+    eslatma va har bir yozuv tasdiqlash tugmalari bilan (eskisi birinchi)."""
+    from bot import approvals  # aylanma importdan qochish uchun
+    from bot.handlers.entries import pay_text
 
     now = datetime.now(settings.tz)
     if now.hour < PAY_REMINDER_HOUR:
@@ -93,11 +94,24 @@ async def send_pending_pays(bot: Bot) -> None:
             await repo.set_setting(session, user.id, "pay_reminder_sent", day)
             await session.commit()
             pending = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=200)
-            if not pending:
+            requests = await repo.list_requests(session, user.id, status=RequestStatus.PENDING, limit=200)
+            if not pending and not requests:
                 continue
-            pending.reverse()
-            messages = [(_pending_pays_text(pending), kbs.app_kb())]
-            messages += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in pending[:PAY_REMINDER_CARDS]]
+            messages = []
+            if pending:
+                pending.reverse()
+                messages.append((_pending_pays_text(pending), kbs.app_kb()))
+                messages += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in pending[:PAY_REMINDER_CARDS]]
+            if requests:
+                requests.reverse()
+                messages.append((
+                    f"🔔 <b>Ish boshqaruvchi so'rovlari tasdiq kutmoqda</b> — {len(requests)} ta\n\n"
+                    "Tasdiqlamaguningizcha bajarilmaydi. Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting.",
+                    kbs.app_kb("requests"),
+                ))
+                messages += [
+                    (approvals.request_text(r, True), kbs.request_kb(r, user)) for r in requests[:PAY_REMINDER_CARDS]
+                ]
         try:
             for text, markup in messages:
                 await bot.send_message(tg_id, text, reply_markup=markup)

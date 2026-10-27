@@ -174,6 +174,18 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
   background: #fff; color: var(--navy); font-weight: 800; box-shadow: 0 2px 8px rgba(19, 38, 95, .12);
 }
 .arrow-btn.light { background: var(--blue-soft); box-shadow: none; }
+#requestsCard { margin: 0 0 14px; border-color: var(--blue-soft); }
+#requestsCard .pending-icon { background: var(--blue-soft); }
+#requestsCard .pending-text b { color: var(--blue); }
+
+/* Ish boshqaruvchining so'rovlari */
+.req-card .req-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.req-card .req-head .status { margin: 0; }
+.req-card .req-head small { color: var(--muted); font-weight: 600; font-size: 12.5px; text-align: right; }
+.req-card .draft-box { margin-bottom: 0; }
+.req-card .req-result { margin: 8px 0 0; }
+.status.failed, .status.cancelled { background: var(--bg); color: var(--muted); }
+.status.failed { color: var(--red); }
 
 /* Donut */
 .donut-wrap { display: flex; align-items: center; gap: 16px; }

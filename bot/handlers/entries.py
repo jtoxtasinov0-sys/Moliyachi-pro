@@ -8,13 +8,13 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import drafts, pdf_report
+from bot import approvals, drafts, pdf_report
 from bot import keyboards as kbs
 from bot.db import repo
-from bot.db.models import Client, EntryStatus, PayKind, Supplier, User, WorkEntry, WorkerPayment
+from bot.db.models import Client, EntryStatus, PayKind, RequestStatus, Supplier, User, WorkEntry, WorkerPayment
 from bot.middlewares import IsOwner, Registered
 from bot.services.utils import fmt_date, fmt_money, fmt_totals, period_range
 
@@ -83,7 +83,9 @@ async def pay_summary(session: AsyncSession, payments: list[WorkerPayment], view
     return "\n".join(rows)
 
 
-async def notify_user(bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None) -> bool:
+async def notify_user(
+    bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None
+) -> bool:
     """Xabar yuborish. Yetmasa (botni bloklagan) — faqat logga yoziladi va False."""
     try:
         await bot.send_message(chat_id, text, reply_markup=markup)
@@ -166,7 +168,7 @@ async def notify_owner_pending(bot: Bot, session: AsyncSession, entry: WorkEntry
 
 
 def _can_touch(user: User, entry: WorkEntry) -> bool:
-    return user.is_owner or entry.worker_id == user.id
+    return user.manages or entry.worker_id == user.id
 
 
 async def _get_entry(call: CallbackQuery, session: AsyncSession, user: User, entry_id: int) -> WorkEntry | None:
@@ -183,7 +185,7 @@ async def _get_entry(call: CallbackQuery, session: AsyncSession, user: User, ent
 @router.message(Command("oxirgi"))
 async def recent(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
     await state.clear()
-    entries = await repo.recent_work_entries(session, user.account_id, worker_id=None if user.is_owner else user.id)
+    entries = await repo.recent_work_entries(session, user.account_id, worker_id=None if user.manages else user.id)
     if not entries:
         await message.answer("Hali yozuvlar yo'q.")
         return
@@ -198,12 +200,15 @@ async def pending(message: Message, state: FSMContext, session: AsyncSession, us
     await state.clear()
     entries = await repo.pending_work_entries(session, user.id)
     payments = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=30)
-    if not entries and not payments:
+    requests = await repo.list_requests(session, user.id, status=RequestStatus.PENDING, limit=30)
+    if not entries and not payments and not requests:
         await message.answer("✅ Tasdiq kutayotgan yozuv yo'q.")
         return
-    await message.answer(f"⏳ Tasdiq kutayotganlar: {len(entries) + len(payments)} ta")
+    await message.answer(f"⏳ Tasdiq kutayotganlar: {len(entries) + len(payments) + len(requests)} ta")
     cards = [(entry_text(e), kbs.entry_kb(e, user)) for e in entries[:30]]
     cards += [(pay_text(p, user), kbs.pay_entry_kb(p, user)) for p in reversed(payments)]
+    # Ish boshqaruvchining so'rovlari
+    cards += [(approvals.request_text(r, True), kbs.request_kb(r, user)) for r in reversed(requests)]
     for text, kb in cards:
         await message.answer(text, reply_markup=kb)
 
@@ -271,6 +276,9 @@ async def on_delete_yes(call: CallbackQuery, callback_data: kbs.EntryCb, session
     if entry is None:
         return
     text = entry_text(entry)
+    if user.is_manager:
+        await _ask_owner(call, session, user, text, "delete_entry", entry.id)
+        return
     await repo.soft_delete(session, entry)
     await call.message.edit_text(f"<s>{text}</s>\n\n🗑 O'chirildi")
     await call.answer("O'chirildi")
@@ -280,6 +288,21 @@ async def on_delete_yes(call: CallbackQuery, callback_data: kbs.EntryCb, session
         await notify_owner(
             call.bot, session, user.owner_id, f"🗑 {escape(user.name)} tasdiqlangan yozuvni o'chirdi:\n\n{text}"
         )
+
+
+async def _ask_owner(call: CallbackQuery, session: AsyncSession, user: User, text: str, op: str, entry_id: int) -> None:
+    """Ish boshqaruvchi o'chirmoqchi: darhol o'chmaydi, egasining tasdig'iga boradi."""
+    from bot.web.api import ApiError  # aylanma importdan qochish uchun
+
+    try:
+        req = await approvals.ask(session, call.bot, user, op, {"id": str(entry_id)})
+    except ApiError as e:
+        await call.answer(e.message, show_alert=True)
+        return
+    await call.message.edit_text(
+        f"{text}\n\n📨 O'chirish boshliq tasdig'iga yuborildi — tasdiqlasa o'chadi.", reply_markup=kbs.request_kb(req, user)
+    )
+    await call.answer("Boshliq tasdig'iga yuborildi")
 
 
 # --- Hisobot ----------------------------------------------------------------
@@ -298,18 +321,19 @@ async def report_menu(message: Message, state: FSMContext) -> None:
 async def on_report(call: CallbackQuery, callback_data: kbs.ReportCb, session: AsyncSession, user: User) -> None:
     period = callback_data.period
     start, end = period_range(period)
-    worker_id = None if user.is_owner else user.id
+    worker_id = None if user.manages else user.id
     rows = await repo.work_report(session, user.account_id, start, end, worker_id=worker_id)
     title = (
         f"📊 <b>{PERIOD_LABELS[period]}</b> "
         f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
     )
 
+    # Boshqaruvchiga — butun ishxona, lekin ishchilarning qoldig'i (haqqi) emas: faqat o'ziniki
     balances = await repo.worker_balances(session, user.account_id, None if user.is_owner else [user.id])
     if not rows:
         body = "Bu davrda tasdiqlangan ish yo'q."
-    elif user.is_owner:
-        body = _owner_report(rows, balances)
+    elif user.manages:
+        body = _owner_report(rows, balances if user.is_owner else {})
     else:
         body = _worker_report(rows)
     if not user.is_owner:
@@ -477,6 +501,9 @@ async def on_pay_delete(call: CallbackQuery, callback_data: kbs.PayCb, session: 
         return
     if not user.is_owner and entry.created_by != user.id:
         await call.answer("Bu yozuvni boshlig'ingiz kiritgan — faqat u o'chira oladi.", show_alert=True)
+        return
+    if user.is_manager and callback_data.action == "del_yes":
+        await _ask_owner(call, session, user, pay_text(entry, user), "delete_payment", entry.id)
         return
     if callback_data.action == "del":
         await call.message.edit_reply_markup(reply_markup=kbs.pay_confirm_delete_kb(entry.id))

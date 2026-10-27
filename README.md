@@ -72,6 +72,23 @@ berdim» (ishchida «500 ming oldim») — darhol saqlanadi, murakkabrog'i («15
 ⚠️ Avvaldan ishlatayotgan bo'lsangiz: pul yozilmagan ishchining qoldig'i — barcha ishlari summasi. Har bir ishchi
 uchun bir marta hisobni boshlang: «Robiya bilan hisob yopildi» yoki «Robiyaga 900 ming qarzman».
 
+**👔 Ish boshqaruvchi (admin):** egasi ishchisini ish boshqaruvchi qila oladi — botda «👷 Ishchilar» → ishchi →
+«👔 Ish boshqaruvchi qilish», ilovada «Jamoa» → ishchi → «👔 Ish boshqaruvchi» tugmasi (o'chirsa — yana oddiy ishchi).
+Ishchiga yangi menyu bilan xabar boradi. Boshqaruvchi ishxonani egasidek boshqaradi: ishchilar ishini yozadi, tahrirlaydi
+va o'chiradi («Robiya A-12 dan 50 ta topshirdi»), ishchi qo'shadi, kasbini tanlaydi, o'chiradi yoki qayta faollashtiradi,
+kasblar, modellar va narxlarni («A-12 modelga brsovka 2000dan»), mijozlar va ular bilan oldi-berdini («Tohirga 10
+komplekt berdim»), xom ashyo va ta'minotchilarni yuritadi; hisobotda butun ishxona ko'rinadi. **Nima qilsa — boshliq
+tasdig'idan o'tadi:** yozuv darhol saqlanmaydi, egasiga «🔔 Jasur so'radi» xabari nima o'zgarishi bilan («kasbi:
+Tikuvchi → Kroychi», «A-12: 5 000 so'm → 6 000 so'm») «✅ Tasdiqlash» / «🚫 Rad etish» tugmalari bilan boradi (ilovada —
+bosh sahifadagi «📨 … ta so'rov tasdiq kutmoqda», botda — «⏳ Tasdiq kutayotganlar», tasdiqlanmagani — har kuni
+ertalab 9:00 da eslatiladi). Tasdiqlansa — egasi nomidan bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi),
+rad etilsa — hech narsa o'zgarmaydi; ikkalasida ham boshqaruvchiga xabar keladi. Orada yozuv o'chib ketgan bo'lsa —
+«⚠️ bajarib bo'lmadi» va sababi. Boshqaruvchi o'z so'rovlarini botda «📨 So'rovlarim», ilovada bosh sahifadagi kartada
+ko'radi va kutayotganini qaytarib oladi; xuddi shu so'rov ikki marta yuborilmaydi. **Pul — faqat egasida:**
+ishchilarning puli (avans, ish haqi, «Robiyaga 500 ming berdim», hisob holati, qoldig'i va hisob-kitobi), egasining
+xarajat, daromad va qarzlari, maslahat, sozlamalar va «Hisobni 0 qilish» boshqaruvchiga ko'rinmaydi va yopiq. U ham
+ishchi: o'z ishi va o'z hisob-kitobi qoladi, o'zi olgan pul («500 ming oldim») ham egasi tasdiqlagach yoziladi.
+
 **🧱 Xom ashyo:** teri, material, podklad, kley, padosh, ip, furnitura xaridlari alohida bo'limda yuritiladi
 (shaxsiy xarajatga qo'shilmaydi). Ovoz yoki matn yuboring: «1 list teri oldim», «10 millionlik teri oldim, nomi
 Shirin gul», «Lider terisidan 5 list, listi 300 ming», «Alisherdan 20 kg kley oldim» — bot turini, nomini (markasi),
@@ -282,10 +299,12 @@ bot/
   jobs.py            kasblar: standart ro'yxat, «brsovka» → Brsovkachi, «kroy 1500, tikuv 5000» narx matni
   drafts.py          qoralama: «To'g'rimi?» kartochkasi
   advisor.py         byudjet maslahatchisi: 50/30/20 reja, kunlik limit, saboqlar
+  approvals.py       ish boshqaruvchi: so'rov egasiga, tasdiqlansa egasi nomidan bajariladi
   pdf_report.py      hisobot PDF fayl (shrift: assets/fonts — DejaVu, kirill va lotin)
   reminders.py       kundalik eslatma (va serverni uyg'oq ushlab turish)
   monitor/           kuzatuv boti: harakatlarni yozish (hooks, tracker), statistika, admin boti
-  handlers/          Telegram handlerlar (clients.py — havola orqali ulangan mijozning o'zi)
+  handlers/          Telegram handlerlar (clients.py — havola orqali ulangan mijozning o'zi, requests.py —
+                     ish boshqaruvchining so'rovlari)
   web/server.py      veb-server: Mini App, API, webhook
   web/api.py         Mini App uchun JSON API
   web/auth.py        Telegram initData tekshiruvi

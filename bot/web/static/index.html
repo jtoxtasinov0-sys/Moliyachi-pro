@@ -26,7 +26,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="static/style.css?v=23">
+  <link rel="stylesheet" href="static/style.css?v=24">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -67,7 +67,15 @@
           <button data-period="year">Yil</button>
         </div>
 
-        <!-- Egasining pullari: daromad, xarajat, qarzlar va oxirgi harakatlar -->
+        <!-- Ish boshqaruvchining so'rovlari: egasida — tasdiq kutayotganlari, boshqaruvchida — o'ziniki -->
+        <button class="pending-card req" id="requestsCard" hidden>
+          <div class="pending-icon">📨</div>
+          <div class="pending-text" id="requestsText"></div>
+          <div class="arrow-btn light">→</div>
+        </button>
+
+        <!-- Egasining pullari: daromad, xarajat, qarzlar va oxirgi harakatlar (boshqaruvchida — mijozlar, xom ashyo
+             va oxirgi harakatlar) -->
         <div id="moneySection" hidden>
           <div class="hero tap" id="mHero" role="button" tabindex="0">
             <div class="hero-circle c1"></div>
@@ -85,7 +93,7 @@
             <div class="hero-tip">💡 Maslahat: xarajatga va jamg'armaga qancha ajratish ›</div>
           </div>
 
-          <div class="card">
+          <div class="card" id="mDebtsCard">
             <div class="card-head"><h3>🤝 Qarzlar</h3><button class="link-btn" id="mDebtsAll">Hammasi →</button></div>
             <div id="mDebtList"></div>
           </div>
@@ -446,6 +454,11 @@
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
       </div>
+      <!-- Ish boshqaruvchida: «Hamyon» o'rnida — «Yozuvlar» -->
+      <button data-view="entries" id="navStaffEntries" hidden>
+        <svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        <span>Yozuvlar</span>
+      </button>
       <button data-view="wallet" id="navWallet" hidden>
         <svg viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5V17a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H6.5A2.5 2.5 0 0 1 4 7.5Z"/><path d="M16 13.5h.01"/></svg>
         <span>Hamyon</span>
@@ -487,6 +500,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="fatal" id="fatal" hidden></div>
   </div>
-  <script src="static/app.js?v=32"></script>
+  <script src="static/app.js?v=33"></script>
 </body>
 </html>

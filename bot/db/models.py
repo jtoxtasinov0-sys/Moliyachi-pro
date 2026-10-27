@@ -55,11 +55,19 @@ class User(Base):
     # Ishchining kasbi (kroychi, tikuvchi...) — ish yozuvida kasb aytilmasa shu olinadi.
     # jobs jadvali users ga bog'langan, aylana bog'lanish bo'lmasin deb tashqi kalitsiz
     job_id: Mapped[int | None]
+    # Ish boshqaruvchi (egasi ishchisini shunday qiladi): kabinetni egasidek boshqaradi, faqat ishchilarning puli
+    # (haqqi), egasining xarajat va qarzlari yopiq; har bir o'zgartirishi egasi tasdiqlagach bajariladi (ManagerRequest)
+    is_manager: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property
     def is_owner(self) -> bool:
         return self.role == Role.OWNER
+
+    @property
+    def manages(self) -> bool:
+        """Egasi yoki ish boshqaruvchi: ishxonani egasidek ko'radi va boshqaradi."""
+        return self.is_owner or self.is_manager
 
     @property
     def account_id(self) -> int:
@@ -378,6 +386,41 @@ class MaterialEntry(TimestampMixin, Base):
     raw_text: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --- 5. Ish boshqaruvchining so'rovlari --------------------------------------
+
+class RequestKind:
+    DRAFT = "draft"  # ovoz, matn yoki rasmdan qoralama — tasdiqlansa intake.save (egasi nomidan)
+    API = "api"  # ilovadagi o'zgartirish — tasdiqlansa web/api.py dagi shu nomli amal (egasi nomidan)
+
+
+class RequestStatus:
+    PENDING = "pending"
+    APPROVED = "approved"  # tasdiqlandi va bajarildi
+    REJECTED = "rejected"
+    FAILED = "failed"  # tasdiqlandi, lekin bajarib bo'lmadi (masalan, yozuv o'chirilgan)
+    CANCELLED = "cancelled"  # boshqaruvchi o'zi qaytarib oldi
+
+
+class ManagerRequest(Base):
+    """Ish boshqaruvchi nima qilsa — darhol bajarilmaydi: egasiga so'rov boradi, tasdiqlansa egasi nomidan
+    bajariladi. payload — JSON: qoralama yoki amal (op, match, body)."""
+
+    __tablename__ = "manager_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    manager_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # RequestKind
+    payload: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)  # egasiga ko'rsatiladigan tavsif (Telegram HTML)
+    status: Mapped[str] = mapped_column(String(10), default=RequestStatus.PENDING, index=True)
+    result: Mapped[str | None] = mapped_column(Text)  # bajarilmagan bo'lsa — sababi
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    manager: Mapped[User] = relationship(foreign_keys=[manager_id], lazy="joined")
 
 
 # --- Kuzatuv boti -----------------------------------------------------------
