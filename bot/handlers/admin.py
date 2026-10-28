@@ -15,7 +15,7 @@ from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
 from bot.db.models import Client, ItemModel, Supplier, User
-from bot.handlers.entries import ledger_text, notify_user, tracked
+from bot.handlers.entries import ledger_message, notify_user, tracked
 from bot.handlers.money import (
     client_balance_text,
     client_ledger_blocks,
@@ -230,7 +230,8 @@ async def worker_ledger(call: CallbackQuery, callback_data: kbs.WorkerCb, sessio
     worker = await _get_worker(call, session, user, callback_data.user_id)
     if worker is None:
         return
-    await call.message.answer(await ledger_text(session, user, worker), reply_markup=kbs.app_kb("ledger"))
+    text, kb = await ledger_message(session, user, worker)
+    await call.message.answer(text, reply_markup=kb)
     await call.answer()
 
 

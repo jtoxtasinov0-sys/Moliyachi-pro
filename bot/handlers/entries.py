@@ -75,11 +75,8 @@ async def pay_summary(session: AsyncSession, payments: list[WorkerPayment], view
     rows.append(drafts.balance_text(balance, name, left=bool(rows)))
     waiting = [p for p in payments if p.status == EntryStatus.PENDING and p.kind in (PayKind.PAY, PayKind.RETURN)]
     if waiting:
-        after = dict(balance)
-        for p in waiting:
-            after[p.currency] = after.get(p.currency, Decimal(0)) + (-p.amount if p.kind == PayKind.PAY else p.amount)
         who = "Tasdiqlasangiz" if viewer.is_owner else "Boshlig'ingiz tasdiqlasa"
-        rows.append(f"⏳ {who} — qoldi: <b>{drafts.signed_hint(after)}</b>")
+        rows.append(f"⏳ {who} — qoldi: <b>{drafts.signed_hint(repo.with_pending(balance, waiting))}</b>")
     return "\n".join(rows)
 
 
@@ -479,14 +476,25 @@ async def _pay_card(session: AsyncSession, entry: WorkerPayment, viewer: User) -
     return f"{pay_text(entry, viewer)}\n\n{await pay_summary(session, [entry], viewer)}"
 
 
-@router.callback_query(kbs.PayCb.filter(F.action.in_({"approve", "reject"})), IsOwner())
+@router.callback_query(kbs.PayCb.filter(F.action.in_({"approve", "reject", "lg_ok", "lg_no"})), IsOwner())
 async def on_pay_review(call: CallbackQuery, callback_data: kbs.PayCb, session: AsyncSession, user: User) -> None:
+    """Pul yozuvini tasdiqlash yoki rad etish: yozuv kartasida yoki hisob-kitob ostidagi tugmada (lg_ — hisob-kitob
+    shu xabarda yangilanadi)."""
     entry = await _get_payment(call, session, user, callback_data.entry_id)
     if entry is None:
         return
-    approve = callback_data.action == "approve"
+    from_ledger = callback_data.action.startswith("lg_")
+    if from_ledger and entry.status != EntryStatus.PENDING:
+        # Eski hisob-kitob xabaridagi tugma: yozuv boshqa joyda allaqachon ko'rib chiqilgan
+        await call.answer("Bu yozuv allaqachon ko'rib chiqilgan.", show_alert=True)
+        return
+    approve = callback_data.action in ("approve", "lg_ok")
     await repo.review_payment(session, entry, user, approve)
-    await call.message.edit_text(await _pay_card(session, entry, user), reply_markup=kbs.pay_entry_kb(entry, user))
+    if from_ledger:
+        text, kb = await ledger_message(session, user, entry.worker)
+        await call.message.edit_text(text, reply_markup=kb)
+    else:
+        await call.message.edit_text(await _pay_card(session, entry, user), reply_markup=kbs.pay_entry_kb(entry, user))
     await call.answer("Tasdiqlandi" if approve else "Rad etildi")
     worker = entry.worker
     if worker.tg_id and worker.id != user.id:
@@ -547,11 +555,70 @@ def _ledger_row(r: repo.LedgerRow, owner_view: bool) -> str:
         text = drafts.pay_line(e.kind, amount, None, e.amount < 0, not e.amount, owner_view)
         if e.note:
             text += f" <i>({escape(e.note)})</i>"
-    return text + ("" if r.counted else " ⏳")
+    # Tasdiqlanmagan yozuv qoldiqqa kirmaydi — kun oxiridagi qoldiqda yo'q
+    return text + ("" if r.counted else " ⏳ <i>tasdiqlanmagan — hisobga kirmagan</i>")
 
 
-async def ledger_text(session: AsyncSession, viewer: User, worker: User) -> str:
-    """SMS'dagidek: kunma-kun ishlar va pul, har kun oxirida qoldiq (eskisi tepada)."""
+def _ledger_formula(b: repo.WorkerBalance, owner_view: bool) -> str | None:
+    """Qoldiq qayerdan chiqdi: «23.10 dagi hisob 1 870 000 so'm + ishlar 560 000 so'm − berildi 1 390 000 so'm
+    = 1 040 000 so'm» (hisob holati aytilmagan bo'lsa — «boshidan: ishlar …»)."""
+    terms = []
+    if b.earned:
+        terms.append(("+", f"ishlar {fmt_totals(b.earned)}"))
+    if b.paid:
+        terms.append(("−", f"{'berildi' if owner_view else 'oldingiz'} {fmt_totals(b.paid)}"))
+    if b.returned:
+        terms.append(("+", f"qaytdi {fmt_totals(b.returned)}"))
+    if not terms:
+        return None
+    if b.since:
+        text = f"{b.since.strftime('%d.%m')} dagi hisob {drafts.fmt_signed(b.start)}"
+    else:
+        sign, first = terms.pop(0)
+        text = "boshidan: " + ("" if sign == "+" else "− ") + first
+    text += "".join(f" {sign} {term}" for sign, term in terms)
+    return f"{text} = {drafts.fmt_signed(b.balance)}"
+
+
+def _pending_note(balance: dict[str, Decimal], waiting: list[WorkerPayment], name: str | None) -> str:
+    """Tasdiq kutayotgan pul: nega qoldiqdan ayrilmagani va tasdiqlansa qancha qolishi. name — egasiga (ishchi
+    ismi), None — ishchining o'ziga."""
+    owner_view = name is not None
+    paid: dict[str, Decimal] = {}
+    returned: dict[str, Decimal] = {}
+    for p in waiting:
+        part = paid if p.kind == PayKind.PAY else returned
+        part[p.currency] = part.get(p.currency, Decimal(0)) + abs(p.amount)
+    what = []
+    if paid:
+        what.append(f"{'berildi' if owner_view else 'oldingiz'} {fmt_totals(paid)}")
+    if returned:
+        what.append(f"qaytdi {fmt_totals(returned)}")
+    after = drafts.signed_hint(repo.with_pending(balance, waiting))
+    if owner_view:
+        return (
+            f"⏳ <b>Tasdiqlanmagan pul:</b> {', '.join(what)} — {escape(name)} o'zi yozgan, siz tasdiqlamaguningizcha "
+            f"yuqoridagi qoldiqqa kirmaydi.\n👉 Tasdiqlasangiz qoldi: <b>{after}</b>"
+        )
+    return (
+        f"⏳ <b>Tasdiq kutmoqda:</b> {', '.join(what)} — boshlig'ingiz tasdiqlagach hisobga kiradi.\n"
+        f"👉 Tasdiqlasa qoldi: <b>{after}</b>"
+    )
+
+
+async def ledger_message(
+    session: AsyncSession, viewer: User, worker: User
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Hisob-kitob va uning tugmalari: egasiga — tasdiq kutayotgan pulni shu yerning o'zida tasdiqlash."""
+    waiting = await repo.pending_worker_pays(session, worker.owner_id, worker.id)
+    text = await ledger_text(session, viewer, worker, waiting)
+    kb = kbs.ledger_kb(waiting) if viewer.is_owner and waiting else kbs.app_kb("ledger")
+    return text, kb
+
+
+async def ledger_text(session: AsyncSession, viewer: User, worker: User, waiting: list[WorkerPayment]) -> str:
+    """SMS'dagidek: kunma-kun ishlar va pul, har kun oxirida qoldiq (eskisi tepada). waiting — tasdiq kutayotgan
+    pul (qoldiqqa kirmagan), pastda alohida ko'rsatiladi."""
     rows, more = await repo.worker_ledger(session, worker.owner_id, worker.id, limit=LEDGER_ROWS)
     b = await repo.worker_balance(session, worker.owner_id, worker.id)
     owner_view = viewer.is_owner
@@ -587,15 +654,11 @@ async def ledger_text(session: AsyncSession, viewer: User, worker: User) -> str:
         parts.append("<i>… oldingi yozuvlar — ilovada</i>")
     parts.extend(blocks)
     summary = [drafts.balance_text(b.balance, worker.name if owner_view else None)]
-    since = f"{b.since.strftime('%d.%m')} dagi hisobdan" if b.since else "boshidan"
-    details = [f"ishlar: +{fmt_totals(b.earned)}"] if b.earned else []
-    if b.paid:
-        details.append(f"{'berildi' if owner_view else 'oldingiz'}: −{fmt_totals(b.paid)}")
-    if b.returned:
-        details.append(f"qaytdi: +{fmt_totals(b.returned)}")
-    if details:
-        summary.append(f"<i>({since}: {', '.join(details)})</i>")
+    if formula := _ledger_formula(b, owner_view):
+        summary.append(f"<i>({formula})</i>")
     parts.append("\n".join(summary))
+    if waiting:
+        parts.append(_pending_note(b.balance, waiting, worker.name if owner_view else None))
     parts.append(f"💡 Yozish: <i>{escape(example)}</i>")
     return "\n\n".join(parts)
 
@@ -607,4 +670,5 @@ async def ledger(message: Message, state: FSMContext, session: AsyncSession, use
     if user.is_owner:
         await message.answer("🧾 Ishchi hisob-kitobi — «👷 Ishchilar» bo'limida ishchini bosing.")
         return
-    await message.answer(await ledger_text(session, user, user), reply_markup=kbs.app_kb("ledger"))
+    text, kb = await ledger_message(session, user, user)
+    await message.answer(text, reply_markup=kb)

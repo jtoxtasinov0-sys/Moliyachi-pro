@@ -1993,6 +1993,7 @@ async def ledger(request: web.Request, session: AsyncSession, user: User) -> web
     limit, offset = _paging(request)
     rows, more = await repo.worker_ledger(session, user.account_id, worker.id, limit=limit, offset=offset)
     balance = await repo.worker_balance(session, user.account_id, worker.id)
+    waiting = await repo.pending_worker_pays(session, user.account_id, worker.id)
     return web.json_response(
         {
             "worker": {"id": worker.id, "name": worker.name},
@@ -2000,6 +2001,8 @@ async def ledger(request: web.Request, session: AsyncSession, user: User) -> web
             "items": [_ledger_json(r, user) for r in rows],
             "has_more": more,
             "pending": await repo.count_pending_payments(session, user.account_id, worker.id),
+            # Tasdiq kutayotgan pul («oldim», «qaytardim») tasdiqlansa qancha qoladi
+            "after_pending": _money(repo.with_pending(balance.balance, waiting)) if waiting else None,
         }
     )
 

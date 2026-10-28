@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from bot.config import settings
 from bot.db.models import EntryStatus, ManagerRequest, RequestStatus, User, WorkEntry, WorkerPayment
 from bot.db.repo import SAVINGS_CHOICES
+from bot.services.utils import fmt_money
 
 # --- Asosiy menyu -----------------------------------------------------------
 
@@ -84,7 +85,7 @@ class PayKindCb(CallbackData, prefix="pk"):
 
 
 class PayCb(CallbackData, prefix="wp"):
-    action: str  # approve | reject | del | del_yes | del_no
+    action: str  # approve | reject | lg_ok | lg_no (hisob-kitob ostidan) | del | del_yes | del_no
     entry_id: int
 
 
@@ -338,6 +339,21 @@ def pay_entry_kb(entry: WorkerPayment, viewer: User, app: bool = False) -> Inlin
     kb.adjust(2)
     if app:
         add_app_button(kb, "ledger")
+    return kb.as_markup()
+
+
+def ledger_kb(pending: list[WorkerPayment]) -> InlineKeyboardMarkup:
+    """Egasiga hisob-kitob ostida: tasdiq kutayotgan har bir pul yozuvi — «✅ Tasdiqlash» / «🚫 Rad etish»
+    (bosilsa hisob-kitob shu xabarda yangilanadi)."""
+    kb = InlineKeyboardBuilder()
+    for p in pending[:5]:
+        kb.button(
+            text=f"✅ Tasdiqlash · {fmt_money(abs(p.amount), p.currency)}",
+            callback_data=PayCb(action="lg_ok", entry_id=p.id),
+        )
+        kb.button(text="🚫 Rad etish", callback_data=PayCb(action="lg_no", entry_id=p.id))
+    kb.adjust(2)
+    add_app_button(kb, "ledger")
     return kb.as_markup()
 
 

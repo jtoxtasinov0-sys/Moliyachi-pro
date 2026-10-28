@@ -793,7 +793,7 @@ function ledgerRow(e, owner) {
   const sub = [];
   if (e.type === "work" && e.job) sub.push(e.job);
   if (e.note) sub.push(e.note);
-  if (!e.counted) sub.push(e.status === "pending" ? "⏳ tasdiq kutmoqda" : STATUS[e.status] || "");
+  if (!e.counted) sub.push(e.status === "pending" ? "⏳ tasdiq kutmoqda — hisobga kirmagan" : STATUS[e.status] || "");
   let acts = "";
   const review = owner && e.type === "pay" && e.status === "pending";
   if (review) {
@@ -848,7 +848,8 @@ function renderLedger() {
   const owner = state.me.is_owner;
   const b = d.balance;
   const head = balanceHead(b.amounts, owner ? d.worker.name : null);
-  const sub = [b.since ? `${shortDate(b.since)} dagi hisobdan` : "boshidan"];
+  // Qoldiq qayerdan chiqdi: «23-oktyabr dagi hisob 1 870 000 so'm · ishlar +560 000 so'm · berildi −…»
+  const sub = [b.since ? `${shortDate(b.since)} dagi hisob ${signedMoney(b.start)}` : "boshidan"];
   if (Object.keys(b.earned).length) sub.push(`ishlar +${moneyList(b.earned)}`);
   if (Object.keys(b.paid).length) sub.push(`${owner ? "berildi" : "olindi"} −${moneyList(b.paid)}`);
   if (Object.keys(b.returned).length) sub.push(`qaytdi +${moneyList(b.returned)}`);
@@ -887,7 +888,9 @@ function renderLedger() {
   if (!asc.length) {
     list = `<p class="muted lg-empty">Hali yozuv yo'q. ${owner ? `Pul berganingizda yozing yoki ayting: «${esc(d.worker.name)}ga 500 ming berdim».` : "Ish topshirsangiz yoki pul olsangiz — shu yerda hisoblanib boradi."}</p>`;
   }
-  const pending = d.pending ? `<span class="status pending">⏳ ${d.pending} ta tasdiq kutmoqda</span>` : "";
+  // Tasdiq kutayotgan pul qoldiqqa kirmagan — tasdiqlansa qancha qolishi
+  const after = d.after_pending ? ` — ${owner ? "tasdiqlasangiz" : "tasdiqlansa"} qoldi: ${signedMoney(d.after_pending)}` : "";
+  const pending = d.pending ? `<span class="status pending">⏳ ${d.pending} ta tasdiq kutmoqda${esc(after)}</span>` : "";
 
   el.innerHTML = `
     <div class="lg-head">
