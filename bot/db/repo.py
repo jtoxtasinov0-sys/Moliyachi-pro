@@ -1083,6 +1083,20 @@ async def worker_balance(session: AsyncSession, owner_id: int, worker_id: int) -
     return (await worker_balances(session, owner_id, [worker_id])).get(worker_id) or WorkerBalance(worker_id)
 
 
+async def pending_worker_pays(session: AsyncSession, owner_id: int, worker_id: int) -> list[WorkerPayment]:
+    """Ishchi yozgan, egasi hali tasdiqlamagan pul («oldim», «qaytardim») — qoldiqqa kirmagan (eskisi birinchi)."""
+    rows = await list_payments(session, owner_id, worker_id=worker_id, status=EntryStatus.PENDING, limit=50)
+    return [p for p in reversed(rows) if p.kind in (PayKind.PAY, PayKind.RETURN)]
+
+
+def with_pending(balance: dict[str, Decimal], pays: list[WorkerPayment]) -> dict[str, Decimal]:
+    """Tasdiq kutayotgan pul tasdiqlansa qancha qoladi: olingani ayriladi, qaytarilgani qo'shiladi."""
+    after = dict(balance)
+    for p in pays:
+        _add_to(after, p.currency, -_dec(p.amount) if p.kind == PayKind.PAY else _dec(p.amount))
+    return {c: v for c, v in after.items() if v}
+
+
 async def worker_day_payments(
     session: AsyncSession, owner_id: int, worker_id: int, days: list[date]
 ) -> dict[date, tuple[dict[str, Decimal], dict[str, Decimal]]]:

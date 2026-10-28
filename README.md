@@ -65,7 +65,10 @@ egasiga har kuni ertalab (9:00) «🔔 Tasdiqlanmagan pul bor» xabari boradi, h
 boradi: shu kuni qancha olingani va qancha qolgani («📅 20.10.2026 (bugun) — oldingiz: 50 000 so'm», «💰 Qoldi —
 olishingiz kerak: 330 000 so'm»); tasdiq kutayotgan bo'lsa — «⏳ Tasdiqlasangiz — qoldi: 330 000 so'm». Ko'rish:
 ishchida — botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun oxiridagi
-qoldiq, «💵 Oldim» tugmasi); egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi
+qoldiq, «💵 Oldim» tugmasi). Hisob-kitob oxirida qoldiq qayerdan chiqqani yoziladi («23.10 dagi hisob 1 870 000
+so'm + ishlar 560 000 so'm − berildi 300 000 so'm = 2 130 000 so'm»); tasdiqlanmagan pul qatorida «⏳ tasdiqlanmagan
+— hisobga kirmagan», pastda — «👉 Tasdiqlasangiz qoldi: …» va egasiga shu yerning o'zida «✅ Tasdiqlash» /
+«🚫 Rad etish» tugmalari. Egasida — «👷 Ishchilar» → ishchi → «🧾 Hisob-kitob», ilovada ishchi oynasi
 («💵 Berdim», «✅ Qolganini berdim», «🧾 Qoldiq shu»). Kartadagi qatorga summani yoki gapni yozish mumkin: «500 ming
 berdim» (ishchida «500 ming oldim») — darhol saqlanadi, murakkabrog'i («15 loaf, 500 ming oldim», «900 ming qarzman»)
 — «To'g'rimi?» shu kartada chiqadi. Ishchi bilan yozishma skrinshotini yuborsangiz ham har bir kun alohida o'qiladi.
