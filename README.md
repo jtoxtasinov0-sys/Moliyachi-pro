@@ -59,9 +59,11 @@ hamda pullar undan davom etib hisoblanadi. Qoldiq = tasdiqlangan ishlar − olin
 egasi ishchiga berishi kerak, manfiy — ishchi ortiqcha olgan (avans). Ishchi «oldim» yoki «qaytardim» desa —
 «⚙️ Sozlamalar → Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa (sukut bo'yicha) egasi tasdiqlagach, o'chiq bo'lsa
 darhol hisobga kiradi (egasiga xabar boradi); hisob holatini ishchi yozsa — har doim egasi tasdiqlagach. Bu
-sozlama ish yozuvlarini tasdiqlashdan («Ishchi yozuvlarini tasdiqlash») alohida. Tasdiqlanmagan pul yozuvi bo'lsa —
-egasiga har kuni ertalab (9:00) «🔔 Tasdiqlanmagan pul bor» xabari boradi, har bir yozuv «✅ Tasdiqlash» /
-«🚫 Rad etish» tugmalari bilan. Pul yozilganda va tasdiqlanganda ikkala tomonga — egasiga ham, ishchiga ham — xabar
+sozlama ish yozuvlarini tasdiqlashdan («Ishchi yozuvlarini tasdiqlash») alohida. Tasdiqlanmagan ish yoki pul
+yozuvi, ish boshqaruvchi so'rovi bo'lsa — egasiga kuniga bir marta, ertalab (9:00) «🔔 Tasdiqlanmagan ish bor» /
+«🔔 Tasdiqlanmagan pul bor» xabari boradi, har bir yozuv «✅ Tasdiqlash» / «🚫 Rad etish» tugmalari bilan; hammasi —
+egasining menyusidagi «⏳ Tasdiq kutayotganlar» bo'limida. Bot yangilangach (reminders.PENDING_NOTICE_VERSION
+o'zgarsa) shu eslatma soatini kutmasdan bir marta yuboriladi va o'sha kungi eslatma o'rniga o'tadi. Pul yozilganda va tasdiqlanganda ikkala tomonga — egasiga ham, ishchiga ham — xabar
 boradi: shu kuni qancha olingani va qancha qolgani («📅 20.10.2026 (bugun) — oldingiz: 50 000 so'm», «💰 Qoldi —
 olishingiz kerak: 330 000 so'm»); tasdiq kutayotgan bo'lsa — «⏳ Tasdiqlasangiz — qoldi: 330 000 so'm». Ko'rish:
 ishchida — botda «🧾 Hisob-kitob», ilovada bosh sahifadagi karta (kunma-kun ishlar, pul va har kun oxiridagi

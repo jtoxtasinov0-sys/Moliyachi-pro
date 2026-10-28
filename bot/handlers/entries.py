@@ -494,7 +494,8 @@ async def on_pay_review(call: CallbackQuery, callback_data: kbs.PayCb, session: 
         text, kb = await ledger_message(session, user, entry.worker)
         await call.message.edit_text(text, reply_markup=kb)
     else:
-        await call.message.edit_text(await _pay_card(session, entry, user), reply_markup=kbs.pay_entry_kb(entry, user))
+        text = await _pay_card(session, entry, user)
+        await call.message.edit_text(text, reply_markup=kbs.pay_entry_kb(entry, user))
     await call.answer("Tasdiqlandi" if approve else "Rad etildi")
     worker = entry.worker
     if worker.tg_id and worker.id != user.id:
