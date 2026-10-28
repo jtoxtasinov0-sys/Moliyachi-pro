@@ -1,5 +1,5 @@
-"""Kundalik eslatma: har kuni belgilangan soatda egaga «bugungi pulingizni kiriting» xabari. Ishchi yozgan pul
-(«500 ming oldim») yoki ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — har kuni ertalab eslatma.
+"""Kundalik eslatma: har kuni belgilangan soatda egaga «bugungi pulingizni kiriting» xabari. Ishchi yozgan ish yoki
+pul («500 ming oldim»), ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — har kuni ertalab bir marta eslatma.
 
 Server (Render bepul tarifi) 15 daqiqa so'rovsiz qolsa uxlaydi va eslatma vaqti o'tib ketadi. Shuning uchun
 serverda bot har 10 daqiqada o'z manziliga /health so'rovini yuborib, o'zini uyg'oq ushlab turadi.
@@ -14,13 +14,15 @@ from html import escape
 import aiohttp
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+from aiogram.types import InlineKeyboardMarkup
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import advisor
 from bot import keyboards as kbs
 from bot.config import settings
 from bot.db import repo
 from bot.db.base import session_factory
-from bot.db.models import EntryStatus, RequestStatus, WorkerPayment
+from bot.db.models import EntryStatus, RequestStatus, User
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,10 @@ PING_EVERY = 10 * 60
 # Tasdiqlanmagan pul eslatmasi — har kuni shu soatdan (mahalliy vaqt), tasdiqlash tugmalari bilan shuncha yozuv
 PAY_REMINDER_HOUR = 9
 PAY_REMINDER_CARDS = 10
+# Bot yangilangach tasdiq kutayotganlar eslatmasi soatini kutmasdan bir marta yuboriladi — shu qiymat o'zgarsa
+PENDING_NOTICE_VERSION = "1"
+# Ketma-ket xabarlar orasida (Telegram bir chatga juda tez yuborilganini to'xtatadi)
+SEND_PAUSE = 0.5
 
 
 async def send_due(bot: Bot) -> None:
@@ -57,30 +63,59 @@ async def send_due(bot: Bot) -> None:
             log.exception("Eslatma yuborilmadi: %s", tg_id)
 
 
-def _pending_pays_text(pending: list[WorkerPayment]) -> str:
+def _digest_head(title: str, names: list[str], note: str) -> str:
+    """«🔔 Tasdiqlanmagan pul bor — 3 ta yozuv», kimniki nechta («👷 Robiya — 2 ta, Ali — 1 ta») va izoh."""
     per_worker: dict[str, int] = {}
-    for e in pending:
-        per_worker[e.worker.name] = per_worker.get(e.worker.name, 0) + 1
-    names = ", ".join(f"{escape(name)} — {count} ta" for name, count in per_worker.items())
+    for name in names:
+        per_worker[name] = per_worker.get(name, 0) + 1
+    who = ", ".join(f"{escape(name)} — {count} ta" for name, count in per_worker.items())
     text = (
-        f"🔔 <b>Tasdiqlanmagan pul bor</b> — {len(pending)} ta yozuv\n👷 {names}\n\n"
-        "Tasdiqlamaguningizcha ishchi qoldig'iga kirmaydi. Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting."
+        f"🔔 <b>{title}</b> — {len(names)} ta yozuv\n👷 {who}\n\n"
+        f"{note} Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting."
     )
-    if len(pending) > PAY_REMINDER_CARDS:
-        text += (
-            f"\n\nPastda — eng eskilari ({PAY_REMINDER_CARDS} ta), qolganlari — «👷 Ishchilar» bo'limida yoki ilovada."
-        )
-    return text
+    if len(names) > PAY_REMINDER_CARDS:
+        text += f"\nPastda — eng eskilari ({PAY_REMINDER_CARDS} ta)."
+    return text + "\n📍 Hammasi — menyudagi «⏳ Tasdiq kutayotganlar» bo'limida."
 
 
-async def send_pending_pays(bot: Bot) -> None:
-    """Ishchi yozgan pul yoki ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — egaga kuniga bir marta
-    eslatma va har bir yozuv tasdiqlash tugmalari bilan (eskisi birinchi)."""
+async def _pending_messages(session: AsyncSession, user: User) -> list[tuple[str, InlineKeyboardMarkup | None]]:
+    """Tasdiq kutayotgan ish va pul yozuvlari, ish boshqaruvchi so'rovlari: sarlavha va har biri tugmalari bilan
+    (eskisi birinchi). Hech narsa bo'lmasa — bo'sh."""
     from bot import approvals  # aylanma importdan qochish uchun
-    from bot.handlers.entries import pay_text
+    from bot.handlers.entries import entry_text, pay_text
 
+    messages: list[tuple[str, InlineKeyboardMarkup | None]] = []
+    works = await repo.pending_work_entries(session, user.id)
+    if works:
+        note = "Tasdiqlamaguningizcha ishchi haqqiga (qoldig'iga) kirmaydi."
+        messages.append((_digest_head("Tasdiqlanmagan ish bor", [e.worker.name for e in works], note), kbs.app_kb()))
+        messages += [(entry_text(e), kbs.entry_kb(e, user)) for e in works[:PAY_REMINDER_CARDS]]
+    pending = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=200)
+    if pending:
+        pending.reverse()
+        note = "Tasdiqlamaguningizcha ishchi qoldig'iga kirmaydi."
+        messages.append((_digest_head("Tasdiqlanmagan pul bor", [e.worker.name for e in pending], note), kbs.app_kb()))
+        messages += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in pending[:PAY_REMINDER_CARDS]]
+    requests = await repo.list_requests(session, user.id, status=RequestStatus.PENDING, limit=200)
+    if requests:
+        requests.reverse()
+        messages.append((
+            f"🔔 <b>Ish boshqaruvchi so'rovlari tasdiq kutmoqda</b> — {len(requests)} ta\n\n"
+            "Tasdiqlamaguningizcha bajarilmaydi. Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting.",
+            kbs.app_kb("requests"),
+        ))
+        messages += [
+            (approvals.request_text(r, True), kbs.request_kb(r, user)) for r in requests[:PAY_REMINDER_CARDS]
+        ]
+    return messages
+
+
+async def send_pending_pays(bot: Bot, now_once: bool = False) -> None:
+    """Ishchi yozgan ish yoki pul, ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'lsa — egaga kuniga bir marta
+    (PAY_REMINDER_HOUR dan) eslatma. now_once — bot yangilangach soatini kutmasdan bir marta (PENDING_NOTICE_VERSION):
+    shu kungi eslatma o'rniga o'tadi, kuniga bir martadan oshmaydi."""
     now = datetime.now(settings.tz)
-    if now.hour < PAY_REMINDER_HOUR:
+    if not now_once and now.hour < PAY_REMINDER_HOUR:
         return
     day = now.date().isoformat()
     for tg_id in settings.owner_ids:
@@ -88,32 +123,20 @@ async def send_pending_pays(bot: Bot) -> None:
             user = await repo.get_user_by_tg(session, tg_id)
             if user is None or not user.is_owner:
                 continue
-            if await repo.get_setting(session, user.id, "pay_reminder_sent") == day:
+            if now_once:
+                if await repo.get_setting(session, user.id, "pending_notice_version") == PENDING_NOTICE_VERSION:
+                    continue
+                await repo.set_setting(session, user.id, "pending_notice_version", PENDING_NOTICE_VERSION)
+            elif await repo.get_setting(session, user.id, "pay_reminder_sent") == day:
                 continue
-            # Bugun tekshirildi: keyin yozilgan pul haqida egasiga darhol xabar boradi, eslatmasi — ertaga
+            # Bugun tekshirildi: keyin yozilgani haqida egasiga darhol xabar boradi, eslatmasi — ertaga
             await repo.set_setting(session, user.id, "pay_reminder_sent", day)
             await session.commit()
-            pending = await repo.list_payments(session, user.id, status=EntryStatus.PENDING, limit=200)
-            requests = await repo.list_requests(session, user.id, status=RequestStatus.PENDING, limit=200)
-            if not pending and not requests:
-                continue
-            messages = []
-            if pending:
-                pending.reverse()
-                messages.append((_pending_pays_text(pending), kbs.app_kb()))
-                messages += [(pay_text(e, user), kbs.pay_entry_kb(e, user)) for e in pending[:PAY_REMINDER_CARDS]]
-            if requests:
-                requests.reverse()
-                messages.append((
-                    f"🔔 <b>Ish boshqaruvchi so'rovlari tasdiq kutmoqda</b> — {len(requests)} ta\n\n"
-                    "Tasdiqlamaguningizcha bajarilmaydi. Pastda har birini ✅ tasdiqlang yoki 🚫 rad eting.",
-                    kbs.app_kb("requests"),
-                ))
-                messages += [
-                    (approvals.request_text(r, True), kbs.request_kb(r, user)) for r in requests[:PAY_REMINDER_CARDS]
-                ]
+            messages = await _pending_messages(session, user)
         try:
-            for text, markup in messages:
+            for i, (text, markup) in enumerate(messages):
+                if i:
+                    await asyncio.sleep(SEND_PAUSE)
                 await bot.send_message(tg_id, text, reply_markup=markup)
         except TelegramForbiddenError:
             log.info("Tasdiq eslatmasi yuborilmadi: %s botni bloklagan", tg_id)
@@ -159,6 +182,10 @@ async def run(bot: Bot) -> None:
         await refresh_menus(bot)
     except Exception:
         log.exception("Yangi menyuni yuborishda xato")
+    try:
+        await send_pending_pays(bot, now_once=True)
+    except Exception:
+        log.exception("Tasdiq kutayotganlar eslatmasini yuborishda xato")
     async with aiohttp.ClientSession() as http:
         while True:
             try:
@@ -168,7 +195,7 @@ async def run(bot: Bot) -> None:
             try:
                 await send_pending_pays(bot)
             except Exception:
-                log.exception("Tasdiqlanmagan pul eslatmasini tekshirishda xato")
+                log.exception("Tasdiq kutayotganlar eslatmasini tekshirishda xato")
             if keep_awake and time.monotonic() - last_ping >= PING_EVERY:
                 last_ping = time.monotonic()
                 await _ping(http)

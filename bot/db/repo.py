@@ -65,6 +65,8 @@ DEFAULT_SETTINGS = {
     "reminder_sent": "",
     # Tasdiqlanmagan pul yozuvlari eslatmasi oxirgi marta tekshirilgan sana — kuniga bir marta
     "pay_reminder_sent": "",
+    # Bot yangilangach tasdiq kutayotganlar eslatmasi bir marta yuborilgan versiya (reminders.PENDING_NOTICE_VERSION)
+    "pending_notice_version": "",
     # Qo'llanma videosining Telegram file_id si — har safar qayta yuklamaslik uchun
     "guide_video_id": "",
     # Standart kasblar (Kroychi, Brsovkachi...) bir marta qo'shilgan: egasi o'chirsa, qaytib chiqmaydi
