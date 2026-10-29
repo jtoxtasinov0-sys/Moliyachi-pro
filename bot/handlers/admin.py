@@ -14,6 +14,7 @@ from bot import approvals, drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.db import repo
+from bot.config import settings
 from bot.db.models import Client, ItemModel, Supplier, User
 from bot.handlers.entries import ledger_message, notify_user, tracked
 from bot.handlers.money import (
@@ -169,7 +170,12 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     kb.adjust(*_rows(len(jobs) + 2, 2), 1)
     job = f"<b>{escape(current.name)}</b>" if current else "tanlanmagan"
     b = await repo.worker_balance(session, worker.owner_id, worker.id)
-    manager = "👔 <b>Ish boshqaruvchi</b> — har bir o'zgartirishi sizning tasdig'ingizdan o'tadi\n"
+    review = (
+        "har bir o'zgartirishi sizning tasdig'ingizdan o'tadi"
+        if settings.approvals
+        else "o'zgartirishlari darhol bajariladi, sizga xabar keladi"
+    )
+    manager = f"👔 <b>Ish boshqaruvchi</b> — {review}\n"
     text = (
         f"👷 <b>{escape(worker.name)}</b>\n\n"
         f"🏷 Kasbi: {job}\n"
@@ -181,7 +187,7 @@ async def _worker_card(session: AsyncSession, worker: User) -> tuple[str, Inline
     if worker.is_active and not worker.is_manager:
         text += (
             "\n\n👔 «Ish boshqaruvchi qilish» — u ishchilar ishi, modellar, narxlar, mijozlar va xom ashyoni "
-            "boshqaradi (ishchilarning pulidan tashqari), har bir o'zgartirishi sizning tasdig'ingizdan o'tadi."
+            f"boshqaradi (ishchilarning pulidan tashqari), {review}."
         )
     if not tracked(b):
         text += (
@@ -1319,14 +1325,16 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
     enabled = await repo.enabled_currencies(session, owner_id)
     remind = await repo.reminder_hour(session, owner_id)
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text=f"{'✅' if approval else '⬜'} Ishchi yozuvlarini tasdiqlash",
-        callback_data=kbs.SettingsCb(action="approval"),
-    )
-    kb.button(
-        text=f"{'✅' if pay_approval else '⬜'} Pul yozuvlarini tasdiqlash",
-        callback_data=kbs.SettingsCb(action="payapproval"),
-    )
+    # Boshliq tasdig'i o'chiq bo'lsa (settings.approvals) — hamma yozuv darhol kiradi, bu tugmalar ko'rsatilmaydi
+    if settings.approvals:
+        kb.button(
+            text=f"{'✅' if approval else '⬜'} Ishchi yozuvlarini tasdiqlash",
+            callback_data=kbs.SettingsCb(action="approval"),
+        )
+        kb.button(
+            text=f"{'✅' if pay_approval else '⬜'} Pul yozuvlarini tasdiqlash",
+            callback_data=kbs.SettingsCb(action="payapproval"),
+        )
     kb.button(
         text=f"{'✅' if auto_save else '⬜'} Ovoz va matnni darhol saqlash",
         callback_data=kbs.SettingsCb(action="autosave"),
@@ -1351,18 +1359,28 @@ async def _settings_view(session: AsyncSession, owner_id: int) -> tuple[str, Inl
             text=f"{'✅ ' if hour == remind else ''}🔔 {hour}:00",
             callback_data=kbs.SettingsCb(action="remind", value=str(hour)),
         )
-    kb.adjust(1, 1, 1, 1, 3, 3, 1 + len(repo.REMINDER_HOURS))
+    kb.adjust(*([1] * (4 if settings.approvals else 2)), 3, 3, 1 + len(repo.REMINDER_HOURS))
     images_mode = (
         "tasdiqlamasdan darhol hisobga qo'shiladi"
         if auto_images
         else "o'qilgani ko'rsatiladi, «✅ Tasdiqlash» bosilgach hisobga qo'shiladi"
     )
+    if settings.approvals:
+        after = "egasi tasdiqlagandan keyin"
+        review = (
+            f"• Ishchi yozuvlari: {after if approval else 'darhol'} hisobotga tushadi\n"
+            f"• 💵 Ishchi yozgan pul («oldim», «qaytardim»): {after if pay_approval else 'darhol'} "
+            f"hisob-kitobga kiradi; tasdiqlanmagani bo'lsa — har kuni {PAY_REMINDER_HOUR}:00 da eslatiladi\n"
+        )
+    else:
+        review = (
+            "• ✅ Tasdiqlash o'chiq: ishchi va ish boshqaruvchi nima yozsa (ish, pul, hisob holati, o'zgartirish) "
+            "darhol hisobga kiradi, sizga xabar boradi\n"
+        )
     text = (
         "⚙️ <b>Sozlamalar</b>\n\n"
-        f"• Ishchi yozuvlari: {'egasi tasdiqlagandan keyin' if approval else 'darhol'} hisobotga tushadi\n"
-        f"• 💵 Ishchi yozgan pul («oldim», «qaytardim»): {'egasi tasdiqlagandan keyin' if pay_approval else 'darhol'} "
-        f"hisob-kitobga kiradi; tasdiqlanmagani bo'lsa — har kuni {PAY_REMINDER_HOUR}:00 da eslatiladi\n"
-        "• ⚡ Ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, summa aytildi): "
+        + review
+        + "• ⚡ Ovoz yoki matn to'liq tushunilsa (ishchi, model, mijoz topildi, summa aytildi): "
         + ("«To'g'rimi?» so'ralmay darhol saqlanadi, ikkinchi tomonga xabar boradi" if auto_save
            else "«To'g'rimi?» deb so'raladi, «✅ Saqlash» bosilgach saqlanadi")
         + "\n"
@@ -1386,6 +1404,9 @@ async def settings_menu(message: Message, state: FSMContext, session: AsyncSessi
 async def settings_toggle(
     call: CallbackQuery, callback_data: kbs.SettingsCb, session: AsyncSession, user: User
 ) -> None:
+    if callback_data.action in ("approval", "payapproval") and not settings.approvals:
+        await call.answer("Tasdiqlash o'chiq — hamma yozuv darhol hisobga kiradi.", show_alert=True)
+        return
     if callback_data.action == "approval":
         current = await repo.require_approval(session, user.id)
         await repo.set_setting(session, user.id, "require_approval", "0" if current else "1")

@@ -5,6 +5,8 @@ egasining xarajat, daromad, qarzlari va sozlamalari unga yopiq.
 Boshqaruvchi nima qilsa — darhol bajarilmaydi: egasiga so'rov boradi («✅ Tasdiqlash» / «🚫 Rad etish»),
 tasdiqlansa egasi nomidan bajariladi (xuddi egasi o'zi qilgandek: ishchi, mijoz, ta'minotchiga xabar ham boradi),
 boshqaruvchiga natija haqida xabar keladi. O'zi olgan pul («500 ming oldim») ham shunday — egasi tasdiqlagach.
+Boshliq tasdig'i o'chiq bo'lsa (settings.approvals) — darhol egasi nomidan bajariladi, so'rov «✅ Bajarildi» bo'lib
+yoziladi va egasiga nima qilingani haqida xabar boradi.
 
 So'rov ikki xil: ovoz, matn yoki rasmdan qoralama (tasdiqlansa — intake.save) va ilovadagi o'zgartirish
 (tasdiqlansa — web/api.py dagi o'sha amal, egasi nomidan)."""
@@ -17,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import drafts, intake
 from bot import keyboards as kbs
+from bot.config import settings
 from bot.db import repo
 from bot.db.models import ManagerRequest, RequestKind, RequestStatus, User
 
@@ -26,26 +29,42 @@ STATUS_LABELS = {
     RequestStatus.REJECTED: "🚫 Rad etildi",
     RequestStatus.FAILED: "⚠️ Tasdiqlandi, lekin bajarib bo'lmadi",
     RequestStatus.CANCELLED: "↩️ Bekor qilindi",
+    RequestStatus.DONE: "✅ Bajarildi",
 }
 
 # Telegram xabari 4096 belgigacha: tavsif sarlavha va natija bilan birga sig'sin
 SUMMARY_LIMIT = 3000
+# Darhol bajarilganda egasiga natija (ishchilarga xabar borgani, qoldiqlar) — tavsif bilan bitta xabarga sig'sin
+DETAIL_LIMIT = 900
 
 
 MANAGER_ON = (
     "👔 <b>Siz endi ish boshqaruvchisiz</b>\n\n"
     "{owner} sizni ish boshqaruvchi qildi: ishchilar ishi, kasblar, modellar va narxlar, mijozlar, xom ashyo va "
-    "ta'minotchilarni boshqarasiz. Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi — tasdiqlasa "
-    "bajariladi va sizga xabar keladi («📨 So'rovlarim»).\n\n"
+    "ta'minotchilarni boshqarasiz. {review}\n\n"
     "🔒 Ishchilarning puli (avans, ish haqi, qoldig'i), boshliqning xarajat, daromad va qarzlari — faqat boshliqda.\n\n"
     "Pastdagi menyu yangilandi. Batafsil — «❓ Yordam»."
 )
 MANAGER_OFF = "ℹ️ Siz endi oddiy ishchisiz: ish boshqaruvchi huquqi olib tashlandi. Pastdagi menyu yangilandi."
 
 
+REVIEW_ON = (
+    "Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi — tasdiqlasa bajariladi va sizga xabar keladi "
+    "(«📨 So'rovlarim»)."
+)
+REVIEW_OFF = "Yozuv va o'zgartirishlaringiz darhol bajariladi, boshliqqa xabar boradi («📨 So'rovlarim» — tarixi)."
+
+
+def review_note() -> str:
+    """Boshqaruvchiga: o'zgartirishi boshliq tasdig'iga boradimi yoki darhol bajariladimi."""
+    return REVIEW_ON if settings.approvals else REVIEW_OFF
+
+
 def role_notice(worker: User, owner: User) -> str:
     """Ishchiga: u ish boshqaruvchi bo'ldi yoki yana oddiy ishchi."""
-    return MANAGER_ON.format(owner=html.escape(owner.name)) if worker.is_manager else MANAGER_OFF
+    if not worker.is_manager:
+        return MANAGER_OFF
+    return MANAGER_ON.format(owner=html.escape(owner.name), review=review_note())
 
 
 class RequestDone(Exception):
@@ -83,21 +102,34 @@ def request_text(req: ManagerRequest, for_owner: bool) -> str:
 async def submit(
     session: AsyncSession, bot: Bot, manager: User, kind: str, payload: dict, summary: str
 ) -> ManagerRequest:
-    """So'rov yaratiladi va egasiga tugmalari bilan yuboriladi."""
+    """So'rov yaratiladi va egasiga tugmalari bilan yuboriladi. Boshliq tasdig'i o'chiq bo'lsa — darhol egasi nomidan
+    bajariladi (bajarib bo'lmasa — xato boshqaruvchiga qaytadi, so'rov yozilmaydi), egasiga nima qilingani boradi."""
     from bot.handlers.entries import notify_owner  # aylanma importdan qochish uchun
 
-    req = await repo.create_request(
-        session, manager=manager, kind=kind, payload=json.dumps(payload, ensure_ascii=False), summary=clip(summary)
-    )
+    raw = json.dumps(payload, ensure_ascii=False)
     owner = await session.get(User, manager.owner_id)
-    if owner is not None:
+    detail = None
+    if owner is not None and not settings.approvals:
+        detail = await _execute(session, bot, owner, kind, payload)
+    req = await repo.create_request(
+        session, manager=manager, kind=kind, payload=raw, summary=clip(summary),
+        status=RequestStatus.PENDING if detail is None else RequestStatus.DONE,
+    )
+    if owner is None:
+        return req
+    if detail is None:
         text = f"🔔 <b>{html.escape(manager.name)} so'radi</b> — tasdiqlasangiz bajariladi\n\n{request_text(req, True)}"
-        await notify_owner(bot, session, owner.id, text, markup=kbs.request_kb(req, owner))
+    else:
+        text = f"👔 <b>{html.escape(manager.name)} bajardi</b>\n\n{request_text(req, True)}"
+        if detail != DONE:
+            text += f"\n\n{clip(detail, DETAIL_LIMIT)}"
+    await notify_owner(bot, session, owner.id, text, markup=kbs.request_kb(req, owner))
     return req
 
 
 async def submit_draft(session: AsyncSession, bot: Bot, manager: User, draft: dict) -> intake.Saved:
-    """Boshqaruvchining qoralamasi (ovoz, matn, rasm) saqlanmaydi — egasining tasdig'iga yuboriladi."""
+    """Boshqaruvchining qoralamasi (ovoz, matn, rasm) saqlanmaydi — egasining tasdig'iga yuboriladi (boshliq
+    tasdig'i o'chiq bo'lsa — darhol egasi nomidan saqlanadi)."""
     from bot.handlers.entries import entry_text
 
     if refusal := intake.manager_refusal(manager, draft):
@@ -109,34 +141,40 @@ async def submit_draft(session: AsyncSession, bot: Bot, manager: User, draft: di
             raise intake.IntakeError("⚠️ Yozuv topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
         summary = f"<b>Hozir:</b>\n{entry_text(entry)}\n\n<b>O'zgartirish:</b>\n{summary}"
     req = await submit(session, bot, manager, RequestKind.DRAFT, draft, summary)
+    card = [(request_text(req, False), kbs.request_kb(req, manager))]
+    if req.status == RequestStatus.DONE:
+        return intake.Saved("✅ <b>Saqlandi</b>\n📨 Boshliqqa xabar yuborildi.", card)
     header = "📨 <b>Boshliq tasdig'iga yuborildi</b>\nTasdiqlasa — hisobga kiradi, sizga xabar keladi."
-    return intake.Saved(header, [(request_text(req, False), kbs.request_kb(req, manager))], queued=True)
+    return intake.Saved(header, card, queued=True)
 
 
 async def ask(
     session: AsyncSession, bot: Bot, manager: User, op: str, match: dict[str, str], body: dict | None = None
 ) -> ManagerRequest:
-    """Ilovadagi (yoki botdagi) o'zgartirish — egasining tasdig'iga. Noto'g'ri bo'lsa (yozuv topilmadi, nom bo'sh)
-    — web.api.ApiError, so'rov yaratilmaydi. Tavsif funksiyasi tanani to'ldirishi mumkin (toggle — qaysi holatga)."""
+    """Ilovadagi (yoki botdagi) o'zgartirish — egasining tasdig'iga (boshliq tasdig'i o'chiq bo'lsa — darhol
+    bajariladi, so'rov DONE bo'ladi). Noto'g'ri bo'lsa (yozuv topilmadi, nom bo'sh) — web.api.ApiError, so'rov
+    yaratilmaydi. Tavsif funksiyasi tanani to'ldirishi mumkin (toggle — qaysi holatga)."""
     from bot.web import api  # aylanma importdan qochish uchun
 
     body = {} if body is None else body
     summary = await api.describe_op(session, manager, op, match, body)
     payload = {"op": op, "match": match, "body": body}
     # Xuddi shu so'rov hali kutayotgan bo'lsa — qayta yuborilmaydi (tugma ikki marta bosilganda)
-    same = json.dumps(payload, ensure_ascii=False)
-    for req in await repo.list_requests(session, manager.account_id, manager_id=manager.id, status=RequestStatus.PENDING):
-        if req.kind == RequestKind.API and req.payload == same:
-            raise api.ApiError(400, "Bu so'rov boshliqqa yuborilgan — javobini kuting («📨 So'rovlarim»)")
+    if settings.approvals:
+        same = json.dumps(payload, ensure_ascii=False)
+        for req in await repo.list_requests(
+            session, manager.account_id, manager_id=manager.id, status=RequestStatus.PENDING
+        ):
+            if req.kind == RequestKind.API and req.payload == same:
+                raise api.ApiError(400, "Bu so'rov boshliqqa yuborilgan — javobini kuting («📨 So'rovlarim»)")
     return await submit(session, bot, manager, RequestKind.API, payload, summary)
 
 
-async def _execute(session: AsyncSession, bot: Bot, owner: User, req: ManagerRequest) -> str:
+async def _execute(session: AsyncSession, bot: Bot, owner: User, kind: str, payload: dict) -> str:
     """Egasi nomidan bajaradi. Qaytadi: egasiga ko'rsatiladigan natija."""
     from bot.web import api
 
-    payload = json.loads(req.payload)
-    if req.kind == RequestKind.DRAFT:
+    if kind == RequestKind.DRAFT:
         saved = await intake.save(session, bot, owner, payload)
         return saved.header
     await api.run_op(session, bot, owner, payload)
@@ -157,7 +195,7 @@ async def review(session: AsyncSession, bot: Bot, owner: User, req: ManagerReque
     if approve:
         try:
             async with session.begin_nested():
-                detail = await _execute(session, bot, owner, req)
+                detail = await _execute(session, bot, owner, req.kind, json.loads(req.payload))
         except (intake.IntakeError, ApiError) as e:
             # Qaytarilgan o'zgarishlar sessiyada eskiradi: kartochka uchun kerakli yozuvlar qayta o'qiladi
             for item in (req.manager, owner):

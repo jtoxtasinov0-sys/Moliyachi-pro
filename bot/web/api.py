@@ -186,6 +186,8 @@ def _iso(dt: datetime | None) -> str | None:
 # --- Ish boshqaruvchi: o'zgartirish — egasining tasdig'iga --------------------------
 
 async def _ask_owner(request: web.Request, session: AsyncSession, manager: User, op: str) -> web.Response:
+    """Javob — 202 queued: ilova oynani yopadi. Boshliq tasdig'i o'chiq bo'lsa so'rov darhol bajarilgan (status
+    done) — ilova ko'rinishni yangilaydi."""
     from bot import approvals  # aylanma importdan qochish uchun
 
     body = await _json(request) if request.can_read_body else {}
@@ -469,6 +471,8 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "is_owner": user.is_owner,
             # Ish boshqaruvchi: egasidek ko'radi va boshqaradi (o'zgartirishlari egasi tasdiqlagach bajariladi)
             "is_manager": user.is_manager,
+            # Boshliq tasdig'i: o'chiq bo'lsa — hamma yozuv darhol kiradi, tasdiqlash sozlamalari ko'rsatilmaydi
+            "approvals": settings.approvals,
             "job": _job_ref(job),
             "bot_username": bot_me.username,
             "currencies": await repo.enabled_currencies(session, user.account_id),

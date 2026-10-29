@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import advisor, drafts
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
+from bot.config import settings
 from bot.db import repo
 from bot.db.models import (
     Client,
@@ -628,12 +629,13 @@ async def save_auto(session: AsyncSession, bot: Bot, user: User, draft: dict) ->
 
 async def _save_pay(session: AsyncSession, user: User, draft: dict, p: dict) -> WorkerPayment:
     """Ishchi «oldim» / «qaytardim» desa — «Pul yozuvlarini tasdiqlash» yoqilgan bo'lsa egasi tasdiqlagach,
-    o'chiq bo'lsa darhol hisobga kiradi; hisob holatini ishchi yozsa — har doim egasi tasdiqlagach."""
+    o'chiq bo'lsa darhol hisobga kiradi; hisob holatini ishchi yozsa — egasi tasdiqlagach. Boshliq tasdig'i
+    o'chiq bo'lsa (settings.approvals) — hammasi darhol."""
     acc = user.account_id
     worker = await repo.get_worker(session, acc, p["worker_id"])
     if worker is None or (not user.is_owner and worker.id != user.id):
         raise IntakeError("⚠️ Ishchi topilmadi (o'chirilgan bo'lishi mumkin).", drop=True)
-    approved = user.is_owner
+    approved = user.is_owner or not settings.approvals
     if not approved and p["kind"] in (PayKind.PAY, PayKind.RETURN):
         approved = not await repo.require_pay_approval(session, acc)
     amount = Decimal(p["amount"])

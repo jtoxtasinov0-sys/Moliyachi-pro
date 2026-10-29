@@ -288,13 +288,20 @@ async def on_delete_yes(call: CallbackQuery, callback_data: kbs.EntryCb, session
 
 
 async def _ask_owner(call: CallbackQuery, session: AsyncSession, user: User, text: str, op: str, entry_id: int) -> None:
-    """Ish boshqaruvchi o'chirmoqchi: darhol o'chmaydi, egasining tasdig'iga boradi."""
+    """Ish boshqaruvchi o'chirmoqchi: darhol o'chmaydi, egasining tasdig'iga boradi (boshliq tasdig'i o'chiq bo'lsa —
+    darhol o'chadi, egasiga xabar boradi)."""
     from bot.web.api import ApiError  # aylanma importdan qochish uchun
 
     try:
         req = await approvals.ask(session, call.bot, user, op, {"id": str(entry_id)})
     except ApiError as e:
         await call.answer(e.message, show_alert=True)
+        return
+    if req.status == RequestStatus.DONE:
+        await call.message.edit_text(
+            f"<s>{text}</s>\n\n🗑 O'chirildi · 📨 boshliqqa xabar yuborildi", reply_markup=kbs.request_kb(req, user)
+        )
+        await call.answer("O'chirildi")
         return
     await call.message.edit_text(
         f"{text}\n\n📨 O'chirish boshliq tasdig'iga yuborildi — tasdiqlasa o'chadi.", reply_markup=kbs.request_kb(req, user)

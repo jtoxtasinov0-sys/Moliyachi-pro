@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import approvals
 from bot import keyboards as kbs
+from bot.config import settings
 from bot.db import repo
 from bot.db.models import RequestStatus, User
 from bot.middlewares import Registered
@@ -61,9 +62,10 @@ async def my_requests(message: Message, state: FSMContext, session: AsyncSession
         return
     items = await repo.list_requests(session, user.account_id, manager_id=user.id, limit=MY_REQUESTS)
     if not items:
+        review = "boshliq tasdig'iga boradi, tasdiqlasa bajariladi" if settings.approvals else "darhol bajariladi"
         await message.answer(
-            "📨 Hali so'rov yo'q.\n\nIsh, mijoz, xom ashyo yoki narxni ovoz yoki matn bilan yozing — boshliq "
-            "tasdig'iga boradi, tasdiqlasa bajariladi.",
+            "📨 Hali so'rov yo'q.\n\nIsh, mijoz, xom ashyo yoki narxni ovoz yoki matn bilan yozing — "
+            f"{review}.",
             reply_markup=kbs.app_kb(),
         )
         return

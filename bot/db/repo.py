@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from bot.config import settings
 from bot.db.models import (
     CLIENT_OWES,
     Alias,
@@ -91,11 +92,13 @@ async def set_setting(session: AsyncSession, owner_id: int, key: str, value: str
 
 
 async def require_approval(session: AsyncSession, owner_id: int) -> bool:
-    return await get_setting(session, owner_id, "require_approval") == "1"
+    """Ishchi yozgan ish egasi tasdiqlagach hisobga kiradimi. Boshliq tasdig'i o'chiq bo'lsa (settings.approvals)
+    — hech qachon."""
+    return settings.approvals and await get_setting(session, owner_id, "require_approval") == "1"
 
 
 async def require_pay_approval(session: AsyncSession, owner_id: int) -> bool:
-    return await get_setting(session, owner_id, "require_pay_approval") == "1"
+    return settings.approvals and await get_setting(session, owner_id, "require_pay_approval") == "1"
 
 
 async def auto_save(session: AsyncSession, owner_id: int) -> bool:
@@ -256,11 +259,14 @@ async def set_manager(session: AsyncSession, worker: User, on: bool) -> None:
 # --- Ish boshqaruvchining so'rovlari ------------------------------------------
 
 async def create_request(
-    session: AsyncSession, *, manager: User, kind: str, payload: str, summary: str
+    session: AsyncSession, *, manager: User, kind: str, payload: str, summary: str,
+    status: str = RequestStatus.PENDING,
 ) -> ManagerRequest:
+    """status — DONE: tasdiqsiz, allaqachon bajarilgan (boshliq tasdig'i o'chiq bo'lsa)."""
+    now = _now()
     req = ManagerRequest(
         owner_id=manager.owner_id, manager_id=manager.id, kind=kind, payload=payload, summary=summary,
-        status=RequestStatus.PENDING, created_at=_now(),
+        status=status, created_at=now, reviewed_at=None if status == RequestStatus.PENDING else now,
     )
     session.add(req)
     await session.flush()
