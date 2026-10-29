@@ -68,6 +68,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
+from bot.config import settings
 from bot.db import repo
 from bot.db.models import (
     CLIENT_MONEY,
@@ -619,9 +620,10 @@ def share_worker(draft: dict, worker_id: int, worker_name: str) -> None:
 
 
 def pay_counted(draft: dict, p: dict) -> bool:
-    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa — ha; ishchi «oldim» / «qaytardim» desa —
-    «Pul yozuvlarini tasdiqlash» o'chiq bo'lsa; hisob holatini ishchi yozsa — faqat egasi tasdiqlagach."""
-    if draft.get("by_owner", True):
+    """Pul yozuvi saqlanishi bilan qoldiqqa kiradimi: egasi yozsa yoki boshliq tasdig'i o'chiq bo'lsa — ha;
+    ishchi «oldim» / «qaytardim» desa — «Pul yozuvlarini tasdiqlash» o'chiq bo'lsa; hisob holatini ishchi
+    yozsa — faqat egasi tasdiqlagach."""
+    if draft.get("by_owner", True) or not settings.approvals:
         return True
     return p["kind"] in (PayKind.PAY, PayKind.RETURN) and draft.get("pay_ok", False)
 
@@ -680,10 +682,11 @@ async def _pay_balances(session: AsyncSession, draft: dict, user: User) -> None:
         str(w): {c: str(v) for c, v in balances[w].balance.items()} if w in balances else {} for w in ids
     }
     draft["by_owner"] = user.is_owner
-    # Boshqaruvchi yozgani — har doim egasi tasdiqlagach
+    # Boshqaruvchi yozgani — egasi tasdiqlagach (boshliq tasdig'i o'chiq bo'lsa — hamma yozgani darhol)
     worker = not user.manages
-    draft["auto_ok"] = user.is_owner or (worker and not await repo.require_approval(session, acc))
-    draft["pay_ok"] = user.is_owner or (worker and not await repo.require_pay_approval(session, acc))
+    free = user.is_owner or not settings.approvals
+    draft["auto_ok"] = free or (worker and not await repo.require_approval(session, acc))
+    draft["pay_ok"] = free or (worker and not await repo.require_pay_approval(session, acc))
     project_balances(draft)
 
 
@@ -1524,9 +1527,10 @@ SEND_TEXT = "📨 Boshliqqa yuborish"
 
 async def present(session: AsyncSession, draft: dict, user: User) -> tuple[str, InlineKeyboardMarkup]:
     """Qoralama kartochkasi: yetishmagan narsa bo'lsa so'raydi, aks holda tasdiq so'raydi. Boshqaruvchida
-    «✅ Saqlash» o'rnida «📨 Boshliqqa yuborish» — saqlanmaydi, egasining tasdig'iga boradi."""
+    «✅ Saqlash» o'rnida «📨 Boshliqqa yuborish» — saqlanmaydi, egasining tasdig'iga boradi (boshliq tasdig'i
+    yoqilgan bo'lsa)."""
     text, kb = await _present(session, draft, user)
-    if user.is_manager:
+    if user.is_manager and settings.approvals:
         save = kbs.DraftCb(action="save").pack()
         kb = InlineKeyboardMarkup(
             inline_keyboard=[

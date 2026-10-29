@@ -401,11 +401,13 @@ class RequestStatus:
     REJECTED = "rejected"
     FAILED = "failed"  # tasdiqlandi, lekin bajarib bo'lmadi (masalan, yozuv o'chirilgan)
     CANCELLED = "cancelled"  # boshqaruvchi o'zi qaytarib oldi
+    DONE = "done"  # tasdiqsiz darhol bajarildi (boshliq tasdig'i o'chiq — settings.approvals)
 
 
 class ManagerRequest(Base):
     """Ish boshqaruvchi nima qilsa — darhol bajarilmaydi: egasiga so'rov boradi, tasdiqlansa egasi nomidan
-    bajariladi. payload — JSON: qoralama yoki amal (op, match, body)."""
+    bajariladi (boshliq tasdig'i o'chiq bo'lsa — darhol bajariladi va DONE bo'lib yoziladi, egasiga xabar boradi).
+    payload — JSON: qoralama yoki amal (op, match, body)."""
 
     __tablename__ = "manager_requests"
 

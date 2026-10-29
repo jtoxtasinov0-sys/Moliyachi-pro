@@ -6,6 +6,15 @@ Ovozli/matnli xabardan moliyaviy hisob yurituvchi Telegram bot + grafikali Mini 
 berish, to'lovlar, qoldiq), shaxsiy xarajat/daromad va qarzlar, Mini App (hisobot grafiklari, «Mijozlar»,
 «Hamyon», Telegramdagidek bosib turib yoziladigan ovozli xabar). Brauzerda ochish uchun botga `/web` yozing.
 
+**✅ Boshliq tasdig'i — hozir o'chiq:** kim yozsa ham — ishchi (ish, «500 ming oldim», «qaytardim», hisob holati)
+yoki ish boshqaruvchi (ishchilar ishi, mijoz, xom ashyo, narxlar, ilovadagi har qanday o'zgartirish) — boshliq
+tasdig'ini kutmasdan darhol hisobga kiradi; egasiga faqat xabar boradi («🧾 Robiya yozdi», «👔 Jasur bajardi»).
+Boshqaruvchining qilganlari «📨 So'rovlarim»da «✅ Bajarildi» bo'lib qoladi. «⚙️ Sozlamalar»dagi «Ishchi yozuvlarini
+tasdiqlash» / «Pul yozuvlarini tasdiqlash» tugmalari ko'rinmaydi. Avval tasdiq kutib qolganlari «⏳ Tasdiq
+kutayotganlar»da turadi — ularni egasi avvalgidek tasdiqlaydi yoki rad etadi. Qayta yoqish — `APPROVALS=1`
+(Render → Environment) yoki `bot/config.py` dagi `approvals` sukutini `True` qilish: shunda pastda yozilgan
+tasdiqlash tartibi (sozlamalar bo'yicha, hisob holati va boshqaruvchi — egasi tasdiqlagach) qaytadi.
+
 **🎤 Mikrofon ruxsati — bir marta:** ilovada birinchi ovozli xabardan oldin «🎤 Mikrofonga ruxsat» oynasi chiqadi va
 qaysi tugmani bosish kerakligi aytiladi: brauzerda — «Saytga kirganda» (yoki «Har doim»), «Faqat shu safar» emas;
 shunda telefon keyin hech qachon so'ramaydi. Berilgan ruxsat shu qurilmada eslab qolinadi, mikrofon ilova ochiq

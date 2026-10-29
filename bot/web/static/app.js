@@ -183,14 +183,22 @@ async function api(path, opts = {}) {
 }
 
 function fail(err) {
-  if (err.queued) return queued();
+  if (err.queued) return queued(err.queued);
   console.error(err);
   toast(err.message || "Xatolik yuz berdi", true);
 }
 
-// So'rov egasiga yuborildi: oyna yopiladi, «📨 So'rovlarim» soni yangilanadi
-function queued() {
+// So'rov egasiga yuborildi: oyna yopiladi, «📨 So'rovlarim» soni yangilanadi.
+// Boshliq tasdig'i o'chiq bo'lsa — darhol bajarilgan (done): ko'rinish yangilanadi
+function queued(req) {
   closeSheet();
+  if (req && req.status === "done") {
+    toast("✅ Bajarildi · boshliqqa xabar yuborildi");
+    if (state.view === "workers") loadWorkers();
+    else if (state.view === "models") loadModels();
+    else refreshView();
+    return;
+  }
   toast(QUEUED_TEXT);
   loadRequestCount();
 }
@@ -2446,7 +2454,8 @@ function composeSheet(voice, images) {
     <p class="muted small compose-hint">${owner
       ? "Xarajat, daromad, qarz, xom ashyo yoki ish: «oylik tushdi 3 million», «Abbosdan 100 ming won oldim», «10 millionlik teri oldim, nomi Shirin gul».<br>📷 Chek yoki daftarni suratga oling, 🖼 bank ilovasidan skrinshot tanlang — koreyscha, lotin va kirill yozuvini o'qib, kategoriyalarga ajratadi; «✅ Tasdiqlash» ni bossangiz hisobga qo'shiladi."
       : isManager()
-        ? "Ishchining ishi, mijoz, xom ashyo yoki narx: «Robiya A-12 dan 50 ta topshirdi», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «20 kg kley oldim», «A-12 modelga brsovka 2000dan».<br>📨 Yozganingiz boshliq tasdig'iga boradi — tasdiqlasa hisobga kiradi."
+        ? "Ishchining ishi, mijoz, xom ashyo yoki narx: «Robiya A-12 dan 50 ta topshirdi», «Tohirga 10 komplekt maksima berdim, 140 mingdan», «20 kg kley oldim», «A-12 modelga brsovka 2000dan».<br>"
+          + (state.me.approvals ? "📨 Yozganingiz boshliq tasdig'iga boradi — tasdiqlasa hisobga kiradi." : "✅ Yozganingiz darhol hisobga kiradi, boshliqqa xabar boradi.")
         : "Model va sonini ayting: «kecha B-5 dan 30 ta». Boshqa ish qilgan bo'lsangiz — ish turini ham: «A-12 dan 40 ta brsovka».<br>📷 Daftaringizni suratga olsangiz ham bo'ladi."}</p>
   `);
   const input = $("cText");
@@ -2547,7 +2556,8 @@ function pickImageSheet() {
 }
 
 // --- Ish boshqaruvchining so'rovlari ------------------------------------------
-// Boshqaruvchi nima qilsa — egasining tasdig'iga boradi. Egasida — tasdiqlash / rad etish,
+// Boshqaruvchi nima qilsa — egasining tasdig'iga boradi (boshliq tasdig'i o'chiq bo'lsa — darhol bajariladi,
+// so'rov «✅ Bajarildi» bo'lib qoladi). Egasida — tasdiqlash / rad etish,
 // boshqaruvchida — «📨 So'rovlarim»: nima yuborgani va javobi, kutayotganini qaytarib olish
 
 function setRequestCard(count) {
@@ -2558,7 +2568,7 @@ function setRequestCard(count) {
     ? `<b>${count}</b> ta so'rov tasdiq kutmoqda<small>👔 Ish boshqaruvchi so'radi — ko'rish va tasdiqlash</small>`
     : count
       ? `📨 So'rovlarim · <b>${count}</b> tasi tasdiq kutmoqda<small>Boshliq tasdiqlasa — bajariladi</small>`
-      : "📨 So'rovlarim<small>Yuborganlaringiz va boshliq javobi</small>";
+      : `📨 So'rovlarim<small>${state.me.approvals ? "Yuborganlaringiz va boshliq javobi" : "Nima qilganingiz tarixi"}</small>`;
 }
 
 async function loadRequestCount() {
@@ -2569,7 +2579,7 @@ async function loadRequestCount() {
   } catch (_) { /* keyingi yangilanishda */ }
 }
 
-const REQ_STATUS = { pending: "pending", approved: "approved", rejected: "rejected", failed: "failed", cancelled: "cancelled" };
+const REQ_STATUS = { pending: "pending", approved: "approved", done: "approved", rejected: "rejected", failed: "failed", cancelled: "cancelled" };
 
 function requestCard(r) {
   const owner = state.me.is_owner;
@@ -2590,14 +2600,17 @@ function requestCard(r) {
     </div>`;
 }
 
-async function requestsSheet(status = "pending") {
+// Boshliq tasdig'i o'chiq bo'lsa boshqaruvchida kutayotgan so'rov bo'lmaydi — darhol hammasi ochiladi
+async function requestsSheet(status = state.me.approvals || state.me.is_owner ? "pending" : "") {
   const owner = state.me.is_owner;
   haptic();
   openSheet(`
     <h3>📨 ${owner ? "Ish boshqaruvchi so'rovlari" : "So'rovlarim"}</h3>
     <p class="muted small">${owner
       ? "Tasdiqlasangiz — sizning nomingizdan bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi). Rad etsangiz — hech narsa o'zgarmaydi."
-      : "Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi: tasdiqlasa — bajariladi, sizga botda xabar keladi."}</p>
+      : state.me.approvals
+        ? "Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi: tasdiqlasa — bajariladi, sizga botda xabar keladi."
+        : "Yozuv va o'zgartirishlaringiz darhol bajariladi, boshliqqa xabar boradi. Bu yerda — tarixi."}</p>
     <div class="chips wrap" id="reqChips">
       <button data-st="pending" class="${status === "pending" ? "on" : ""}">⏳ Kutayotgan</button>
       <button data-st="" class="${status ? "" : "on"}">Hammasi</button>
@@ -3150,12 +3163,16 @@ function settingsSheet() {
   const curRows = ["UZS", "USD", "KRW"].map((c) => `
     <label class="switch-row"><div>${c} <span class="muted">(${CUR[c]})</span></div>
       <span class="switch"><input type="checkbox" data-cur="${c}" ${me.currencies.includes(c) ? "checked" : ""}><i></i></span></label>`).join("");
-  openSheet(`
-    <h3>Sozlamalar</h3>
+  // Boshliq tasdig'i o'chiq bo'lsa (server sozlamasi) — tasdiqlash tugmalari o'rniga izoh
+  const approvalRows = me.approvals ? `
     <label class="switch-row"><div>Ishchi yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi kiritgani siz tasdiqlagandan keyin hisobotga tushadi</small></div>
       <span class="switch"><input type="checkbox" id="sApproval" ${me.require_approval ? "checked" : ""}><i></i></span></label>
     <label class="switch-row"><div>💵 Pul yozuvlarini tasdiqlash<small>Yoqilgan bo'lsa, ishchi yozgan pul («500 ming oldim», «200 ming qaytardim») siz tasdiqlagandan keyin hisob-kitobga kiradi, tasdiqlanmagani bo'lsa — har kuni ertalab (9:00) botda eslatiladi. O'chiq bo'lsa — darhol kiradi, sizga xabar boradi. Hisob holatini ishchi yozsa — har doim tasdiqlaysiz.</small></div>
-      <span class="switch"><input type="checkbox" id="sPayApproval" ${me.require_pay_approval ? "checked" : ""}><i></i></span></label>
+      <span class="switch"><input type="checkbox" id="sPayApproval" ${me.require_pay_approval ? "checked" : ""}><i></i></span></label>` : `
+    <p class="muted small">✅ Tasdiqlash o'chiq: ishchi va ish boshqaruvchi nima yozsa (ish, pul, hisob holati, o'zgartirish) darhol hisobga kiradi, sizga xabar boradi.</p>`;
+  openSheet(`
+    <h3>Sozlamalar</h3>
+    ${approvalRows}
     <label class="switch-row"><div>⚡ Darhol saqlash<small>Yoqilgan bo'lsa, ovoz yoki matn to'liq tushunilganda (ishchi, model, mijoz topildi, summa aytildi) «To'g'rimi?» so'ralmay darhol saqlanadi: «Robiyaga 500 ming berdim» — Robiya hisobidan ayriladi, ikkalangizga xabar boradi. Xato bo'lsa — yozuvni o'chirasiz. O'chiq bo'lsa — har safar «✅ Saqlash» ni bosasiz.</small></div>
       <span class="switch"><input type="checkbox" id="sAutoSave" ${me.auto_save ? "checked" : ""}><i></i></span></label>
     <label class="switch-row"><div>🖼 Rasmdagi xarajatlarni darhol saqlash<small>O'chiq bo'lsa — rasmdan o'qilgani avval ko'rsatiladi va «✅ Tasdiqlash» ni bosganingizdan keyin hisobga qo'shiladi. Yoqilsa — tasdiqlamasdan darhol qo'shiladi. Avval kiritilganlari qayta qo'shilmaydi.</small></div>
@@ -3185,8 +3202,10 @@ function settingsSheet() {
   };
   $("sMain").onchange = (ev) => save({ main_currency: ev.target.value }, ev.target);
   $("sRemind").onchange = (ev) => save({ reminder_hour: ev.target.value === "" ? null : Number(ev.target.value) }, ev.target);
-  $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
-  $("sPayApproval").onchange = (ev) => save({ require_pay_approval: ev.target.checked }, ev.target);
+  if (me.approvals) {
+    $("sApproval").onchange = (ev) => save({ require_approval: ev.target.checked }, ev.target);
+    $("sPayApproval").onchange = (ev) => save({ require_pay_approval: ev.target.checked }, ev.target);
+  }
   $("sAutoSave").onchange = (ev) => save({ auto_save: ev.target.checked }, ev.target);
   $("sAutoImg").onchange = (ev) => save({ auto_save_images: ev.target.checked }, ev.target);
   $("sSetSize").onchange = (ev) => {

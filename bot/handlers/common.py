@@ -73,12 +73,12 @@ Sizning ma'lumotlaringizni faqat siz ko'rasiz.
 👷 Ishchilar — qo'shish, taklif havolasi, kasbi (kroychi, brsovkachi, tikuvchi,
      tortuvchi, pardozchi yoki o'zingiz qo'shgan kasb), 🧾 hisob-kitobi: ishlari,
      olgan puli va qoldig'i; 👔 ish boshqaruvchi qilish — u ishchilarning pulidan
-     boshqa hamma narsani boshqaradi, har bir o'zgartirishi siz tasdiqlagach bajariladi
+     boshqa hamma narsani boshqaradi, {manager_review}
 🧵 Modellar — qo'shish, narx: umumiy va har bir kasb uchun
 🧱 Xom ashyo — teri, material, kley, padosh xaridlari: turlari bo'yicha qancha olindi
 🏪 Ta'minotchilar — kimdan olinadi va ular bilan qarz: qo'shish va taklif havolasi (ulangan
      ta'minotchiga undan olingan xom ashyo haqida xabar boradi)
-⚙️ Sozlamalar — ish va pul yozuvlarini tasdiqlash, rasmdan saqlash, valyutalar, kundalik eslatma vaqti
+⚙️ Sozlamalar — {settings_review}rasmdan saqlash, valyutalar, kundalik eslatma vaqti
 
 🔔 Har kuni kechqurun (sukut bo'yicha 21:00) bot «bugungi ishlatgan yoki topgan pulingizni
 kiriting» deb eslatadi.
@@ -106,8 +106,7 @@ Bot «To'g'rimi?» deb so'raydi. Xato bo'lsa — tuzatishni ayting.
 MANAGER_HELP = """\
 <b>👔 Siz — ish boshqaruvchi</b>
 
-Ishxonani boshliq o'rnida boshqarasiz. Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi —
-tasdiqlasa bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi) va sizga xabar keladi.
+Ishxonani boshliq o'rnida boshqarasiz. {review}
 
 🎙 Ovoz yoki matn bilan yuboring, masalan:
 • <i>Alisher A-12 modeldan 50 ta topshirdi</i> — ishchining ishi
@@ -119,23 +118,42 @@ tasdiqlasa bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi) va sizga x
 🖼 Daftar rasmini yuborsangiz ham bo'ladi.
 
 📱 Ilovada («📊 Ilova»): ishchilar, kasblar, modellar va narxlar, mijozlar, xom ashyo va ta'minotchilar —
-qo'shish va o'zgartirish ham boshliq tasdig'idan o'tadi.
+qo'shish va o'zgartirish ham {app_review}.
 
 🔒 Ishchilarning puli (avans, ish haqi, qoldig'i), boshliqning xarajat, daromad va qarzlari — faqat boshliqda.
 
 <b>Menyu</b>
 📊 Hisobot — butun ishxona: ishchilar, modellar, kasblar
 📄 /pdf — o'z hisobotingizni PDF fayl qilib saqlash
-🕘 Oxirgi yozuvlar — tahrirlash va o'chirish (boshliq tasdig'i bilan)
+🕘 Oxirgi yozuvlar — tahrirlash va o'chirish{edit_review}
 🧾 Hisob-kitob — o'z ishlaringiz, olgan pulingiz va haqqingiz
-📨 So'rovlarim — nima yuborganingiz va boshliq javobi
+📨 So'rovlarim — {requests_review}
 """
+
+# Yordamdagi boshliq tasdig'iga bog'liq qismlar: (tasdiqlash yoqilgan, o'chiq) — settings.approvals
+REVIEW_TEXTS = {
+    "manager_review": (
+        "har bir o'zgartirishi siz tasdiqlagach bajariladi",
+        "o'zgartirishlari darhol bajariladi, sizga xabar keladi",
+    ),
+    "settings_review": ("ish va pul yozuvlarini tasdiqlash, ", ""),
+    "review": (
+        "Har bir yozuv va o'zgartirishingiz boshliq tasdig'iga boradi —\n"
+        "tasdiqlasa bajariladi (ishchi, mijoz, ta'minotchiga xabar ham boradi) va sizga xabar keladi.",
+        "Yozuv va o'zgartirishlaringiz darhol bajariladi (ishchi, mijoz,\n"
+        "ta'minotchiga xabar ham boradi), boshliqqa xabar boradi.",
+    ),
+    "app_review": ("boshliq tasdig'idan o'tadi", "shu yerda, boshliqqa xabar boradi"),
+    "edit_review": (" (boshliq tasdig'i bilan)", ""),
+    "requests_review": ("nima yuborganingiz va boshliq javobi", "nima qilganingiz tarixi"),
+}
 
 
 def help_for(user: User) -> str:
+    texts = {key: on if settings.approvals else off for key, (on, off) in REVIEW_TEXTS.items()}
     if user.is_owner:
-        return OWNER_HELP
-    return MANAGER_HELP if user.is_manager else WORKER_HELP
+        return OWNER_HELP.format(**texts)
+    return MANAGER_HELP.format(**texts) if user.is_manager else WORKER_HELP
 
 
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("sup_")))

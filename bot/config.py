@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     timezone: str = "Asia/Tashkent"
 
+    # Boshliq tasdig'i. O'chiq (sukut) — ishchi ham, ish boshqaruvchi ham nima yozsa (ish, pul, hisob holati,
+    # o'zgartirish) darhol hisobga kiradi, egasiga faqat xabar boradi; «⚙️ Sozlamalar»dagi tasdiqlash tugmalari
+    # ko'rinmaydi. Yoqilsa (APPROVALS=1) — avvalgidek: ishchi yozuvlari va puli sozlamalar bo'yicha, hisob holati
+    # va boshqaruvchining har bir o'zgartirishi — egasi tasdiqlagach
+    approvals: bool = False
+
     # Veb-server (Mini App + webhook). Render PORT va RENDER_EXTERNAL_URL ni o'zi beradi.
     port: int = 8080
     public_url: str | None = Field(default=None, validation_alias=AliasChoices("PUBLIC_URL", "RENDER_EXTERNAL_URL"))
