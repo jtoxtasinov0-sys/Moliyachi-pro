@@ -14,7 +14,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, ReplyKeyboard
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import advisor, drafts, intake, pdf_report
+from bot import advisor, drafts, intake, pdf_report, reminders
 from bot import jobs as jobs_mod
 from bot import keyboards as kbs
 from bot.config import settings
@@ -564,6 +564,7 @@ async def update_settings(request: web.Request, session: AsyncSession, user: Use
         if hour is not None and hour not in repo.REMINDER_HOURS:
             raise ApiError(400, "Eslatma vaqti noto'g'ri")
         await repo.set_setting(session, user.id, "reminder_hour", "off" if hour is None else str(hour))
+        reminders.forget()
     return web.json_response(
         {
             "currencies": await repo.enabled_currencies(session, user.id),

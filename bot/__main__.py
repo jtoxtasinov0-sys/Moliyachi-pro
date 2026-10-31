@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, ErrorEvent, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
 from aiohttp import web
+from sqlalchemy.exc import DBAPIError
 
 from bot.config import settings
 from bot import reminders
@@ -40,6 +41,27 @@ async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     return True
 
 
+DB_RETRY_FIRST = 30  # soniya
+DB_RETRY_MAX = 30 * 60
+
+
+async def wait_for_db() -> None:
+    """Jadvallarni tayyorlaydi. Baza ishlamasa (masalan, Neon bepul oylik limiti tugagan) — bot yiqilmaydi:
+    veb-server (/health) ishlab turadi, shuning uchun yangi versiya baribir ishga tushadi (eski versiya to'xtaydi),
+    baza esa avval tez-tez, keyin 30 daqiqada bir marta qayta tekshiriladi."""
+    delay = DB_RETRY_FIRST
+    while True:
+        try:
+            await init_db()
+            return
+        except (DBAPIError, OSError, asyncio.TimeoutError) as e:
+            log.warning(
+                "Bazaga ulanib bo'lmadi — %s soniyadan keyin qayta urinadi: %s: %s", delay, type(e).__name__, e
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, DB_RETRY_MAX)
+
+
 async def set_profile_texts(bot: Bot) -> None:
     """Bot havolasi ulashilganda chiqadigan matn (profil "About") va bo'sh chatdagi tavsif."""
     site = f"\n🌐 {settings.webapp_url}" if settings.webapp_url else ""
@@ -61,7 +83,6 @@ async def set_profile_texts(bot: Bot) -> None:
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    await init_db()
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
@@ -98,6 +119,7 @@ async def main() -> None:
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", settings.port).start()
     log.info("Veb-server: http://localhost:%s/app/", settings.port)
+    await wait_for_db()
 
     me = await bot.me()
     log.info("Bot ishga tushdi: @%s", me.username)

@@ -50,7 +50,17 @@ QUIET = 25  # soniya: suhbat shuncha jim tursa — lentaga yuboriladi
 MAX_WAIT = 120  # uzoq suhbat ham shundan kechikmasin
 DIGEST_LIMIT = 3500  # Telegram xabari 4096 belgigacha
 LINE_LIMIT = 350
-ERROR_REPEAT = 10 * 60  # bir xil xato shu vaqt ichida qayta kelsa — lentaga takror yuborilmaydi
+# Bir xil xato shu vaqt ichida qayta kelsa — lentaga takror yuborilmaydi; keyingisida necha marta takrorlangani
+# yoziladi (baza ishlamay qolsa har 10 daqiqada bir xil xabar kelib, telefon to'lib ketmasin)
+ERROR_REPEAT = 6 * 60 * 60
+# Ma'lum xatolar uchun tushuntirish: matnida shu so'z bo'lsa — xabar oxirida nima qilish kerakligi
+ERROR_HINTS = (
+    (
+        "exceeded the quota",
+        "💡 Neon bazasining bepul oylik limiti tugagan — bot bazaga ulana olmayapti (yozuvlar saqlanmaydi). "
+        "Limit yangi oy boshida o'zi tiklanadi yoki neon.com saytida tarifni oshiring. Ma'lumotlar o'chmaydi.",
+    ),
+)
 
 
 class MonCb(CallbackData, prefix="m"):
@@ -326,7 +336,7 @@ class _Digest:
 
 
 _digests: dict[int, _Digest] = {}
-_recent_errors: dict[str, float] = {}
+_recent_errors: dict[str, list] = {}  # xatoning birinchi qatori → [yuborilgan vaqt, shundan beri takrorlar soni]
 
 
 def _watched(tg_id: int | None) -> bool:
@@ -340,11 +350,14 @@ def _to_feed(event: Event, replace: bool) -> None:
     if event.kind == K.ERROR and (event.tg_id is None or _watched(event.tg_id)):
         first_line = event.text.split("\n", 1)[0]
         now = time.monotonic()
-        if now - _recent_errors.get(first_line, -ERROR_REPEAT) >= ERROR_REPEAT:
+        seen = _recent_errors.get(first_line)
+        if seen is not None and now - seen[0] < ERROR_REPEAT:
+            seen[1] += 1
+        else:
             if len(_recent_errors) > 200:
                 _recent_errors.clear()
-            _recent_errors[first_line] = now
-            spawn(_send_error(event))
+            _recent_errors[first_line] = [now, 0]
+            spawn(_send_error(event, seen[1] if seen else 0))
     if mode != FEED_ALL or not _watched(event.tg_id):
         return
 
@@ -398,14 +411,23 @@ async def _send_digest(tg_id: int, digest: _Digest) -> None:
     await send_admins("\n".join([header, *body]), user_kb(tg_id))
 
 
-async def _send_error(event: Event) -> None:
+async def _send_error(event: Event, repeats: int = 0) -> None:
+    """repeats — oldingi xabardan beri shu xato necha marta takrorlangan (ular alohida yuborilmagan)."""
     if event.tg_id is not None:
         person = await who(event.tg_id)
         head = f"⚠️ <b>Xato</b> · 👤 {html.escape(person.name)} ({person.role})"
         kb = user_kb(event.tg_id)
     else:
         head, kb = "⚠️ <b>Server xatosi</b>", None
-    await send_admins(f"{head}\n<pre>{html.escape(cut(event.text, 3000))}</pre>", kb)
+    text = f"{head}\n<pre>{html.escape(cut(event.text, 3000))}</pre>"
+    if repeats:
+        text += f"\n🔁 Oldingi xabardan beri yana {repeats} marta takrorlandi."
+    hints = [hint for needle, hint in ERROR_HINTS if needle in event.text]
+    if hints:
+        text += "\n" + "\n".join(hints)
+    else:
+        text += f"\n🔕 Shu xato {ERROR_REPEAT // 3600} soat ichida takrorlansa — qayta yuborilmaydi."
+    await send_admins(text, kb)
 
 
 BATCH = 100
