@@ -28,7 +28,7 @@ from bot.handlers.money import (
     supplier_month_line,
 )
 from bot.middlewares import IsOwner
-from bot.reminders import PAY_REMINDER_HOUR
+from bot.reminders import PAY_REMINDER_HOUR, forget as forget_reminder_hour
 from bot.services.utils import CURRENCY_LABELS, fmt_money, fmt_totals, parse_price, today
 
 router = Router(name="admin")
@@ -1434,6 +1434,7 @@ async def settings_toggle(
         value = callback_data.value
         if value == "off" or (value.isdigit() and int(value) in repo.REMINDER_HOURS):
             await repo.set_setting(session, user.id, "reminder_hour", value)
+            forget_reminder_hour()
     elif callback_data.action == "main" and callback_data.value in repo.ALL_CURRENCIES:
         await repo.set_main_currency(session, user.id, callback_data.value)
     text, kb = await _settings_view(session, user.id)

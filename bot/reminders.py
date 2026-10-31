@@ -4,6 +4,11 @@ pul («500 ming oldim»), ish boshqaruvchining so'rovi tasdiqlanmay qolgan bo'ls
 Server (Render bepul tarifi) 15 daqiqa so'rovsiz qolsa uxlaydi va eslatma vaqti o'tib ketadi. Shuning uchun
 serverda bot har 10 daqiqada o'z manziliga /health so'rovini yuborib, o'zini uyg'oq ushlab turadi.
 Uxlab qolgan bo'lsa ham — uyg'ongach, shu kungi eslatma yuborilmagan bo'lsa, darhol yuboriladi.
+
+Baza (Neon bepul tarifi) 5 daqiqa so'rovsiz qolsa uxlaydi va oylik limit (CU-soat) sarflanmaydi. Har daqiqada
+bazaga so'rov yuborilsa — baza hech qachon uxlamaydi, limit tugaydi va bot ishlamay qoladi («exceeded the quota»).
+Shuning uchun eslatma soati va bugun yuborilgani xotirada saqlanadi: bazaga faqat eslatma vaqti kelganda
+(va bir necha soatda bir marta tekshirish uchun) murojaat qilinadi. Baza ishlamasa — urinishlar siyraklashadi.
 """
 import asyncio
 import logging
@@ -35,6 +40,35 @@ PAY_REMINDER_CARDS = 10
 PENDING_NOTICE_VERSION = "1"
 # Ketma-ket xabarlar orasida (Telegram bir chatga juda tez yuborilganini to'xtatadi)
 SEND_PAUSE = 0.5
+# Xotiradagi eslatma soati shuncha vaqtda bir marta bazadan qayta o'qiladi (o'zgartirilsa — darhol, forget())
+RECHECK = 3 * 60 * 60
+# Baza ishlamasa: keyingi urinish 2, 4, 8… daqiqadan keyin, eng ko'pi bilan shuncha soniyada bir marta
+MAX_BACKOFF = 30 * 60
+
+# Bazaga har daqiqada murojaat qilmaslik uchun (yuqoridagi izohga qarang)
+_hours: dict[int, tuple[int | None, float]] = {}  # tg_id → (eslatma soati yoki None — o'chiq, o'qilgan vaqt)
+_done: dict[tuple[str, int], str] = {}  # ("daily" | "pay", tg_id) → bugun tekshirilgan/yuborilgan kun
+_absent: dict[int, float] = {}  # botni hali ochmagan ega → tekshirilgan vaqt
+
+
+def forget() -> None:
+    """Eslatma soati o'zgartirildi — keyingi tekshiruvda bazadan qayta o'qiladi."""
+    _hours.clear()
+
+
+def _recent(checked_at: float) -> bool:
+    return time.monotonic() - checked_at < RECHECK
+
+
+def _not_due(tg_id: int, hour_now: int) -> bool:
+    """Xotiradagi ma'lumot bo'yicha eslatma vaqti hali kelmagan (bazaga murojaat shart emas)."""
+    if tg_id in _absent and _recent(_absent[tg_id]):
+        return True
+    cached = _hours.get(tg_id)
+    if cached is None or not _recent(cached[1]):
+        return False
+    hour = cached[0]
+    return hour is None or hour_now < hour
 
 
 async def send_due(bot: Bot) -> None:
@@ -42,18 +76,25 @@ async def send_due(bot: Bot) -> None:
     now = datetime.now(settings.tz)
     day = now.date().isoformat()
     for tg_id in settings.owner_ids:
+        if _done.get(("daily", tg_id)) == day or _not_due(tg_id, now.hour):
+            continue
         async with session_factory() as session:
             user = await repo.get_user_by_tg(session, tg_id)
             if user is None or not user.is_owner:
+                _absent[tg_id] = time.monotonic()
                 continue  # botni hali ochmagan
+            _absent.pop(tg_id, None)
             hour = await repo.reminder_hour(session, user.id)
+            _hours[tg_id] = (hour, time.monotonic())
             if hour is None or now.hour < hour:
                 continue
             if await repo.get_setting(session, user.id, "reminder_sent") == day:
+                _done[("daily", tg_id)] = day
                 continue
             # Avval belgilab qo'yamiz: yuborishda xato bo'lsa ham har daqiqada qayta urinmaydi
             await repo.set_setting(session, user.id, "reminder_sent", day)
             await session.commit()
+            _done[("daily", tg_id)] = day
             text = await advisor.reminder_text(session, user.id)
         try:
             await bot.send_message(tg_id, text, reply_markup=kbs.reminder_kb())
@@ -119,19 +160,27 @@ async def send_pending_pays(bot: Bot, now_once: bool = False) -> None:
         return
     day = now.date().isoformat()
     for tg_id in settings.owner_ids:
+        if not now_once and _done.get(("pay", tg_id)) == day:
+            continue
+        if tg_id in _absent and _recent(_absent[tg_id]):
+            continue
         async with session_factory() as session:
             user = await repo.get_user_by_tg(session, tg_id)
             if user is None or not user.is_owner:
+                _absent[tg_id] = time.monotonic()
                 continue
+            _absent.pop(tg_id, None)
             if now_once:
                 if await repo.get_setting(session, user.id, "pending_notice_version") == PENDING_NOTICE_VERSION:
                     continue
                 await repo.set_setting(session, user.id, "pending_notice_version", PENDING_NOTICE_VERSION)
             elif await repo.get_setting(session, user.id, "pay_reminder_sent") == day:
+                _done[("pay", tg_id)] = day
                 continue
             # Bugun tekshirildi: keyin yozilgani haqida egasiga darhol xabar boradi, eslatmasi — ertaga
             await repo.set_setting(session, user.id, "pay_reminder_sent", day)
             await session.commit()
+            _done[("pay", tg_id)] = day
             messages = await _pending_messages(session, user)
         try:
             for i, (text, markup) in enumerate(messages):
@@ -186,16 +235,30 @@ async def run(bot: Bot) -> None:
         await send_pending_pays(bot, now_once=True)
     except Exception:
         log.exception("Tasdiq kutayotganlar eslatmasini yuborishda xato")
+    failures = 0  # ketma-ket muvaffaqiyatsiz tekshiruvlar (baza ishlamayapti)
+    next_check = 0.0
     async with aiohttp.ClientSession() as http:
         while True:
-            try:
-                await send_due(bot)
-            except Exception:
-                log.exception("Eslatmalarni tekshirishda xato")
-            try:
-                await send_pending_pays(bot)
-            except Exception:
-                log.exception("Tasdiq kutayotganlar eslatmasini tekshirishda xato")
+            if time.monotonic() >= next_check:
+                failed = False
+                for check, what in (
+                    (send_due, "Eslatmalarni tekshirishda xato"),
+                    (send_pending_pays, "Tasdiq kutayotganlar eslatmasini tekshirishda xato"),
+                ):
+                    try:
+                        await check(bot)
+                    except Exception as e:
+                        failed = True
+                        if failures == 0:
+                            log.exception(what)  # adminga (kuzatuv botiga) — faqat birinchisi
+                        else:
+                            log.warning("%s (yana): %s: %s", what, type(e).__name__, e)
+                if failed:
+                    failures += 1
+                    next_check = time.monotonic() + min(CHECK_EVERY * 2**failures, MAX_BACKOFF)
+                elif failures:
+                    log.warning("Eslatmalar yana tekshirilmoqda: baza ishladi (%s ta urinishdan keyin)", failures)
+                    failures = 0
             if keep_awake and time.monotonic() - last_ping >= PING_EVERY:
                 last_ping = time.monotonic()
                 await _ping(http)
