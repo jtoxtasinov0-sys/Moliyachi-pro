@@ -483,8 +483,20 @@ async def me(request: web.Request, session: AsyncSession, user: User) -> web.Res
             "auto_save_images": await repo.auto_save_images(session, user.account_id),
             "savings_pct": await repo.savings_pct(session, user.account_id),
             "reminder_hour": await repo.reminder_hour(session, user.account_id),
+            "mic_intro": await repo.get_setting(session, user.id, "mic_intro"),
         }
     )
+
+
+@routes.post("/api/me/mic")
+@endpoint()
+async def mic_intro(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{value: "1" | "2"} — mikrofon tushuntirishi ko'rsatildi: shu foydalanuvchidan boshqa so'ralmaydi."""
+    value = str((await _json(request)).get("value") or "")
+    if value not in ("1", "2"):
+        raise ApiError(400, "Noto'g'ri qiymat")
+    await repo.set_setting(session, user.id, "mic_intro", value)
+    return web.json_response({"mic_intro": value})
 
 
 # Telegram profil rasmi: tg_id -> (olingan vaqt, rasm yoki None)
@@ -1267,6 +1279,7 @@ async def personal_summary(request: web.Request, session: AsyncSession, user: Us
     lo = min(b["start"], b["prev"][0], chart_start)
     hi = max(b["end"], chart_end)
     rows = await repo.personal_stat_rows(session, user.id, lo, hi)
+    cash = await repo.debt_cash_totals(session, user.id, b["start"], b["end"])
     cur = [r for r in rows if b["start"] <= r.entry_date <= b["end"]]
     prev = [r for r in rows if b["prev"][0] <= r.entry_date <= b["prev"][1]]
     return web.json_response(
@@ -1276,6 +1289,8 @@ async def personal_summary(request: web.Request, session: AsyncSession, user: Us
             "end": b["end"].isoformat(),
             "today": t.isoformat(),
             "totals": _personal_totals(cur),
+            # «Pulimdan ayirilsin» deb yozilgan qarzlar: out — qoldiqdan ayriladi, in — qo'shiladi
+            "debt_cash": {direction: _money(v) for direction, v in cash.items()},
             "prev": _personal_totals(prev),
             "series": {
                 "bucket": bucket,
@@ -1339,6 +1354,8 @@ def _debt_json(e: DebtEntry) -> dict:
         "key": e.person_key,
         "direction": e.direction,
         "stated": e.stated,
+        # «Pullarim holati»ga ta'sir qiladi: berilgani ayrilgan, olingani qo'shilgan
+        "cash": e.cash,
         "amount": float(e.amount),
         "currency": e.currency,
         "note": e.note,
@@ -1395,6 +1412,20 @@ async def debt_entries(request: web.Request, session: AsyncSession, user: User) 
     items.sort(key=lambda x: (x[0], x[1]), reverse=True)
     page = [x[2] for x in items[offset : offset + limit]]
     return web.json_response({"items": page, "has_more": len(items) > offset + limit})
+
+
+@routes.post(r"/api/debts/{id:\d+}/cash")
+@endpoint(owner_only=True)
+async def debt_cash(request: web.Request, session: AsyncSession, user: User) -> web.Response:
+    """{cash} — qarz «Pullarim holati»dan ayirilsinmi (olingan pulda — qo'shilsinmi). Qarz holatida bo'lmaydi."""
+    entry = await repo.get_debt_entry(session, user.id, int(request.match_info["id"]))
+    if entry is None:
+        raise ApiError(404, "Yozuv topilmadi")
+    if entry.stated:
+        raise ApiError(400, "Qarz holati pulingizga ta'sir qilmaydi")
+    entry.cash = bool((await _json(request)).get("cash"))
+    await session.flush()
+    return web.json_response(_debt_json(entry))
 
 
 @routes.delete(r"/api/debts/{id:\d+}")
@@ -2438,6 +2469,12 @@ async def input_action(request: web.Request, session: AsyncSession, user: User) 
             answered = await intake.choose(session, user, draft, kbs.ResolveCb.unpack(value))
         elif prefix == kbs.DebtDirCb.__prefix__:
             answered = intake.set_direction(draft, kbs.DebtDirCb.unpack(value))
+        elif prefix == kbs.DebtCashCb.__prefix__:
+            # «To'g'rimi?» ham shu tugmada: oxirgi savol bo'lsa — darhol saqlanadi
+            if intake.set_cash(draft, kbs.DebtCashCb.unpack(value)) and drafts.next_missing(draft) is None:
+                saved = await intake.save(session, request.app["bot"], user, draft)
+                _drafts.pop(user.id, None)
+                return await _input_state(session, user, saved=_saved_html(saved), queued=saved.queued)
         elif prefix == kbs.ClientKindCb.__prefix__:
             answered = intake.set_client_kind(draft, kbs.ClientKindCb.unpack(value))
         elif prefix == kbs.PayKindCb.__prefix__:

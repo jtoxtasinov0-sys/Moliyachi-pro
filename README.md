@@ -15,10 +15,12 @@ kutayotganlar»da turadi — ularni egasi avvalgidek tasdiqlaydi yoki rad etadi.
 (Render → Environment) yoki `bot/config.py` dagi `approvals` sukutini `True` qilish: shunda pastda yozilgan
 tasdiqlash tartibi (sozlamalar bo'yicha, hisob holati va boshqaruvchi — egasi tasdiqlagach) qaytadi.
 
-**🎤 Mikrofon ruxsati — bir marta:** ilovada birinchi ovozli xabardan oldin «🎤 Mikrofonga ruxsat» oynasi chiqadi va
-qaysi tugmani bosish kerakligi aytiladi: brauzerda — «Saytga kirganda» (yoki «Har doim»), «Faqat shu safar» emas;
-shunda telefon keyin hech qachon so'ramaydi. Berilgan ruxsat shu qurilmada eslab qolinadi, mikrofon ilova ochiq
-turganda qayta so'ralmaydi. Brauzer baribir qayta so'rasa (avval «Faqat shu safar» tanlangan) — bu bir marta yana
+**🎤 Mikrofon ruxsati — bir marta:** odam ilovaga birinchi marta kirganda «🎤 Mikrofonga ruxsat» oynasi bir marta
+chiqadi va qaysi tugmani bosish kerakligi aytiladi: brauzerda — «Saytga kirganda» (yoki «Har doim»), «Faqat shu
+safar» emas; shunda telefon keyin hech qachon so'ramaydi. Oyna ko'rsatilgani serverda (har bir foydalanuvchiga)
+saqlanadi — telefon xotirasi tozalansa ham, boshqa qurilmadan kirsa ham qayta chiqmaydi. Mikrofon ilova ochiq
+turganda qayta so'ralmaydi. **🌊 Ovoz to'lqini:** yozilayotganda panel tepasida Telegram ovozli xabaridagidek
+to'lqin yurib turadi (jim — nuqtalar, gapirganda ustunchalar o'sadi) — ovoz yozilayotgani ko'rinib turadi. Brauzer baribir qayta so'rasa (avval «Faqat shu safar» tanlangan) — bu bir marta yana
 aytiladi. Telegram ichida ruxsatni Telegramning o'zi so'raydi va eslab qolmaydi (ilova har ochilganda birinchi
 ovozda bir marta) — umuman so'ramasligi uchun ilovani brauzerda oching (`/web`) va «Ekranga qo'shish» qiling.
 
@@ -116,6 +118,16 @@ xarid («naqd oldim», «pulini berdim», chek), kimdan olingani yozilmagani yok
 xarajat, faqat xom ashyoda. Avval yozilgan xaridlardan kimdan olingani va narxi borlari ham bir marta avtomatik
 qarzga o'tkazilgan. Xato bo'lsa: botda xarid kartochkasidagi «💵 To'langan — qarzdan chiqarish» / «💳 Qarzga
 qo'shish», ilovada xaridlar ro'yxatidagi va qarz tarixidagi «💳» tugmasi.
+
+**💸 Qarzga pul berish — «Pullarim holati»dan ayirish:** «Sardorga 200 ming won berdim» desangiz (Sardor
+«Qarzlar»dagi odam), bot darhol saqlamaydi: qoralama «To'g'rimi?» bilan chiqadi va «💸 Sardorga berilgan
+200 000 won hisobdagi pulingizdan («Pullarim holati») ayirilsinmi?» deb so'raydi — «✅ Ha, pulimdan ayirilsin»
+(qarz yoziladi va qoldiqdan ayriladi) yoki «📝 Yo'q, faqat qarz yozilsin»; tugma bosilishi bilan saqlanadi. Xato
+bo'lsa — «✏️ Tuzatish» (masalan, «qarz emas, xarajat»). Undan pul olinganda («Sardor 200 ming qaytardi», «Abbosdan
+100 ming qarz oldim») — «pulingizga qo'shilsinmi?». Qarz holati («Hayrulloda 65 million haqqim bor») so'ralmaydi.
+Qoldiq = daromad − xarajat − qarzga berilgan + qarzga olingan (shu tanlanganlari): ilovada bosh sahifa va «Hamyon»,
+botda «💸 Xarajatlar» va PDF hisobot. Avval yozilgan qarzni ham keyin o'zgartirish mumkin: ilovada «Qarzlar» →
+odam → yozuv yonidagi 💸 tugma, botda qarz kartochkasidagi «💸 Pulimdan ayirish».
 
 **🤝 Umumiy qarzlar:** botda «🤝 Qarzlar», ilovada «Hamyon → Qarzlar» va bosh sahifadagi karta — hamma qarz bir
 joyda, bo'limlarga ajratilgan, har bir bo'limning o'z jami bilan: 🤝 odamlar bilan qarzlar; 🧱 xom ashyo —

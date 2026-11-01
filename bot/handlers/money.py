@@ -16,6 +16,7 @@ from bot.db.models import (
     CLIENT_MONEY,
     Client,
     ClientEntry,
+    DebtDirection,
     DebtEntry,
     MaterialEntry,
     PersonalEntry,
@@ -49,6 +50,8 @@ def personal_text(e: PersonalEntry) -> str:
 def debt_text(e: DebtEntry) -> str:
     text = debt_line(e.person, e.direction, f"<b>{fmt_money(e.amount, e.currency)}</b>", stated=e.stated)
     text += f"\n📅 {fmt_date(e.entry_date)}"
+    if e.cash:
+        text += "\n💸 Pulingizdan ayrilgan" if e.direction == DebtDirection.OUT else "\n💰 Pulingizga qo'shilgan"
     if e.note:
         text += f"\n<i>{escape(e.note)}</i>"
     return text
@@ -262,6 +265,11 @@ def material_text(e: MaterialEntry, supplier: bool = True) -> str:
     return text + f"\n📅 {fmt_date(e.entry_date)}"
 
 
+def debt_kb(e: DebtEntry, app: bool = False):
+    """Qarz kartochkasi tugmalari: «💸 Pulimdan ayirish» (qarz holati emas bo'lsa) va o'chirish."""
+    return kbs.money_entry_kb("d", e.id, app=app, cash=None if e.stated else (e.direction, e.cash))
+
+
 def material_kb(e: MaterialEntry, app: bool = False):
     """Xarid kartochkasi tugmalari: «💳 Qarzga qo'shish» / «💵 To'langan» (kimdan olingani va narxi bo'lsa), o'chirish."""
     return kbs.money_entry_kb("x", e.id, app=app, credit=e.on_credit if repo.material_credit_ok(e) else None)
@@ -366,11 +374,12 @@ async def person_balance(session: AsyncSession, owner_id: int, person: str) -> l
 async def _personal_report(session: AsyncSession, owner_id: int, period: str) -> str:
     start, end = period_range(period)
     rows = await repo.personal_stat_rows(session, owner_id, start, end)
+    cash = await repo.debt_cash_totals(session, owner_id, start, end)
     title = (
         f"💸 <b>{PERIOD_LABELS[period]}</b> "
         f"({start.strftime('%d.%m')}{'' if start == end else ' – ' + end.strftime('%d.%m')})"
     )
-    if not rows:
+    if not rows and not any(cash.values()):
         return f"{title}\n\nBu davrda xarajat yoki daromad yozilmagan.\n\n" + _hint()
 
     blocks = [title]
@@ -390,11 +399,16 @@ async def _personal_report(session: AsyncSession, owner_id: int, period: str) ->
         blocks.append(f"{label}: <b>{fmt_totals(dict(total))}</b>\n{lines}")
 
     expense, income = totals[PersonalKind.EXPENSE], totals[PersonalKind.INCOME]
-    if expense and income:
-        net = []
-        for currency in dict.fromkeys([*income, *expense]):
-            value = income.get(currency, Decimal(0)) - expense.get(currency, Decimal(0))
-            net.append(("+" if value >= 0 else "−") + fmt_money(abs(value), currency))
+    if given := cash[DebtDirection.OUT]:
+        blocks.append(f"🤝 Qarzga berildi (pulingizdan ayrilgan): <b>{fmt_totals(given)}</b>")
+    if took := cash[DebtDirection.IN]:
+        blocks.append(f"🤝 Qarz olindi (pulingizga qo'shilgan): <b>{fmt_totals(took)}</b>")
+    if (expense and income) or given or took:
+        values = {c: income.get(c, Decimal(0)) - expense.get(c, Decimal(0)) for c in dict.fromkeys([*income, *expense])}
+        net = [
+            ("+" if value >= 0 else "−") + fmt_money(abs(value), currency)
+            for currency, value in repo.with_debt_cash(values, cash).items()
+        ]
         blocks.append("📊 Qoldiq: <b>" + "  ".join(net) + "</b>")
     return "\n\n".join(blocks)
 
@@ -614,7 +628,7 @@ async def on_debts(call: CallbackQuery, callback_data: kbs.DebtsCb, session: Asy
             return
         await call.message.answer(f"🕘 Oxirgi {len(items)} ta qarz yozuvi:")
         for i, e in enumerate(reversed(items)):
-            kb = kbs.money_entry_kb("d", e.id, app=i == len(items) - 1)
+            kb = debt_kb(e, app=i == len(items) - 1)
             await call.message.answer(debt_text(e), reply_markup=kb)
         return
     await call.message.edit_text(await _debts_view(session, user.id), reply_markup=kbs.debts_kb())
@@ -656,9 +670,24 @@ async def on_money_entry(call: CallbackQuery, callback_data: kbs.MoneyCb, sessio
         await call.message.edit_reply_markup(reply_markup=kbs.money_confirm_delete_kb(kind, entry.id))
         await call.answer("Rostdan o'chirilsinmi?")
     elif action == "del_no":
-        kb = material_kb(entry) if isinstance(entry, MaterialEntry) else kbs.money_entry_kb(kind, entry.id)
+        if isinstance(entry, MaterialEntry):
+            kb = material_kb(entry)
+        elif isinstance(entry, DebtEntry):
+            kb = debt_kb(entry)
+        else:
+            kb = kbs.money_entry_kb(kind, entry.id)
         await call.message.edit_reply_markup(reply_markup=kb)
         await call.answer()
+    elif action == "cash" and isinstance(entry, DebtEntry) and not entry.stated:
+        # «Pullarim holati»dan ayirish (olingan pulda — qo'shish) yoki bekor qilish
+        entry.cash = not entry.cash
+        await session.flush()
+        if entry.direction == DebtDirection.OUT:
+            status = "💸 Pulingizdan ayrildi" if entry.cash else "↩️ Pulingizdan ayirilmaydi — faqat qarz"
+        else:
+            status = "💰 Pulingizga qo'shildi" if entry.cash else "↩️ Pulingizga qo'shilmaydi — faqat qarz"
+        await call.message.edit_text(debt_text(entry), reply_markup=debt_kb(entry))
+        await call.answer(status)
     elif action == "credit" and isinstance(entry, MaterialEntry) and repo.material_credit_ok(entry):
         # Ta'minotchiga qarz (umumiy qarzlarda) yoki to'langan xarid (faqat xom ashyoda)
         entry.on_credit = not entry.on_credit

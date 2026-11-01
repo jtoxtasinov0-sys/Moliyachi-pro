@@ -449,10 +449,17 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .rec-bar {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + var(--safe-b) + 40px);
   width: calc(100% - 24px); max-width: 536px; z-index: 50;
-  display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 56px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px 0; min-height: 56px;
   background: #fff; border-radius: 20px; box-shadow: 0 10px 34px rgba(19, 38, 95, .22);
   font-weight: 700; animation: up .15s;
 }
+.rec-bar > :not(.rec-wave):not(.rec-lock) { margin-bottom: 10px; }
+/* Ovoz to'lqini — Telegram ovozli xabaridagidek: jim turganda nuqtalar, gapirganda ustunchalar o'sadi */
+.rec-wave {
+  order: -1; flex: 1 0 100%; height: 38px; display: flex; align-items: center; justify-content: flex-end; gap: 2px;
+  padding: 0 14px; border-radius: 19px; background: var(--green-soft); overflow: hidden;
+}
+.rec-wave i { flex: none; width: 3px; height: 3px; border-radius: 2px; background: var(--green); opacity: .8; }
 .rec-bar .rec-dot { display: block; animation: blink 1s infinite; flex: none; }
 .rec-bar b { font-variant-numeric: tabular-nums; min-width: 38px; }
 .rec-hint {
@@ -462,7 +469,7 @@ main { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 28px); }
 .rec-bar.locked .rec-hint { color: var(--red); cursor: pointer; transform: none; }
 .rec-send { flex: none; background: var(--navy-900); color: #fff; padding: 10px 16px; border-radius: 999px; font-weight: 800; }
 .rec-lock {
-  position: absolute; right: 18px; bottom: 66px; width: 44px; padding: 8px 0; border-radius: 22px;
+  position: absolute; right: 18px; bottom: calc(100% + 10px); width: 44px; padding: 8px 0; border-radius: 22px;
   background: #fff; box-shadow: 0 6px 18px rgba(19, 38, 95, .18); text-align: center; font-size: 16px;
   transform: translateY(var(--dy, 0px));
 }

@@ -359,15 +359,21 @@ function renderHomeMoney() {
   const d = state.home.personal;
   const exp = d.totals.expense || {};
   const inc = d.totals.income || {};
+  // «Pulimdan ayirilsin» deb yozilgan qarzlar: berilgani qoldiqdan ayriladi, olingani qo'shiladi
+  const given = (d.debt_cash && d.debt_cash.out) || {};
+  const took = (d.debt_cash && d.debt_cash.in) || {};
   const all = {};
-  for (const src of [exp, inc]) for (const [c, v] of Object.entries(src)) all[c] = (all[c] || 0) + v;
+  for (const src of [exp, inc, given, took]) for (const [c, v] of Object.entries(src)) all[c] = (all[c] || 0) + v;
   const cur = mainCurrency(all);
-  const net = (c) => (inc[c] || 0) - (exp[c] || 0);
+  const net = (c) => (inc[c] || 0) - (exp[c] || 0) - (given[c] || 0) + (took[c] || 0);
 
   const main = net(cur);
   $("mNet").innerHTML = `${main > 0 ? "+" : ""}${fmtNum(main)}<small>${esc(CUR[cur] || cur)}</small>`;
-  $("mNetExtra").textContent = Object.keys(all).filter((c) => c !== cur && net(c))
-    .map((c) => (net(c) > 0 ? "+ " : "− ") + money(Math.abs(net(c)), c)).join("  ");
+  const extra = Object.keys(all).filter((c) => c !== cur && net(c))
+    .map((c) => (net(c) > 0 ? "+ " : "− ") + money(Math.abs(net(c)), c));
+  if (Object.keys(given).length) extra.push(`🤝 qarzga berildi: −${moneyList(given)}`);
+  if (Object.keys(took).length) extra.push(`🤝 qarz olindi: +${moneyList(took)}`);
+  $("mNetExtra").textContent = extra.join("  ·  ");
   setMoneyStat("mIncome", inc);
   setMoneyStat("mExpense", exp);
   $("mRange").textContent = rangeLabel(d.start, d.end);
@@ -1122,7 +1128,9 @@ function renderPersonal() {
   $("wAmount").innerHTML = `${fmtNum(exp[cur] || 0)}<small>${esc(CUR[cur] || cur)}</small>`;
   $("wExtra").textContent = Object.entries(exp).filter(([c, v]) => c !== cur && v).map(([c, v]) => "+ " + money(v, c)).join("  ");
   $("wIncome").textContent = fmtShort(inc[cur] || 0);
-  const net = (inc[cur] || 0) - (exp[cur] || 0);
+  // Qoldiq — bosh sahifadagidek: «pulimdan ayirilsin» deb yozilgan qarzlar ham hisobga olinadi
+  const cash = d.debt_cash || {};
+  const net = (inc[cur] || 0) - (exp[cur] || 0) - ((cash.out || {})[cur] || 0) + ((cash.in || {})[cur] || 0);
   $("wNet").textContent = (net > 0 ? "+" : "") + fmtShort(net);
 
   // Xarajat o'tgan davrga nisbatan: ko'paygani — qizil
@@ -1365,14 +1373,45 @@ function debtRow(e) {
     </div>`;
   }
   const took = e.direction === "in";
-  const sub = [dateLabel(e.date), e.note].filter(Boolean).join(" · ");
+  const cashNote = e.cash ? (took ? "💰 pulingizga qo'shilgan" : "💸 pulingizdan ayrilgan") : "";
+  const sub = [dateLabel(e.date), e.note, cashNote].filter(Boolean).join(" · ");
   return `
     <div class="mini-entry">
       <div class="mini-icon ${took ? "in" : "out"}">${took ? "📥" : "📤"}</div>
       <div class="info"><b>${e.stated ? (took ? "Siz qarzdorsiz" : "Sizga qarzdor") : took ? "Olindi" : "Berildi"}</b><small>${esc(sub)}</small></div>
       <div class="amt">${esc(money(e.amount, e.currency))}</div>
+      ${cashButton(e)}
       <button class="mini-del" data-del-debt="${e.id}" aria-label="O'chirish">🗑</button>
     </div>`;
+}
+
+// Qarz «Pullarim holati»ga ta'sir qiladimi: berilgan pul undan ayriladi, olingani qo'shiladi (qarz holatida — yo'q)
+function cashButton(e) {
+  if (e.stated) return "";
+  const took = e.direction === "in";
+  const label = e.cash
+    ? (took ? "Pulimga qo'shilmasin" : "Pulimdan ayirilmasin")
+    : (took ? "Pulimga qo'shish" : "Pulimdan ayirish");
+  return `<button class="mini-credit${e.cash ? " on" : ""}" data-cash="${e.id}" data-on="${e.cash ? 1 : 0}"
+    data-dir="${e.direction}" data-amount="${esc(money(e.amount, e.currency))}" aria-label="${label}" title="${label}">${took ? "💰" : "💸"}</button>`;
+}
+
+async function toggleDebtCash(btn) {
+  const on = btn.dataset.on !== "1";
+  const took = btn.dataset.dir === "in";
+  const amt = btn.dataset.amount;
+  const ask = on
+    ? (took ? `${amt} hisobdagi pulingizga («Pullarim holati») qo'shilsinmi?` : `${amt} hisobdagi pulingizdan («Pullarim holati») ayirilsinmi?`)
+    : (took ? `${amt} pulingizga qo'shilmasin — faqat qarz bo'lib qolsinmi?` : `${amt} pulingizdan ayirilmasin — faqat qarz bo'lib qolsinmi?`);
+  if (!(await confirmBox(ask))) return false;
+  try {
+    await api(`/api/debts/${btn.dataset.cash}/cash`, { method: "POST", body: { cash: on } });
+    toast(on ? (took ? "Pulingizga qo'shildi" : "Pulingizdan ayrildi") : "Faqat qarz bo'lib qoldi");
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
 }
 
 async function personSheet(key) {
@@ -1406,6 +1445,14 @@ async function personSheet(key) {
     const data = await api(`/api/debts/entries?key=${encodeURIComponent(key)}&limit=100`);
     $("personHistory").innerHTML = data.items.map(debtRow).join("") || `<p class="muted">Yozuv yo'q</p>`;
     $("personHistory").onclick = async (ev) => {
+      const cash = ev.target.closest("[data-cash]");
+      if (cash) {
+        if (!(await toggleDebtCash(cash))) return;
+        // Bosh sahifadagi va «Hamyon»dagi qoldiq o'zgaradi
+        if (state.view === "home") loadDashboard();
+        else if (state.view === "wallet" && state.wallet.data) loadPersonal();
+        return personSheet(key);
+      }
       const credit = ev.target.closest("[data-credit]");
       if (credit) {
         if (!(await toggleMaterialCredit(credit))) return;
@@ -2788,7 +2835,7 @@ function renderCompose(res) {
 
 function draftButtons(buttons) {
   return buttons.map((row) => `<div class="kb-row">${row.map((b) =>
-    `<button class="kb-btn${b.data === "d:save" ? " main" : ""}" data-cb="${esc(b.data)}">${esc(b.text)}</button>`).join("")}</div>`).join("");
+    `<button class="kb-btn${b.data === "d:save" || /^dc:\d+:1$/.test(b.data) ? " main" : ""}" data-cb="${esc(b.data)}">${esc(b.text)}</button>`).join("")}</div>`).join("");
 }
 
 function sendText() {
@@ -2833,6 +2880,7 @@ function bindHoldToTalk(el, onTap) {
     ev.preventDefault();
     if (compose.locked) return finishVoice(false); // qulflangan yozuvni shu tugma ham yuboradi
     if (compose.busy || compose.recorder || compose.starting) return;
+    primeAudio();
     Object.assign(hold, { el, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, active: false });
     try { el.setPointerCapture(ev.pointerId); } catch (_) { /* eski brauzer */ }
     hold.timer = setTimeout(() => {
@@ -2910,15 +2958,29 @@ async function getMic() {
   return micStream;
 }
 
-// Ruxsat bir marta so'raladi va shu qurilmada eslab qolinadi: "1" — berilgan, "2" — brauzer unutgani (avval
-// «Faqat shu safar» tanlangani) bir marta aytilgan. Telefon so'raganda «Faqat shu safar» bosilsa, brauzer har
-// kirganda qayta so'raydi — shuning uchun birinchi marta qaysi tugmani bosish kerakligi tushuntiriladi
+// Tushuntirish har bir odamga bir marta ko'rsatiladi: "1" — ko'rsatilgan, "2" — brauzer unutgani (avval
+// «Faqat shu safar» tanlangani) ham bir marta aytilgan. Belgi serverda (/api/me — mic_intro) saqlanadi: Telegram
+// ichida telefon xotirasi (localStorage) tozalanib ketadi va oyna har kirganda qayta chiqardi
 const MIC_KEY = "moliyachi_mic";
 function micSeen() {
+  if (state.me && state.me.mic_intro) return state.me.mic_intro;
   try { return localStorage.getItem(MIC_KEY) || ""; } catch (_) { return ""; }
 }
 function rememberMic(value) {
   try { localStorage.setItem(MIC_KEY, value); } catch (_) { /* xotira yopiq */ }
+  if (!state.me || state.me.mic_intro === value) return;
+  state.me.mic_intro = value;
+  api("/api/me/mic", { method: "POST", body: { value } }).catch(() => { /* keyingi safar yana yoziladi */ });
+}
+
+// Yangi odam ilovaga birinchi marta kirganda — mikrofon ruxsati o'sha zahoti bir marta so'raladi
+function micFirstVisit() {
+  if (micSeen() || pickMime() === null || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  setTimeout(async () => {
+    if (micSeen() || !$("sheet").hidden || compose.recorder) return;
+    if (await micPermission() === "granted") return rememberMic("1");
+    micIntroSheet("first", false);
+  }, 1200);
 }
 
 // Brauzer ruxsatni eslab qolganmi: "granted" | "prompt" | "denied", bilib bo'lmasa — "" (Firefox, eski Safari)
@@ -2962,6 +3024,8 @@ function micIntroSheet(kind, back) {
     ${note}
     <button class="primary" id="micAllow">🎤 Ruxsat berish</button>
   `);
+  // Ko'rsatildi — yopib yuborilsa ham boshqa chiqmaydi
+  rememberMic(kind === "again" ? "2" : "1");
   $("micAllow").onclick = async () => {
     $("micAllow").disabled = true;
     try {
@@ -2972,7 +3036,6 @@ function micIntroSheet(kind, back) {
       return;
     }
     pauseMic();
-    rememberMic(kind === "again" ? "2" : "1");
     if (back) composeSheet();
     else closeSheet();
     toast("🎤 Tayyor — endi tugmani bosib turib gapiring");
@@ -3036,6 +3099,7 @@ async function startRecording() {
   compose.recorder.onstop = onRecorded;
   compose.recorder.start();
   compose.started = Date.now();
+  startWave(stream);
   haptic("ok");
   const tick = () => {
     const sec = Math.floor((Date.now() - compose.started) / 1000);
@@ -3044,6 +3108,72 @@ async function startRecording() {
   };
   tick();
   compose.timer = setInterval(tick, 250);
+}
+
+// --- Ovoz to'lqini: yozilayotganda mikrofon balandligi ustunchalar bo'lib o'ngdan chapga suriladi -------------
+
+const WAVE_MS = 70;
+const wave = { ctx: null, source: null, analyser: null, data: null, timer: null, levels: [], bars: [] };
+
+// iPhone'da ovoz konteksti faqat barmoq tegishi paytida yoqiladi — tugma bosilganda tayyorlab qo'yiladi
+function primeAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!wave.ctx) wave.ctx = new Ctx();
+    if (wave.ctx.state === "suspended") wave.ctx.resume().catch(() => { /* keyingi bosishda */ });
+  } catch (_) { /* to'lqinsiz ham yoziladi */ }
+}
+
+function startWave(stream) {
+  const box = $("recWave");
+  const count = Math.max(12, Math.floor((box.clientWidth - 28) / 5));
+  box.innerHTML = "<i></i>".repeat(count);
+  wave.bars = [...box.children];
+  wave.levels = new Array(count).fill(0);
+  wave.analyser = null;
+  try {
+    primeAudio();
+    if (wave.ctx) {
+      wave.source = wave.ctx.createMediaStreamSource(stream);
+      wave.analyser = wave.ctx.createAnalyser();
+      wave.analyser.fftSize = 512;
+      wave.data = new Uint8Array(wave.analyser.fftSize);
+      wave.source.connect(wave.analyser);
+    }
+  } catch (_) { wave.analyser = null; }
+  clearInterval(wave.timer);
+  wave.timer = setInterval(drawWave, WAVE_MS);
+}
+
+function waveLevel() {
+  const a = wave.analyser;
+  if (!a || wave.ctx.state !== "running") {
+    // Ovoz kontekstini yoqib bo'lmadi — yozilayotgani baribir ko'rinib tursin
+    return 0.15 + Math.random() * 0.45;
+  }
+  a.getByteTimeDomainData(wave.data);
+  let sum = 0;
+  for (const v of wave.data) sum += (v - 128) * (v - 128);
+  const rms = Math.sqrt(sum / wave.data.length) / 128;
+  return Math.min(1, Math.sqrt(rms) * 1.6);
+}
+
+function drawWave() {
+  const lvl = waveLevel();
+  wave.levels.push(lvl < 0.06 ? 0 : lvl);
+  wave.levels.shift();
+  const max = $("recWave").clientHeight - 10;
+  wave.bars.forEach((bar, i) => { bar.style.height = `${Math.round(3 + wave.levels[i] * (max - 3))}px`; });
+}
+
+function stopWave() {
+  clearInterval(wave.timer);
+  wave.timer = null;
+  try { if (wave.source) wave.source.disconnect(); } catch (_) { /* allaqachon uzilgan */ }
+  wave.source = null;
+  wave.analyser = null;
+  $("recWave").innerHTML = "";
 }
 
 function setRecUI(on) {
@@ -3058,6 +3188,7 @@ function setRecUI(on) {
   $("fab").classList.toggle("rec", on);
   if ($("cMic")) $("cMic").classList.toggle("on", on);
   if (!on) {
+    stopWave();
     compose.locked = false;
     verticalSwipes(true);
   }
@@ -3754,6 +3885,7 @@ async function init() {
   }
   await fillWorkerFilter();
   show(startView());
+  micFirstVisit();
 }
 
 // Logotip o'rnida — Telegram profil rasmi (bo'lmasa logotip qoladi)

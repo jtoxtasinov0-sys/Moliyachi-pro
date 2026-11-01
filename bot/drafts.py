@@ -46,9 +46,11 @@ uchun kimdan olingani va jami summa so'raladi. To'lab olingani yoki kimdan oling
 Shaxsiy pul (xarajat/daromad va qarz) — "section": "money":
 {
   ..., "personal": [{kind, category, amount, currency, note, date, dup}],
-       "debt": [{person, direction, amount, currency, note, date}],
+       "debt": [{person, direction, amount, currency, note, date, cash}],
 }
 date — yozuvning o'z sanasi (bank tarixida har xil kunlar), None — umumiy sana.
+cash — «Pullarim holati»dan ayriladimi (berilgan pul) yoki unga qo'shiladimi (olingan pul): None — hali
+so'ralmagan («Qarzlar»dagi odam bilan pul harakatida saqlashdan oldin «To'g'rimi?» bilan birga so'raladi).
 dup — rasmdan o'qilgan, lekin avval kiritilgan yozuv: saqlanmaydi.
 Rasmdan olingan qoralamada "source": "image".
 Mijoz bilan savdo — "section": "client":
@@ -335,6 +337,7 @@ def from_extraction(
                 "currency": item.currency or default_currency,
                 "note": (item.note or "").strip()[:200] or None,
                 "date": _item_date(item.date, draft["date"]),
+                "cash": None,
             }
             for item in ext.debt
         ]
@@ -853,6 +856,12 @@ async def mark_duplicates(session: AsyncSession, draft: dict, owner_id: int) -> 
             p["dup"] = True
 
 
+def asks_cash(d: dict) -> bool:
+    """Qarz yozuvida «Pullarim holati»dan ayirish (qo'shish) so'raladimi: «Qarzlar»dagi odamga pul berildi yoki
+    undan olindi (qarz holati emas; mijoz yoki ishchi bo'lsa — uning hisobiga yoziladi, so'ralmaydi)."""
+    return not d.get("stated") and d.get("who") not in ("client", "worker")
+
+
 def next_missing(draft: dict) -> tuple[str, int] | None:
     if draft["section"] == "material":
         for i, m in enumerate(draft["materials"]):
@@ -900,6 +909,10 @@ def next_missing(draft: dict) -> tuple[str, int] | None:
                 return "direction", i
             if d["amount"] is None:
                 return "d_amount", i
+        # Hamma narsa aniq bo'lgach — «To'g'rimi?» bilan birga: pulingizdan ayirilsinmi (qo'shilsinmi)
+        for i, d in enumerate(draft["debt"]):
+            if d.get("cash") is None and asks_cash(d):
+                return "d_cash", i
         return None
 
     for i, line in enumerate(draft["lines"]):
@@ -1113,6 +1126,13 @@ def debt_line(
     return text
 
 
+def _cash_mark(d: dict) -> str:
+    """Qarz «Pullarim holati»ga ta'siri tanlangan bo'lsa: « · 💸 pulingizdan ayriladi»."""
+    if not d.get("cash") or not asks_cash(d):
+        return ""
+    return " · 💸 pulingizdan ayriladi" if d["direction"] == DebtDirection.OUT else " · 💰 pulingizga qo'shiladi"
+
+
 def _who_mark(d: dict) -> str:
     """Qarz kimning hisobiga yoziladi: « → 🛍 Xayrullo (mijoz) hisobiga»."""
     if d.get("who") == "client":
@@ -1170,7 +1190,7 @@ def _render_money(draft: dict) -> str:
         rows = [
             "• " + debt_line(
                 d["person"], d["direction"], _money_amount(d["amount"], d["currency"]), d["note"], d.get("stated", False)
-            ) + _day_mark(d) + _who_mark(d)
+            ) + _day_mark(d) + _who_mark(d) + _cash_mark(d)
             for d in draft["debt"]
         ]
         parts.append("🤝 <b>Qarz</b>\n" + "\n".join(rows))
@@ -1199,6 +1219,19 @@ def _present_money(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
         category = escape(draft["personal"][i]["category"])
         return text + f"\n\n❓ <b>{category}</b> — qancha? Summani yozing yoki ovoz bilan ayting.", kbs.cancel_only_kb()
     debt = draft["debt"][i]
+    if kind == "d_cash":
+        amount = _money_amount(debt["amount"], debt["currency"])
+        who = escape(debt["person"])
+        if debt["direction"] == DebtDirection.OUT:
+            question = f"💸 {who}ga berilgan {amount} hisobdagi pulingizdan («Pullarim holati») ayirilsinmi?"
+        else:
+            question = f"💰 {who}dan olingan {amount} hisobdagi pulingizga («Pullarim holati») qo'shilsinmi?"
+        # Oxirgi savol bo'lsa — tugma bosilishi bilan saqlanadi
+        last = all(d.get("cash") is not None or not asks_cash(d) for d in draft["debt"][i + 1 :])
+        return (
+            text + f"\n\n<b>To'g'rimi?</b>\n{question}",
+            kbs.debt_cash_kb(i, debt["direction"], save=last),
+        )
     if kind == "person":
         return text + "\n\n❓ Kim bilan? Ismini yozing.", kbs.cancel_only_kb()
     if kind == "d_who":

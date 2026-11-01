@@ -94,13 +94,22 @@ class DebtDirCb(CallbackData, prefix="dd"):
     direction: str  # in | out
 
 
+class DebtCashCb(CallbackData, prefix="dc"):
+    """Qarzga berilgan (olingan) pul «Pullarim holati»dan ayirilsinmi (qo'shilsinmi): 1 — ha, 0 — faqat qarz."""
+
+    line: int
+    cash: int
+
+
 class ClientKindCb(CallbackData, prefix="ck"):
     line: int
     kind: str  # sale | payment | return
 
 
 class MoneyCb(CallbackData, prefix="m"):
-    action: str  # del | del_yes | del_no | credit (xom ashyo: qarzga qo'shish / qarzdan chiqarish)
+    # del | del_yes | del_no | credit (xom ashyo: qarzga qo'shish / qarzdan chiqarish) | cash (qarz: «Pullarim
+    # holati»dan ayirish / ayirmaslik)
+    action: str
     kind: str  # p — xarajat/daromad, d — qarz, c — mijoz yozuvi, x — xom ashyo
     entry_id: int
 
@@ -373,6 +382,23 @@ def debt_direction_kb(line: int, person: str) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def debt_cash_kb(line: int, direction: str, save: bool) -> InlineKeyboardMarkup:
+    """«To'g'rimi?» va «pulingizdan ayirilsinmi?» bitta kartochkada: save — tanlansa darhol saqlanadi."""
+    kb = InlineKeyboardBuilder()
+    yes = "✅ Ha, pulimdan ayirilsin" if direction == "out" else "✅ Ha, pulimga qo'shilsin"
+    no = "📝 Yo'q, faqat qarz yozilsin"
+    if save:
+        yes, no = f"{yes} — saqlash", f"{no} — saqlash"
+    kb.button(text=yes, callback_data=DebtCashCb(line=line, cash=1))
+    kb.button(text=no, callback_data=DebtCashCb(line=line, cash=0))
+    kb.button(text="✏️ Tuzatish", callback_data=DraftCb(action="fix"))
+    kb.button(text="❌ Bekor", callback_data=DraftCb(action="cancel"))
+    kb.button(text="📅 Bugun", callback_data=DraftCb(action="today"))
+    kb.button(text="📅 Kecha", callback_data=DraftCb(action="yesterday"))
+    kb.adjust(1, 1, 2, 2)
+    return kb.as_markup()
+
+
 def debt_who_kb(line: int, options: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     """Bir xil ismli odamlardan qaysi biri: mijoz, ta'minotchi, ishchi yoki «Qarzlar»dagi odam."""
     kb = InlineKeyboardBuilder()
@@ -393,16 +419,26 @@ def client_kind_kb(line: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def money_entry_kb(kind: str, entry_id: int, app: bool = False, credit: bool | None = None) -> InlineKeyboardMarkup:
-    """credit — xom ashyo qarzga olinganmi (None — kimdan olingani yoki narxi yo'q, tugma chiqmaydi)."""
+def money_entry_kb(
+    kind: str, entry_id: int, app: bool = False, credit: bool | None = None, cash: tuple[str, bool] | None = None
+) -> InlineKeyboardMarkup:
+    """credit — xom ashyo qarzga olinganmi (None — kimdan olingani yoki narxi yo'q, tugma chiqmaydi).
+    cash — qarz: (yo'nalish, «Pullarim holati»ga ta'sir qiladimi); None — qarz holati, tugma chiqmaydi."""
     kb = InlineKeyboardBuilder()
     if credit is not None:
         kb.button(
             text="💵 To'langan — qarzdan chiqarish" if credit else "💳 Qarzga qo'shish",
             callback_data=MoneyCb(action="credit", kind=kind, entry_id=entry_id),
         )
+    if cash is not None:
+        direction, on = cash
+        if on:
+            text = "↩️ Pulimdan ayirilmasin" if direction == "out" else "↩️ Pulimga qo'shilmasin"
+        else:
+            text = "💸 Pulimdan ayirish" if direction == "out" else "💰 Pulimga qo'shish"
+        kb.button(text=text, callback_data=MoneyCb(action="cash", kind=kind, entry_id=entry_id))
     kb.button(text="🗑 O'chirish", callback_data=MoneyCb(action="del", kind=kind, entry_id=entry_id))
-    if credit is not None:
+    if credit is not None or cash is not None:
         kb.adjust(1)
     if app:
         add_app_button(kb, {"d": "debts", "c": "clients", "x": "materials"}.get(kind, "wallet"))
