@@ -333,6 +333,9 @@ class DebtEntry(TimestampMixin, Base):
     direction: Mapped[str] = mapped_column(String(3))
     # Pul berilmagan/olinmagan, faqat qarz holati aytilgan: «Hayrulloda 65 million haqqim bor»
     stated: Mapped[bool] = mapped_column(default=False)
+    # «Pullarim holati · qoldiq»ga ta'sir qiladi: berilgan pul undan ayriladi, olingani qo'shiladi
+    # (yozishda so'raladi)
+    cash: Mapped[bool] = mapped_column(default=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     note: Mapped[str | None] = mapped_column(Text)

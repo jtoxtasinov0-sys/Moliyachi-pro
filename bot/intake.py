@@ -480,6 +480,7 @@ def pays_to_debt(draft: dict, user: User) -> bool:
                 "who": "person",
                 "direction": direction,
                 "stated": stated,
+                "cash": None,
                 "amount": p["amount"] if p["amount"] != "0" else None,
                 "currency": p["currency"],
                 "note": p["note"],
@@ -489,6 +490,14 @@ def pays_to_debt(draft: dict, user: User) -> bool:
     for key in ("lines", "pays", "balances", "by_owner", "auto_ok", "pay_ok"):
         draft.pop(key, None)
     draft.update(section="money", personal=[], debt=debt)
+    return True
+
+
+def set_cash(draft: dict, cb: kbs.DebtCashCb) -> bool:
+    """«Pulimdan ayirilsin» / «faqat qarz»: qarz «Pullarim holati»ga ta'sir qiladimi."""
+    if draft["section"] != "money" or cb.line >= len(draft["debt"]) or cb.cash not in (0, 1):
+        return False
+    draft["debt"][cb.line]["cash"] = bool(cb.cash)
     return True
 
 
@@ -871,6 +880,7 @@ async def _save_money(session: AsyncSession, bot: Bot, user: User, draft: dict) 
         client_balance_line,
         client_outside_block,
         client_text,
+        debt_kb,
         debt_text,
         person_balance,
         personal_text,
@@ -915,13 +925,14 @@ async def _save_money(session: AsyncSession, bot: Bot, user: User, draft: dict) 
             person=d["person"],
             direction=d["direction"],
             stated=d.get("stated", False),
+            cash=bool(d.get("cash")),
             amount=Decimal(d["amount"]),
             currency=d["currency"],
             note=d["note"],
             entry_date=date.fromisoformat(drafts.item_date(draft, d)),
             raw_text=draft["raw_text"],
         )
-        cards.append((debt_text(e), partial(kbs.money_entry_kb, "d", e.id)))
+        cards.append((debt_text(e), partial(debt_kb, e)))
         if e.person not in people:
             people.append(e.person)
 

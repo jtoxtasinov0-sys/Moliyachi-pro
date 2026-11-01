@@ -43,6 +43,7 @@ _NEW_COLUMNS = {
     },
     "debt_entries": {
         "stated": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "cash": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "jobs": {
         "price": "NUMERIC(14, 2)",

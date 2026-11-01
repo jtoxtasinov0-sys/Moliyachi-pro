@@ -119,6 +119,8 @@ class ReportData:
     balances: dict[int, dict[str, Decimal]] = field(default_factory=dict)
     worker_names: dict[int, str] = field(default_factory=dict)
     personal: list[PersonalEntry] = field(default_factory=list)
+    # «Pulimdan ayirilsin» deb yozilgan qarzlar (davrda): out — qoldiqdan ayrilgan, in — qo'shilgan
+    debt_cash: dict[str, dict[str, Decimal]] = field(default_factory=dict)
     clients: list[repo.ClientStats] = field(default_factory=list)
     materials: list[MaterialEntry] = field(default_factory=list)
     debts: list[repo.DebtBalance] = field(default_factory=list)
@@ -148,6 +150,7 @@ async def _collect(session: AsyncSession, user: User, period: str) -> ReportData
         data.show_work = bool(data.work) or await repo.has_work(session, acc)
         personal = await repo.personal_entries_between(session, acc, start, end)
         data.personal = sorted(personal, key=lambda e: (e.entry_date, e.id))
+        data.debt_cash = await repo.debt_cash_totals(session, acc, start, end)
         data.clients = [
             st
             for st in await repo.client_stats(session, acc, start, end)
@@ -515,7 +518,10 @@ def _personal_section(pdf: _Pdf, d: ReportData) -> None:
     for e in d.personal:
         (income if e.kind == PersonalKind.INCOME else expense)[e.currency] += e.amount
     net = {c: income.get(c, Decimal(0)) - expense.get(c, Decimal(0)) for c in {*income, *expense}}
+    net = repo.with_debt_cash(net, d.debt_cash)
     pdf.cards([(_money(income), "daromad"), (_money(expense), "xarajat"), (_money(net), "qoldiq")])
+    if any(d.debt_cash.values()):
+        pdf.note("«Qoldiq»da qarzga berilgan pul ayrilgan, qarzga olingani qo'shilgan («pulimdan ayirilsin» deganlari).")
     if not d.personal:
         pdf.note("Bu davrda daromad yoki xarajat yozilmagan.")
         return

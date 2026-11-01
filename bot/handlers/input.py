@@ -294,6 +294,24 @@ async def on_debt_direction(
     await _show(call, state, session, user, draft, answered=True)
 
 
+@router.callback_query(kbs.DebtCashCb.filter())
+async def on_debt_cash(
+    call: CallbackQuery, callback_data: kbs.DebtCashCb, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    """«Pulimdan ayirilsin» / «faqat qarz»: «To'g'rimi?» ham shu kartochkada — oxirgi savol bo'lsa saqlanadi."""
+    draft = await _load_draft(call, state)
+    if draft is None:
+        return
+    if not intake.set_cash(draft, callback_data):
+        await call.answer()
+        return
+    if drafts.next_missing(draft) is None:
+        await state.update_data(draft=draft)
+        await _save(call, state, session, user, draft)
+        return
+    await _show(call, state, session, user, draft)
+
+
 @router.callback_query(kbs.PayKindCb.filter())
 async def on_pay_kind(
     call: CallbackQuery, callback_data: kbs.PayKindCb, state: FSMContext, session: AsyncSession, user: User

@@ -74,6 +74,10 @@ DEFAULT_SETTINGS = {
     "jobs_seeded": "0",
     # Egasi oxirgi marta olgan menyu (keyboards.MENU_VERSION) — yangisi bo'lsa bir marta yuboriladi
     "menu_version": "",
+    # Ilovada «🎤 Mikrofonga ruxsat» tushuntirishi ko'rsatilgan (har bir foydalanuvchida — o'z id si bilan):
+    # "1" — birinchi marta, "2" — brauzer ruxsatni unutgani ham bir marta aytilgan. Telefon xotirasi (localStorage)
+    # Telegram ichida tozalanib ketishi mumkin — shuning uchun serverda: hech qachon qayta so'ralmaydi
+    "mic_intro": "",
 }
 
 
@@ -1324,6 +1328,39 @@ async def personal_stat_rows(session: AsyncSession, owner_id: int, start: date, 
     return [PersonalStatRow(r[0], r[1], r[2], r[3], Decimal(str(r[4] or 0))) for r in rows]
 
 
+async def debt_cash_totals(
+    session: AsyncSession, owner_id: int, start: date, end: date
+) -> dict[str, dict[str, Decimal]]:
+    """Davrda «Pullarim holati»ga ta'sir qilgan qarz harakatlari (cash): out — berilgan pul (qoldiqdan ayriladi),
+    in — olingan pul (qoldiqqa qo'shiladi). Valyuta bo'yicha."""
+    q = (
+        select(DebtEntry.direction, DebtEntry.currency, func.sum(DebtEntry.amount))
+        .where(
+            DebtEntry.owner_id == owner_id,
+            DebtEntry.deleted_at.is_(None),
+            DebtEntry.cash.is_(True),
+            DebtEntry.entry_date >= start,
+            DebtEntry.entry_date <= end,
+        )
+        .group_by(DebtEntry.direction, DebtEntry.currency)
+    )
+    out: dict[str, dict[str, Decimal]] = {DebtDirection.OUT: {}, DebtDirection.IN: {}}
+    for direction, currency, amount in await session.execute(q):
+        if direction in out:
+            out[direction][currency] = Decimal(str(amount or 0))
+    return out
+
+
+def with_debt_cash(net: dict[str, Decimal], cash: dict[str, dict[str, Decimal]]) -> dict[str, Decimal]:
+    """Qoldiq (daromad − xarajat) — qarzga berilgan pul ayrilgan, qarzga olingani qo'shilgan."""
+    out = dict(net)
+    for currency, amount in cash.get(DebtDirection.OUT, {}).items():
+        out[currency] = out.get(currency, Decimal(0)) - amount
+    for currency, amount in cash.get(DebtDirection.IN, {}).items():
+        out[currency] = out.get(currency, Decimal(0)) + amount
+    return out
+
+
 async def personal_categories(session: AsyncSession, owner_id: int) -> list[str]:
     """Ishlatilgan kategoriyalar — ko'p ishlatilgani birinchi."""
     q = (
@@ -1354,6 +1391,7 @@ async def create_debt_entry(
     entry_date: date,
     raw_text: str | None,
     stated: bool = False,
+    cash: bool = False,
 ) -> DebtEntry:
     person = person.strip()[:100]
     entry = DebtEntry(
@@ -1362,6 +1400,7 @@ async def create_debt_entry(
         person_key=person_key(person),
         direction=direction,
         stated=stated,
+        cash=cash and not stated,
         amount=amount,
         currency=currency,
         note=note,
